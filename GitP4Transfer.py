@@ -406,6 +406,31 @@ class P4Base(object):
         self.localmap = P4.Map.join(self.clientmap, ctr)
         self.depotmap = self.localmap.reverse()
 
+
+class TempBranch:
+    "Alternates between branch names - allowing old one to be deleted"
+
+    def __init__(self):
+        self.tempBranches = ['p4_export1', 'p4_export2']
+        self.ind = -1
+        self.currBranch = ''
+        self.oldBranch = ''
+
+    def getNext(self):
+        "Swap temp branches, and we delete old one after"
+        self.ind = (self.ind + 1) % 2
+        if self.currBranch:
+            self.oldBranch = self.currBranch
+        self.currBranch = self.tempBranches[self.ind]
+        return self.currBranch
+
+    def getOld(self):
+        return self.oldBranch
+
+
+tempBranch = TempBranch()
+
+
 class GitSource(P4Base):
     "Functionality for reading from source Perforce repository"
 
@@ -444,9 +469,8 @@ class GitSource(P4Base):
 
     def missingCommits(self, counter):
         revRange = ''
-        if counter:
+        if counter and counter != '0':
             revRange = '{rev}..HEAD'.format(rev=counter)
-        # We can be more efficient with 2017.2 or greater servers with changes -r -m
         maxChanges = 0
         if self.options.change_batch_size:
             maxChanges = self.options.change_batch_size
@@ -465,8 +489,11 @@ class GitSource(P4Base):
 
     def getCommit(self, commitID):
         """Expects change number as a string, and returns list of filerevs"""
-        args = ['git', 'checkout', commitID]
+        args = ['git', 'checkout', '-b', tempBranch.getNext(), commitID]
         self.run_cmd(' '.join(args))
+        if tempBranch.getOld():
+            args = ['git', 'branch', '-D', '-f', tempBranch.getOld()]
+            self.run_cmd(' '.join(args))
 
 class P4Target(P4Base):
     "Functionality for transferring changes to target Perforce repository"
@@ -519,6 +546,10 @@ class P4Target(P4Base):
             if lenOpenedFiles > 1000:
                 self.logger.debug("About to submit")
             result = self.p4.save_submit(chg)
+            a = -1
+            while 'submittedChange' not in result[a]:
+                a -= 1
+            newChangeId = result[a]['submittedChange']
             if lenOpenedFiles > 1000:
                 self.logger.debug("submitted")
             self.logger.debug(self.p4id, result)
@@ -526,9 +557,6 @@ class P4Target(P4Base):
         except P4.P4Exception as e:
             raise e
 
-        if result:
-            if 'renamedChange' in result:
-                newChangeId = result['renamedChange']
         if newChangeId:
             self.logger.info("source = {} : target  = {}".format(commit, newChangeId))
             description = self.formatChangeDescription(
@@ -550,11 +578,11 @@ class P4Target(P4Base):
         self.p4.save_change(newChange, '-f')
 
     def getCounter(self):
-        "Returns value of counter as integer"
+        "Returns value of counter"
         result = self.p4cmd('counter', self.options.counter_name)
         if result and 'counter' in result[0]:
-            return int(result[0]['value'])
-        return 0
+            return result[0]['value']
+        return ''
 
     def setCounter(self, value):
         "Set's the counter to specified value"

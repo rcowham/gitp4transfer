@@ -543,164 +543,6 @@ class TestGitP4Transfer(unittest.TestCase):
     #     matches = re.findall("INFO: Logging to file:", logoutput)
     #     self.assertEqual(len(matches), 3)
 
-    # def testChangeMapFile(self):
-    #     "How a change map file is written"
-    #     self.setupTransfer()
-    #     inside = localDirectory(self.source.client_root, "inside")
-    #     inside_file1 = os.path.join(inside, "inside_file1")
-    #     create_file(inside_file1, 'Test content')
-
-    #     self.source.p4cmd('add', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'file added')
-    #     self.run_GitP4Transfer()
-    #     self.assertCounters(1, 1)
-
-    #     options = self.getDefaultOptions()
-    #     options["change_map_file"] = "depot/inside/change_map.csv"
-    #     change_map_file = '//depot/import/change_map.csv'
-    #     self.createConfigFile(options=options)
-
-    #     self.source.p4cmd('edit', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'edited')
-    #     self.run_GitP4Transfer()
-    #     self.assertCounters(2, 3)
-    #     change = self.target.p4.run_describe('4')[0]
-    #     self.assertEqual(len(change['depotFile']), 1)
-    #     self.assertEqual(change['depotFile'][0], change_map_file)
-    #     content = self.target.p4.run_print('-q', change_map_file)[1]
-    #     if python3:
-    #         content = content.decode()
-    #     content = content.split("\n")
-    #     self.logger.debug("content:", content)
-    #     self.assertRegex(content[0], "sourceP4Port,sourceChangeNo,targetChangeNo")
-    #     self.assertRegex(content[1], "rsh.*,2,3")
-
-    #     self.source.p4cmd('edit', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'edited again')
-    #     self.source.p4cmd('edit', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'and again')
-    #     self.run_GitP4Transfer()
-    #     self.assertCounters(4, 6)
-    #     change = self.target.p4.run_describe('8')[0]
-    #     self.assertEqual(len(change['depotFile']), 1)
-    #     self.assertEqual(change['depotFile'][0], change_map_file)
-    #     content = self.target.p4.run_print('-q', change_map_file)[1]
-    #     if python3:
-    #         content = content.decode()
-    #     content = content.split("\n")
-    #     self.logger.debug("content:", content)
-    #     self.assertRegex(content[1], "rsh.*,2,3")
-    #     self.assertRegex(content[2], "rsh.*,3,6")
-    #     self.assertRegex(content[3], "rsh.*,4,7")
-
-    # def testChangeMapFileNotRoot(self):
-    #     "How a change map file is written - when not at root"
-    #     self.setupTransfer()
-    #     inside = localDirectory(self.source.client_root, "inside")
-    #     inside_file1 = os.path.join(inside, "inside_file1")
-    #     create_file(inside_file1, 'Test content')
-
-    #     self.source.p4cmd('add', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'file added')
-    #     self.run_GitP4Transfer()
-    #     self.assertCounters(1, 1)
-
-    #     options = self.getDefaultOptions()
-    #     options["change_map_file"] = "depot/inside/changes/change_map.csv"
-    #     change_map_file = '//depot/import/changes/change_map.csv'
-    #     self.createConfigFile(options=options)
-
-    #     self.source.p4cmd('edit', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'edited')
-    #     self.run_GitP4Transfer()
-    #     self.assertCounters(2, 3)
-    #     change = self.target.p4.run_describe('4')[0]
-    #     self.assertEqual(len(change['depotFile']), 1)
-    #     self.assertEqual(change['depotFile'][0], change_map_file)
-    #     content = self.target.p4.run_print('-q', change_map_file)[1]
-    #     if python3:
-    #         content = content.decode()
-    #     content = content.split("\n")
-    #     self.logger.debug("content:", content)
-    #     self.assertRegex(content[0], "sourceP4Port,sourceChangeNo,targetChangeNo")
-    #     self.assertRegex(content[1], "rsh.*,2,3")
-
-    #     self.source.p4cmd('edit', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'edited again')
-    #     self.source.p4cmd('edit', inside_file1)
-    #     self.source.p4cmd('submit', '-d', 'and again')
-    #     self.run_GitP4Transfer()
-    #     self.assertCounters(4, 6)
-    #     change = self.target.p4.run_describe('8')[0]
-    #     self.assertEqual(len(change['depotFile']), 1)
-    #     self.assertEqual(change['depotFile'][0], change_map_file)
-    #     content = self.target.p4.run_print('-q', change_map_file)[1]
-    #     if python3:
-    #         content = content.decode()
-    #     content = content.split("\n")
-    #     self.logger.debug("content:", content)
-    #     self.assertRegex(content[1], "rsh.*,2,3")
-    #     self.assertRegex(content[2], "rsh.*,3,6")
-    #     self.assertRegex(content[3], "rsh.*,4,7")
-
-    # def testArchive(self):
-    #     "Archive a file"
-    #     self.setupTransfer()
-
-    #     d = self.source.p4.fetch_depot('archive')
-    #     d['Type'] = 'archive'
-    #     self.source.p4.save_depot(d)
-
-    #     inside = localDirectory(self.source.client_root, "inside")
-    #     inside_file1 = os.path.join(inside, "inside_file1")
-    #     inside_file2 = os.path.join(inside, "inside_file2")
-    #     inside_file3 = os.path.join(inside, "inside_file3")
-    #     create_file(inside_file1, 'Test content')
-    #     create_file(inside_file2, 'Test content')
-    #     create_file(inside_file3, 'Test content')
-    #     self.source.p4cmd('add', '-tbinary', inside_file1)
-    #     self.source.p4cmd('add', inside_file2)
-    #     self.source.p4cmd('add', '-tbinary', inside_file3)
-    #     self.source.p4cmd('submit', '-d', 'files added')
-
-    #     self.source.p4cmd('edit', inside_file1)
-    #     self.source.p4cmd('edit', inside_file2)
-    #     self.source.p4cmd('edit', inside_file3)
-    #     append_to_file(inside_file1, "Some text")
-    #     append_to_file(inside_file2, "More text")
-    #     append_to_file(inside_file3, "More text")
-    #     self.source.p4cmd('submit', '-d', 'files edited')
-
-    #     self.source.p4cmd('archive', '-D', 'archive', inside_file1)
-    #     filelog = self.source.p4.run_filelog('//depot/inside/inside_file1')
-    #     self.assertEqual(filelog[0].revisions[0].action, 'archive')
-    #     self.assertEqual(filelog[0].revisions[1].action, 'archive')
-    #     self.source.p4cmd('archive', '-D', 'archive', inside_file3 + "#1")
-    #     filelog = self.source.p4.run_filelog('//depot/inside/inside_file3')
-    #     self.assertEqual(filelog[0].revisions[0].action, 'edit')
-    #     self.assertEqual(filelog[0].revisions[1].action, 'archive')
-
-    #     self.run_GitP4Transfer()
-    #     self.assertCounters(2, 2)
-
-    #     change = self.target.p4.run_describe('2')[0]
-    #     self.assertEqual(3, len(change['depotFile']))
-    #     self.assertEqual(change['depotFile'][0], '//depot/import/inside_file1')
-    #     self.assertEqual(change['depotFile'][1], '//depot/import/inside_file2')
-    #     self.assertEqual(change['depotFile'][2], '//depot/import/inside_file3')
-    #     filelog = self.target.p4.run_filelog('//...@=2')
-    #     self.assertEqual(filelog[0].revisions[0].action, 'archive')
-    #     self.assertEqual(filelog[1].revisions[0].action, 'add')
-    #     self.assertEqual(filelog[2].revisions[0].action, 'archive')
-    #     change = self.target.p4.run_describe('3')[0]
-    #     self.assertEqual(3, len(change['depotFile']))
-    #     self.assertEqual(change['depotFile'][0], '//depot/import/inside_file1')
-    #     self.assertEqual(change['depotFile'][1], '//depot/import/inside_file2')
-    #     self.assertEqual(change['depotFile'][2], '//depot/import/inside_file3')
-    #     filelog = self.target.p4.run_filelog('//depot/import/inside_file3')
-    #     self.assertEqual(filelog[0].revisions[0].action, 'edit')
-    #     self.assertEqual(filelog[0].revisions[1].action, 'archive')
-
     def testAdd(self):
         "Basic file add"
         self.setupTransfer()
@@ -722,6 +564,33 @@ class TestGitP4Transfer(unittest.TestCase):
         self.assertEqual('//depot/import/file1', files[0]['depotFile'])
 
         self.assertCounters(1, 1)
+
+    def testAdd2(self):
+        "Basic 2 add commits"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        file2 = os.path.join(inside, "file2")
+        create_file(file1, 'Test content')
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "first change"')
+        create_file(file2, 'Test content2')
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "second change"')
+
+        self.run_GitP4Transfer()
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(2, len(changes))
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(2, len(files))
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/import/file2', files[1]['depotFile'])
+
+        self.assertCounters(2, 2)
 
     # def testNonSuperUser(self):
     #     "Test when not a superuser - who can't update"
