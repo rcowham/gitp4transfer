@@ -13,3 +13,12 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+git-p4.py
+git-filter-repo.py
+
+_testrun_transfer/
+log-*.log
+.vscode/
+__pycache__/
+*.pyc
