@@ -383,6 +383,7 @@ class P4Base(object):
         self.root = self.source.git_repo
         clientspec._root = self.root
         clientspec["Options"] = clientspec["Options"].replace("normdir", "rmdir")
+        clientspec["Options"] = clientspec["Options"].replace("noallwrite", "allwrite")
         clientspec["LineEnd"] = "unix"
         clientView = []
         for v in self.options.branch_maps:
@@ -430,6 +431,32 @@ class TempBranch:
 
 tempBranch = TempBranch()
 
+
+class GitCommit():
+    "Parse commit from git log output"
+
+    # commit <hash>
+    # Author: <author>
+    # Date:   <author date>
+    #
+    # <title line>
+    #
+    # <full commit message>
+    def __init__(self, logLines) -> None:
+        self.hash = self.author = self.date = self.description = ""
+        startDesc = False
+        for line in logLines.split("\n"):
+            line = line.strip()
+            if line.startswith("commit "):
+                self.hash = line[7:]
+            elif line.startswith("Author: "):
+                self.author = line[8:]
+            elif line.startswith("Date: "):
+                self.date = line[6:]
+            elif not line and not startDesc:
+                startDesc = True
+            elif startDesc:
+                self.description += line
 
 class GitSource(P4Base):
     "Functionality for reading from source Perforce repository"
@@ -488,6 +515,12 @@ class GitSource(P4Base):
         return commits
 
     def getCommit(self, commitID):
+        """returns commit members"""
+        args = ['git', 'log', '--max-count=1', commitID]
+        logLines = self.run_cmd(' '.join(args))
+        return GitCommit(logLines=logLines)
+
+    def checkoutCommit(self, commitID):
         """Expects change number as a string, and returns list of filerevs"""
         args = ['git', 'checkout', '-b', tempBranch.getNext(), commitID]
         self.run_cmd(' '.join(args))
@@ -531,10 +564,9 @@ class P4Target(P4Base):
             self.logger.debug("Opened files: %d" % lenOpenedFiles)
             # self.fixFileTypes(fileRevs, openedFiles)
             description = self.formatChangeDescription(
-                sourceDescription='source change')
-                # ,
-                # sourceChange=change['change'], sourcePort=sourcePort,
-                # sourceUser=change['user'])
+                sourceDescription=commit.description,
+                sourceChange=commit.hash, sourcePort='git_repo',
+                sourceUser=commit.author)
         newChangeId = 0
         result = None
         try:
@@ -560,10 +592,9 @@ class P4Target(P4Base):
         if newChangeId:
             self.logger.info("source = {} : target  = {}".format(commit, newChangeId))
             description = self.formatChangeDescription(
-                sourceDescription='test desc')
-                # ,
-                # sourceChange=commit['change'], sourcePort=self.source.p4.port,
-                # sourceUser=commit['user'])
+                sourceDescription=commit.description,
+                sourceChange=commit.hash, sourcePort='git_repo',
+                sourceUser=commit.author)
             self.updateChange(newChangeId=newChangeId, description=description)
         else:
             self.logger.error("failed to replicate change {}".format(commit))
@@ -678,7 +709,7 @@ class GitP4Transfer(object):
         self.options.max_logfile_size = self.getIntOption(GENERAL_SECTION, "max_logfile_size", 20 * 1024 * 1024)
         self.options.change_description_format = self.getOption(
             GENERAL_SECTION, "change_description_format",
-            "$sourceDescription\n\nTransferred from p4://$sourceRepo@$sourceChange")
+            "$sourceDescription\n\nTransferred from git://$sourceRepo@$sourceChange")
         self.options.superuser = self.getOption(GENERAL_SECTION, "superuser", "y")
         self.options.branch_maps = self.getOption(GENERAL_SECTION, "branch_maps")
         if not self.options.branch_maps:
@@ -729,25 +760,27 @@ class GitP4Transfer(object):
         "Perform a replication loop"
         self.target.connect('target replicate')
         self.target.createClientWorkspace()
-        commits = self.source.missingCommits(self.target.getCounter())
+        commitIDs = self.source.missingCommits(self.target.getCounter())
         if self.options.notransfer:
-            self.logger.info("Would transfer %d commits - stopping due to --notransfer" % len(commits))
+            self.logger.info("Would transfer %d commits - stopping due to --notransfer" % len(commitIDs))
             return 0
-        self.logger.info("Transferring %d changes" % len(commits))
+        self.logger.info("Transferring %d changes" % len(commitIDs))
         changesTransferred = 0
-        if len(commits) > 0:
+        if len(commitIDs) > 0:
             self.save_previous_target_change_counter()
             self.checkRotateLogFile()
             self.revertOpenedFiles()
-            for commit in commits:
+            for id in commitIDs:
                 if self.endDatetimeExceeded():  # Bail early
                     self.logger.info("Transfer stopped due to --end-datetime being exceeded")
                     return changesTransferred
-                msg = 'Processing commit: {}'.format(commit)
+                msg = 'Processing commit: {}'.format(id)
+                self.source.checkoutCommit(id)
+                commit = self.source.getCommit(id)
                 self.logger.info(msg)
-                self.source.getCommit(commit)
+                self.source.checkoutCommit(id)
                 self.target.replicateCommit(commit)
-                self.target.setCounter(commit)
+                self.target.setCounter(id)
                 changesTransferred += 1
         self.target.disconnect()
         return changesTransferred
