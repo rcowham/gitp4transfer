@@ -592,6 +592,46 @@ class TestGitP4Transfer(unittest.TestCase):
 
         self.assertCounters(2, 2)
 
+    def testAddEditDelete(self):
+        "Basic add/edit and delete commits"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        file2 = os.path.join(inside, "file2")
+        create_file(file1, 'Test content')
+        create_file(file2, 'Test content2')
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "first change"')
+
+        append_to_file(file1, "\nMore stuff")
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "edit change"')
+
+        self.source.run_cmd('git rm file2')
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "delete change"')
+
+        self.run_GitP4Transfer()
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(3, len(changes))
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(2, len(files))
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/import/file2', files[1]['depotFile'])
+
+        self.assertCounters(3, 3)
+
+        filelogs = self.target.p4cmd('filelog', '//depot/...')
+        self.assertEqual(2, len(filelogs))
+        self.assertEqual('edit', filelogs[0]['action'][0])
+        self.assertEqual('add', filelogs[0]['action'][1])
+        self.assertEqual('delete', filelogs[1]['action'][0])
+        self.assertEqual('add', filelogs[1]['action'][1])
+
     # def testNonSuperUser(self):
     #     "Test when not a superuser - who can't update"
     #     self.setupTransfer()

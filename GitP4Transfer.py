@@ -567,38 +567,38 @@ class P4Target(P4Base):
                 sourceDescription=commit.description,
                 sourceChange=commit.hash, sourcePort='git_repo',
                 sourceUser=commit.author)
-        newChangeId = 0
-        result = None
-        try:
-            # Debug for larger changelists
-            if lenOpenedFiles > 1000:
-                self.logger.debug("About to fetch change")
-            chg = self.p4.fetch_change()
-            chg['Description'] = description
-            if lenOpenedFiles > 1000:
-                self.logger.debug("About to submit")
-            result = self.p4.save_submit(chg)
-            a = -1
-            while 'submittedChange' not in result[a]:
-                a -= 1
-            newChangeId = result[a]['submittedChange']
-            if lenOpenedFiles > 1000:
-                self.logger.debug("submitted")
-            self.logger.debug(self.p4id, result)
-            self.checkWarnings()
-        except P4.P4Exception as e:
-            raise e
+            newChangeId = 0
+            result = None
+            try:
+                # Debug for larger changelists
+                if lenOpenedFiles > 1000:
+                    self.logger.debug("About to fetch change")
+                chg = self.p4.fetch_change()
+                chg['Description'] = description
+                if lenOpenedFiles > 1000:
+                    self.logger.debug("About to submit")
+                result = self.p4.save_submit(chg)
+                a = -1
+                while 'submittedChange' not in result[a]:
+                    a -= 1
+                newChangeId = result[a]['submittedChange']
+                if lenOpenedFiles > 1000:
+                    self.logger.debug("submitted")
+                self.logger.debug(self.p4id, result)
+                self.checkWarnings()
+            except P4.P4Exception as e:
+                raise e
 
-        if newChangeId:
-            self.logger.info("source = {} : target  = {}".format(commit, newChangeId))
-            description = self.formatChangeDescription(
-                sourceDescription=commit.description,
-                sourceChange=commit.hash, sourcePort='git_repo',
-                sourceUser=commit.author)
-            self.updateChange(newChangeId=newChangeId, description=description)
-        else:
-            self.logger.error("failed to replicate change {}".format(commit))
-        return newChangeId
+            if newChangeId:
+                self.logger.info("source = {} : target  = {}".format(commit, newChangeId))
+                description = self.formatChangeDescription(
+                    sourceDescription=commit.description,
+                    sourceChange=commit.hash, sourcePort='git_repo',
+                    sourceUser=commit.author)
+                self.updateChange(newChangeId=newChangeId, description=description)
+            else:
+                self.logger.error("failed to replicate change {}".format(commit))
+            return newChangeId
 
     def updateChange(self, newChangeId, description):
         # need to update the user and time stamp - but only if a superuser
