@@ -543,6 +543,24 @@ class TestGitP4Transfer(unittest.TestCase):
     #     matches = re.findall("INFO: Logging to file:", logoutput)
     #     self.assertEqual(len(matches), 3)
 
+    def testBasicCommitInfo(self):
+        "Basic git info"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        create_file(file1, 'Test content')
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "first change"')
+
+        gitinfo = GitP4Transfer.GitInfo()
+        commits = gitinfo.getBasicCommitInfo(['master'])
+        test_logger.debug("commits: %s" % b' '.join(commits))
+        self.assertEqual(1, len(commits))
+        for _, v in commits.items():
+            self.assertEqual(b'first change\n', v.description)
+
     def testAdd(self):
         "Basic file add"
         self.setupTransfer()

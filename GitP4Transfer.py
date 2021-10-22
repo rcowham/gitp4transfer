@@ -280,47 +280,6 @@ def fmtsize(num):
         num /= 1024.0
 
 
-class ChangeRevision:
-    "Represents a change - created from P4API supplied information and thus encoding"
-
-    def __init__(self, rev, change, n):
-        self.rev = rev
-        self.action = change['action'][n]
-        self.type = change['type'][n]
-        self.depotFile = change['depotFile'][n]
-        self.localFile = None
-        self.fileSize = 0
-        self.digest = ""
-        self.fixedLocalFile = None
-
-
-    def depotFileRev(self):
-        "Fully specify depot file with rev number"
-        return "%s#%s" % (self.depotFile, self.rev)
-
-    def localFileRev(self):
-        "Fully specify local file with rev number"
-        return "%s#%s" % (self.localFile, self.rev)
-
-    def setLocalFile(self, localFile):
-        self.localFile = localFile
-        localFile = localFile.replace("%40", "@")
-        localFile = localFile.replace("%23", "#")
-        localFile = localFile.replace("%2A", "*")
-        localFile = localFile.replace("%25", "%")
-        localFile = localFile.replace("/", os.sep)
-        self.fixedLocalFile = localFile
-
-    def __repr__(self):
-        return 'rev={rev} action={action} type={type} size={size} digest={digest} depotFile={depotfile}' .format(
-            rev=self.rev,
-            action=self.action,
-            type=self.type,
-            size=self.fileSize,
-            digest=self.digest,
-            depotfile=self.depotFile,
-        )
-
 
 class PathQuoting:
     _unescape = {b'a': b'\a',
@@ -365,86 +324,205 @@ class PathQuoting:
         return unquoted_string
 
 
-class AncestryGraph(object):
-    """
-    A class that maintains a direct acycle graph of commits for the purpose of
-    determining if one commit is the ancestor of another.
-    """
+class GitCommit():
+    "Convenience class for a git commit"
 
-    def __init__(self):
-        self.cur_value = 0
+    def __init__(self, hash, name, email, description) -> None:
+        self.hash = hash
+        self.name = name
+        self.email = email
+        self.description = description
+        self.parents = []
+        self.branch = None
 
-        # A mapping from the external identifers given to us to the simple integers
-        # we use in self.graph
-        self.value = {}
 
-        # A tuple of (depth, list-of-ancestors).    Values and keys in this graph are
-        # all integers from the self.value dict.    The depth of a commit is one more
-        # than the max depth of any of its ancestors.
-        self.graph = {}
+class GitInfo:
+    "Extract info about Git repo"
+    
+    def getBasicCommitInfo(self, refs):
+        "Return a dict indexed by commit hash of populated GitCommit objects"
+        # Format string: %cn=committer, %ce=committer email, %B=raw desc
+        cmd = ('git rev-list %s %s' % (' '.join(refs), '--format=%cn%n%ce%n%B%n"__END_OF_DESC__"'))
+        dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
+        f = dtp.stdout
+        line = f.readline()
+        if not line:
+            raise SystemExit(("Nothing to analyze; repository is empty."))
+        cont = bool(line)
+        commits = {}
+        while cont:
+            if not line:
+                break
+            hash = line.rstrip().split()[1]
+            name = f.readline().rstrip()
+            email = f.readline().rstrip()
+            desc = []
+            
+            in_desc = True
+            while in_desc:
+                line = f.readline().rstrip()
+                if line.startswith(b'__END_OF_DESC__'):
+                    in_desc = False
+                else:
+                    desc.append(line)
+            commits[hash] = GitCommit(hash, name, email, b'\n'.join(desc))
+            line = f.readline()
+        # Close the output, ensure command completed successfully
+        dtp.stdout.close()
+        if dtp.wait():
+            raise SystemExit(("Error: rev-list pipeline failed; see above.")) # pragma: no cover
+        return commits
 
-        # Cached results from previous calls to is_ancestor().
-        self._cached_is_ancestor = {}
+    def getCommitDiffs(self, refs):
+        "Return array of commits in reverse topo order for processing"
+        # Setup the rev-list/diff-tree process and read info about file diffs
+        cmd = ('git rev-list --topo-order --reverse {}'.format(' '.join(refs)) +
+                     ' | git diff-tree --stdin --always --root --format=%H%n%P%n%cd' +
+                     ' --date=short -M -t -c --raw --combined-all-paths')
+        dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
+        f = dtp.stdout
+        commits = []
+        line = f.readline()
+        if not line:
+            return commits
+        cont = bool(line)
+        
+        while cont:
+            commit = line.rstrip()
+            parents = f.readline().split()
+            date = f.readline().rstrip()
 
-    def record_external_commits(self, external_commits):
-        """
-        Record in graph that each commit in external_commits exists, and is
-        treated as a root commit with no parents.
-        """
-        for c in external_commits:
-            if c not in self.value:
-                self.cur_value += 1
-                self.value[c] = self.cur_value
-                self.graph[self.cur_value] = (1, [])
+            # We expect a blank line next; if we get a non-blank line then
+            # this commit modified no files and we need to move on to the next.
+            # If there is no line, we've reached end-of-input.
+            line = f.readline()
+            if not line:
+                cont = False
+            line = line.rstrip()
 
-    def add_commit_and_parents(self, commit, parents):
-        """
-        Record in graph that commit has the given parents.    parents _MUST_ have
-        been first recorded.    commit _MUST_ not have been recorded yet.
-        """
-        assert all(p in self.value for p in parents)
-        assert commit not in self.value
+            # If we haven't reached end of input, and we got a blank line meaning
+            # a commit that has modified files, then get the file changes associated
+            # with this commit.
+            file_changes = []
+            if cont and not line:
+                cont = False
+                for line in f:
+                    if not line.startswith(b':'):
+                        cont = True
+                        break
+                    n = 1 + max(1, len(parents))
+                    assert line.startswith(b':'*(n-1))
+                    relevant = line[n-1:-1]
+                    splits = relevant.split(None, n)
+                    modes = splits[0:n]
+                    splits = splits[n].split(None, n)
+                    shas = splits[0:n]
+                    splits = splits[n].split(b'\t')
+                    change_types = splits[0]
+                    filenames = [PathQuoting.dequote(x) for x in splits[1:]]
+                    file_changes.append([modes, shas, change_types, filenames])
+            commits.append((commit, parents, file_changes))
 
-        # Get values for commit and parents
-        self.cur_value += 1
-        self.value[commit] = self.cur_value
-        graph_parents = [self.value[x] for x in parents]
+        # Close the output, ensure rev-list|diff-tree pipeline completed successfully
+        dtp.stdout.close()
+        if dtp.wait():
+            raise SystemExit(("Error: rev-list|diff-tree pipeline failed; see above.")) # pragma: no cover
+        return commits
 
-        # Determine depth for commit, then insert the info into the graph
-        depth = 1
-        if parents:
-            depth += max(self.graph[p][0] for p in graph_parents)
-        self.graph[self.cur_value] = (depth, graph_parents)
+    def getBranchCommits(self, branchRefs):
+        "Returns a list of commit ids on the referenced branches"
+        branchCommits = {}
+        for b in branchRefs:
+            branchCommits[b] = []
+            cmd = ('git rev-list --first-parent {}'.format(b))
+            dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
+            f = dtp.stdout
+            line = f.readline()
+            if not line:
+                return
+            cont = bool(line)
+            while cont:
+                commit = line.rstrip()
+                branchCommits[b].append(commit)
+                line = f.readline()
+                if not line:
+                    break
 
-    def is_ancestor(self, possible_ancestor, check):
-        """
-        Return whether possible_ancestor is an ancestor of check
-        """
-        a, b = self.value[possible_ancestor], self.value[check]
-        original_pair = (a,b)
-        a_depth = self.graph[a][0]
-        ancestors = [b]
-        visited = set()
-        while ancestors:
-            ancestor = ancestors.pop()
-            prev_pair = (a, ancestor)
-            if prev_pair in self._cached_is_ancestor:
-                if not self._cached_is_ancestor[prev_pair]:
-                    continue
-                self._cached_is_ancestor[original_pair] = True
-                return True
-            if ancestor in visited:
-                continue
-            visited.add(ancestor)
-            depth, more_ancestors = self.graph[ancestor]
-            if ancestor == a:
-                self._cached_is_ancestor[original_pair] = True
-                return True
-            elif depth <= a_depth:
-                continue
-            ancestors.extend(more_ancestors)
-        self._cached_is_ancestor[original_pair] = False
-        return False
+        dtp.stdout.close()
+        if dtp.wait():
+            raise SystemExit("Error: {} failed; see above.".format(cmd)) # pragma: no cover
+        return branchCommits
+
+    # def getCommitBranches(self, refs, branchCommits, commits):
+    #     "Update dict of commits with their branch names - some of which may be anonymous"
+    #     # Setup the rev-list/diff-tree process and read info about file diffs
+    #     cmd = ('git rev-list --topo-order {}'.format(' '.join(refs)) +
+    #                  ' --format=%P')
+    #     dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
+    #     f = dtp.stdout
+    #     line = f.readline()
+    #     if not line:
+    #         return
+    #     cont = bool(line)
+    #     while cont:
+    #         commit = line.rstrip()
+    #         parents = f.readline().split()
+
+    #         if commit in commits:
+    #         commits.append((commit, parents, file_changes))
+    #         line = f.readline()
+    #         if not line:
+    #             break
+
+    #     # Close the output, ensure rev-list|diff-tree pipeline completed successfully
+    #     dtp.stdout.close()
+    #     if dtp.wait():
+    #         raise SystemExit(("Error: rev-list pipeline failed; see above.")) # pragma: no cover
+    #     return
+
+
+class ChangeRevision:
+    "Represents a change - created from P4API supplied information and thus encoding"
+
+    def __init__(self, rev, change, n):
+        self.rev = rev
+        self.action = change['action'][n]
+        self.type = change['type'][n]
+        self.depotFile = change['depotFile'][n]
+        self.localFile = None
+        self.fileSize = 0
+        self.digest = ""
+        self.fixedLocalFile = None
+
+
+    def depotFileRev(self):
+        "Fully specify depot file with rev number"
+        return "%s#%s" % (self.depotFile, self.rev)
+
+    def localFileRev(self):
+        "Fully specify local file with rev number"
+        return "%s#%s" % (self.localFile, self.rev)
+
+    def setLocalFile(self, localFile):
+        self.localFile = localFile
+        localFile = localFile.replace("%40", "@")
+        localFile = localFile.replace("%23", "#")
+        localFile = localFile.replace("%2A", "*")
+        localFile = localFile.replace("%25", "%")
+        localFile = localFile.replace("/", os.sep)
+        self.fixedLocalFile = localFile
+
+    def __repr__(self):
+        return 'rev={rev} action={action} type={type} size={size} digest={digest} depotFile={depotfile}' .format(
+            rev=self.rev,
+            action=self.action,
+            type=self.type,
+            size=self.fileSize,
+            digest=self.digest,
+            depotfile=self.depotFile,
+        )
+
+
 
 class P4Base(object):
     "Processes a config"
@@ -567,15 +645,6 @@ class TempBranch:
 tempBranch = TempBranch()
 
 
-class GitCommit():
-    "Parse commit from git log output"
-
-    def __init__(self, hash, name, email, description) -> None:
-        self.hash = hash
-        self.name = name
-        self.email = email
-        self.description = description
-
 class GitSource(P4Base):
     "Functionality for reading from source Perforce repository"
 
@@ -611,97 +680,6 @@ class GitSource(P4Base):
                 self.logger.debug(msg)
                 raise e
         return output
-
-    def gather_commits(self):
-        # Setup the rev-list/diff-tree process
-        cmd = ('git rev-list master --format=%cn%n%ce%n%B%n"__END_OF_DESC__"')
-        dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
-        f = dtp.stdout
-        line = f.readline()
-        if not line:
-            raise SystemExit(_("Nothing to analyze; repository is empty."))
-        cont = bool(line)
-        commits = {}
-        while cont:
-            if not line:
-                break
-            hash = line.rstrip().split()[1]
-            name = f.readline().rstrip()
-            email = f.readline().rstrip()
-            desc = []
-            
-            in_desc = True
-            while in_desc:
-                line = f.readline().rstrip()
-                if line.startswith(b'__END_OF_DESC__'):
-                    in_desc = False
-                else:
-                    desc.append(line)
-            commits[hash] = GitCommit(hash, name, email, b'\n'.join(desc))
-            line = f.readline()
-        # Close the output, ensure rev-list completed successfully
-        dtp.stdout.close()
-        if dtp.wait():
-            raise SystemExit(_("Error: rev-list pipeline failed; see above.")) # pragma: no cover
-        self.commits = commits
-
-    def gather_data(self):
-        # Setup the rev-list/diff-tree process
-        num_commits = 0
-        cmd = ('git rev-list --topo-order --reverse {}'.format(' '.join(['master'])) +
-                     ' | git diff-tree --stdin --always --root --format=%H%n%P%n%cd' +
-                     ' --date=short -M -t -c --raw --combined-all-paths')
-        dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
-        f = dtp.stdout
-        line = f.readline()
-        if not line:
-            raise SystemExit(_("Nothing to analyze; repository is empty."))
-        cont = bool(line)
-        graph = AncestryGraph()
-        while cont:
-            commit = line.rstrip()
-            parents = f.readline().split()
-            date = f.readline().rstrip()
-
-            # We expect a blank line next; if we get a non-blank line then
-            # this commit modified no files and we need to move on to the next.
-            # If there is no line, we've reached end-of-input.
-            line = f.readline()
-            if not line:
-                cont = False
-            line = line.rstrip()
-
-            # If we haven't reached end of input, and we got a blank line meaning
-            # a commit that has modified files, then get the file changes associated
-            # with this commit.
-            file_changes = []
-            if cont and not line:
-                cont = False
-                for line in f:
-                    if not line.startswith(b':'):
-                        cont = True
-                        break
-                    n = 1 + max(1, len(parents))
-                    assert line.startswith(b':'*(n-1))
-                    relevant = line[n-1:-1]
-                    splits = relevant.split(None, n)
-                    modes = splits[0:n]
-                    splits = splits[n].split(None, n)
-                    shas = splits[0:n]
-                    splits = splits[n].split(b'\t')
-                    change_types = splits[0]
-                    filenames = [PathQuoting.dequote(x) for x in splits[1:]]
-                    file_changes.append([modes, shas, change_types, filenames])
-
-            # If someone is trying to analyze a subset of the history, make sure
-            # to avoid dying on commits with parents that we haven't seen before
-            # if args.refs:
-            graph.record_external_commits([p for p in parents if not p in graph.value])
-
-        # Close the output, ensure rev-list|diff-tree pipeline completed successfully
-        dtp.stdout.close()
-        if dtp.wait():
-            raise SystemExit(_("Error: rev-list|diff-tree pipeline failed; see above.")) # pragma: no cover
 
     def missingCommits(self, counter):
         self.gather_commits()
