@@ -95,6 +95,16 @@ subproc = subprocess  # Could have a wrapper for use on Windows
 VERSION = """$Id: 74939df934a7a660e6beff62870f65635918300b $"""
 
 
+if bytes is not str:
+    # For python3, always encode and decode as appropriate
+    def decode_text_stream(s):
+        return s.decode() if isinstance(s, bytes) else s
+else:
+    # For python2.7, pass read strings as-is
+    def decode_text_stream(s):
+        return s
+
+
 def logrepr(self):
     return pprint.pformat(self.__dict__, width=240)
 
@@ -308,8 +318,8 @@ class PathQuoting:
 
     @staticmethod
     def dequote(quoted_string):
-        if quoted_string.startswith(b'"'):
-            assert quoted_string.endswith(b'"')
+        if quoted_string.startswith('"'):
+            assert quoted_string.endswith('"')
             return PathQuoting._unescape_re.sub(PathQuoting.unescape_sequence,
                                                 quoted_string[1:-1])
         return quoted_string
@@ -326,6 +336,16 @@ class PathQuoting:
         return unquoted_string
 
 
+class GitFileChanges():
+    "Convenience class for file changes as part of a git commit"
+
+    def __init__(self, modes, shas, changeTypes, filenames) -> None:
+        self.modes = modes
+        self.shas = shas
+        self.changeTypes = changeTypes
+        self.filenames = filenames
+
+
 class GitCommit():
     "Convenience class for a git commit"
 
@@ -335,7 +355,7 @@ class GitCommit():
         self.email = email
         self.description = description
         self.parents = []
-        self.file_changes = []
+        self.fileChanges = []
         self.branch = None
 
 
@@ -353,7 +373,7 @@ class GitInfo:
             self.logger.debug(cmd)
         dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
         f = dtp.stdout
-        line = f.readline()
+        line = decode_text_stream(f.readline())
         if not line:
             raise SystemExit(("Nothing to analyze; repository is empty."))
         cont = bool(line)
@@ -361,20 +381,20 @@ class GitInfo:
         while cont:
             if not line:
                 break
-            commitID = line.rstrip().split()[1]
-            name = f.readline().rstrip()
-            email = f.readline().rstrip()
+            commitID = decode_text_stream(line).rstrip().split()[1]
+            name = decode_text_stream(f.readline()).rstrip()
+            email = decode_text_stream(f.readline()).rstrip()
             desc = []
             
             in_desc = True
             while in_desc:
-                line = f.readline().rstrip()
-                if line.startswith(b'__END_OF_DESC__'):
+                line = decode_text_stream(f.readline()).rstrip()
+                if line.startswith('__END_OF_DESC__'):
                     in_desc = False
                 elif line:
                     desc.append(line)
-            commits[commitID] = GitCommit(commitID, name, email, b'\n'.join(desc))
-            line = f.readline()
+            commits[commitID] = GitCommit(commitID, name, email, '\n'.join(desc))
+            line = decode_text_stream(f.readline())
         # Close the output, ensure command completed successfully
         dtp.stdout.close()
         if dtp.wait():
@@ -394,30 +414,30 @@ class GitInfo:
         f = dtp.stdout
         commitList = []
         commits = {}
-        line = f.readline()
+        line = decode_text_stream(f.readline())
         if not line:
             return commitList, commits
         cont = bool(line)
         
         while cont:
-            commitID = line.rstrip()
-            parents = f.readline().split()
-            name = f.readline().rstrip()
-            email = f.readline().rstrip()
+            commitID = decode_text_stream(line).rstrip()
+            parents = decode_text_stream(f.readline()).split()
+            name = decode_text_stream(f.readline()).rstrip()
+            email = decode_text_stream(f.readline()).rstrip()
             desc = []
             in_desc = True
             while in_desc:
-                line = f.readline().rstrip()
-                if line.startswith(b'__END_OF_DESC__'):
+                line = decode_text_stream(f.readline()).rstrip()
+                if line.startswith('__END_OF_DESC__'):
                     in_desc = False
                 elif line:
                     desc.append(line)
-            date = f.readline().rstrip()
+            date = decode_text_stream(f.readline()).rstrip()
 
             # We expect a blank line next; if we get a non-blank line then
             # this commit modified no files and we need to move on to the next.
             # If there is no line, we've reached end-of-input.
-            line = f.readline()
+            line = decode_text_stream(f.readline())
             if not line:
                 cont = False
             line = line.rstrip()
@@ -425,28 +445,29 @@ class GitInfo:
             # If we haven't reached end of input, and we got a blank line meaning
             # a commit that has modified files, then get the file changes associated
             # with this commit.
-            file_changes = []
+            fileChanges = []
             if cont and not line:
                 cont = False
                 for line in f:
-                    if not line.startswith(b':'):
+                    line = decode_text_stream(line)
+                    if not line.startswith(':'):
                         cont = True
                         break
                     n = 1 + max(1, len(parents))
-                    assert line.startswith(b':'*(n-1))
+                    assert line.startswith(':'*(n-1))
                     relevant = line[n-1:-1]
                     splits = relevant.split(None, n)
                     modes = splits[0:n]
                     splits = splits[n].split(None, n)
                     shas = splits[0:n]
-                    splits = splits[n].split(b'\t')
+                    splits = splits[n].split('\t')
                     change_types = splits[0]
                     filenames = [PathQuoting.dequote(x) for x in splits[1:]]
-                    file_changes.append([modes, shas, change_types, filenames])
+                    fileChanges.append(GitFileChanges(modes, shas, change_types, filenames))
 
-            commits[commitID] = GitCommit(commitID, name, email, b'\n'.join(desc))
+            commits[commitID] = GitCommit(commitID, name, email, '\n'.join(desc))
             commits[commitID].parents = parents
-            commits[commitID].file_changes = file_changes
+            commits[commitID].fileChanges = fileChanges
             commitList.append(commitID)
 
         # Close the output, ensure rev-list|diff-tree pipeline completed successfully
@@ -465,14 +486,14 @@ class GitInfo:
                 self.logger.debug(cmd)
             dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
             f = dtp.stdout
-            line = f.readline()
+            line = decode_text_stream(f.readline())
             if not line:
                 return
             cont = bool(line)
             while cont:
-                commit = line.rstrip()
+                commit = decode_text_stream(line).rstrip()
                 branchCommits[b].append(commit)
-                line = f.readline()
+                line = decode_text_stream(f.readline())
                 if not line:
                     break
 
@@ -497,7 +518,7 @@ class GitInfo:
     #         parents = f.readline().split()
 
     #         if commit in commits:
-    #         commits.append((commit, parents, file_changes))
+    #         commits.append((commit, parents, fileChanges))
     #         line = f.readline()
     #         if not line:
     #             break
@@ -713,7 +734,7 @@ class GitSource(P4Base):
         # self.gather_commits()
         self.gitinfo = GitInfo(self.logger)
         commitList, commits = self.gitinfo.getCommitDiffs(['master'])
-        self.logger.debug("commits: %s" % b' '.join(commitList))
+        self.logger.debug("commits: %s" % ' '.join(commitList))
         # revRange = ''
         # if counter and counter != '0':
         #     revRange = '{rev}..HEAD'.format(rev=counter)
@@ -730,7 +751,7 @@ class GitSource(P4Base):
 
     def checkoutCommit(self, commitID):
         """Expects change number as a string, and returns list of filerevs"""
-        args = ['git', 'checkout', '-b', tempBranch.getNext(), commitID.decode()]
+        args = ['git', 'checkout', '-b', tempBranch.getNext(), commitID]
         self.run_cmd(' '.join(args))
         if tempBranch.getOld():
             args = ['git', 'branch', '-D', '-f', tempBranch.getOld()]
@@ -765,7 +786,16 @@ class P4Target(P4Base):
         """This is the heart of it all. Replicate a single commit/change"""
 
         self.filesToIgnore = []
-        self.p4cmd('reconcile', '-mead')
+        for fc in commit.fileChanges:
+            # self.p4cmd('reconcile', '-mead')
+            if fc.changeTypes == 'A':
+                self.p4cmd('add', fc.filenames[0])
+            elif fc.changeTypes == 'M':
+                self.p4cmd('edit', fc.filenames[0])
+            elif fc.changeTypes == 'D':
+                self.p4cmd('delete', fc.filenames[0])
+            else:
+                self.logger.error('Unknown action: %s', fc.changeTypes)
         openedFiles = self.p4cmd('opened')
         lenOpenedFiles = len(openedFiles)
         if lenOpenedFiles > 0:

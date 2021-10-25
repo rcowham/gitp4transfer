@@ -556,10 +556,10 @@ class TestGitP4Transfer(unittest.TestCase):
 
         gitinfo = GitP4Transfer.GitInfo(test_logger)
         commits = gitinfo.getBasicCommitInfo(['master'])
-        test_logger.debug("commits: %s" % b' '.join(commits))
+        test_logger.debug("commits: %s" % ' '.join(commits))
         self.assertEqual(1, len(commits))
         for _, v in commits.items():
-            self.assertEqual(b'first change', v.description)
+            self.assertEqual('first change', v.description)
 
     def testBranchCommitInfo(self):
         "Basic git info for a branch"
@@ -583,17 +583,17 @@ class TestGitP4Transfer(unittest.TestCase):
         commits = gitinfo.getBasicCommitInfo([branch])
         branchCommits = gitinfo.getBranchCommits([branch])
         clist = branchCommits[branch]
-        test_logger.debug("commits: %s" % b' '.join(clist))
+        test_logger.debug("commits: %s" % ' '.join(clist))
         self.assertEqual(1, len(clist))
         for id in clist:
             self.assertTrue(id in commits)
-            self.assertEqual(b'first change', commits[id].description)
+            self.assertEqual('first change', commits[id].description)
 
         branch = 'branch1'
         commits = gitinfo.getBasicCommitInfo([branch])
         branchCommits = gitinfo.getBranchCommits([branch])
         clist = branchCommits[branch]
-        test_logger.debug("commits: %s" % b' '.join(clist))
+        test_logger.debug("commits: %s" % ' '.join(clist))
         self.assertEqual(2, len(clist))
         for id in clist:
             self.assertTrue(id in commits)
@@ -624,18 +624,18 @@ class TestGitP4Transfer(unittest.TestCase):
         branches = ['master', 'branch1']
         commitList, commits = gitinfo.getCommitDiffs(branches)
         self.assertEqual(2, len(commitList))
-        test_logger.debug("commits: %s" % b' '.join(commitList))
-        self.assertEqual(b'first change', commits[commitList[0]].description)
-        # file_changes.append([modes, shas, change_types, filenames])
-        fc = commits[commitList[0]].file_changes
+        test_logger.debug("commits: %s" % ' '.join(commitList))
+        self.assertEqual('first change', commits[commitList[0]].description)
+        fc = commits[commitList[0]].fileChanges
         self.assertEqual(2, len(fc))
-        self.assertEqual(b'.p4config', fc[0][3][0])
-        self.assertEqual(b'file1', fc[1][3][0])
-        self.assertEqual(b'A', fc[1][2])
-        self.assertEqual(b'2nd change', commits[commitList[1]].description)
-        fc = commits[commitList[1]].file_changes
+        self.assertEqual('.p4config', fc[0].filenames[0])
+        self.assertEqual('file1', fc[1].filenames[0])
+        self.assertEqual('A', fc[1].changeTypes)
+        self.assertEqual('2nd change', commits[commitList[1]].description)
+        fc = commits[commitList[1]].fileChanges
         self.assertEqual(1, len(fc))
         self.assertEqual(commits[commitList[0]].commitID, commits[commitList[1]].parents[0])
+        self.assertEqual('file2', fc[0].filenames[0])
 
     def testAdd(self):
         "Basic file add"
