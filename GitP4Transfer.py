@@ -38,6 +38,8 @@ DESCRIPTION:
 
     This script transfers changes in one direction - from a source Git server to a target p4 server.
     It handles LFS files in the source server (assuming git LFS is suitably installed and enabled)
+    
+    Requires Git version 2.7+ due to use of formatting flags
 
     Usage:
 
@@ -327,22 +329,28 @@ class PathQuoting:
 class GitCommit():
     "Convenience class for a git commit"
 
-    def __init__(self, hash, name, email, description) -> None:
-        self.hash = hash
+    def __init__(self, commitID, name, email, description) -> None:
+        self.commitID = commitID
         self.name = name
         self.email = email
         self.description = description
         self.parents = []
+        self.file_changes = []
         self.branch = None
 
 
 class GitInfo:
     "Extract info about Git repo"
     
+    def __init__(self, logger) -> None:
+        self.logger = logger
+    
     def getBasicCommitInfo(self, refs):
         "Return a dict indexed by commit hash of populated GitCommit objects"
         # Format string: %cn=committer, %ce=committer email, %B=raw desc
         cmd = ('git rev-list %s %s' % (' '.join(refs), '--format=%cn%n%ce%n%B%n"__END_OF_DESC__"'))
+        if self.logger:
+            self.logger.debug(cmd)
         dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
         f = dtp.stdout
         line = f.readline()
@@ -353,7 +361,7 @@ class GitInfo:
         while cont:
             if not line:
                 break
-            hash = line.rstrip().split()[1]
+            commitID = line.rstrip().split()[1]
             name = f.readline().rstrip()
             email = f.readline().rstrip()
             desc = []
@@ -363,9 +371,9 @@ class GitInfo:
                 line = f.readline().rstrip()
                 if line.startswith(b'__END_OF_DESC__'):
                     in_desc = False
-                else:
+                elif line:
                     desc.append(line)
-            commits[hash] = GitCommit(hash, name, email, b'\n'.join(desc))
+            commits[commitID] = GitCommit(commitID, name, email, b'\n'.join(desc))
             line = f.readline()
         # Close the output, ensure command completed successfully
         dtp.stdout.close()
@@ -374,22 +382,36 @@ class GitInfo:
         return commits
 
     def getCommitDiffs(self, refs):
-        "Return array of commits in reverse topo order for processing"
+        "Return array of commits in reverse topo order for processing, together with dict of commits"
         # Setup the rev-list/diff-tree process and read info about file diffs
+        # Learned from git-filter-repo
         cmd = ('git rev-list --topo-order --reverse {}'.format(' '.join(refs)) +
-                     ' | git diff-tree --stdin --always --root --format=%H%n%P%n%cd' +
-                     ' --date=short -M -t -c --raw --combined-all-paths')
+                     ' | git diff-tree --stdin --always --root --format=%H%n%P%n%cn%n%ce%n%B%n"__END_OF_DESC__"%n%cd' +
+                     ' --date=iso-local -M -t -c --raw --combined-all-paths')
+        if self.logger:
+            self.logger.debug(cmd)
         dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
         f = dtp.stdout
-        commits = []
+        commitList = []
+        commits = {}
         line = f.readline()
         if not line:
-            return commits
+            return commitList, commits
         cont = bool(line)
         
         while cont:
-            commit = line.rstrip()
+            commitID = line.rstrip()
             parents = f.readline().split()
+            name = f.readline().rstrip()
+            email = f.readline().rstrip()
+            desc = []
+            in_desc = True
+            while in_desc:
+                line = f.readline().rstrip()
+                if line.startswith(b'__END_OF_DESC__'):
+                    in_desc = False
+                elif line:
+                    desc.append(line)
             date = f.readline().rstrip()
 
             # We expect a blank line next; if we get a non-blank line then
@@ -421,13 +443,17 @@ class GitInfo:
                     change_types = splits[0]
                     filenames = [PathQuoting.dequote(x) for x in splits[1:]]
                     file_changes.append([modes, shas, change_types, filenames])
-            commits.append((commit, parents, file_changes))
+
+            commits[commitID] = GitCommit(commitID, name, email, b'\n'.join(desc))
+            commits[commitID].parents = parents
+            commits[commitID].file_changes = file_changes
+            commitList.append(commitID)
 
         # Close the output, ensure rev-list|diff-tree pipeline completed successfully
         dtp.stdout.close()
         if dtp.wait():
             raise SystemExit(("Error: rev-list|diff-tree pipeline failed; see above.")) # pragma: no cover
-        return commits
+        return commitList, commits
 
     def getBranchCommits(self, branchRefs):
         "Returns a list of commit ids on the referenced branches"
@@ -435,6 +461,8 @@ class GitInfo:
         for b in branchRefs:
             branchCommits[b] = []
             cmd = ('git rev-list --first-parent {}'.format(b))
+            if self.logger:
+                self.logger.debug(cmd)
             dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
             f = dtp.stdout
             line = f.readline()
@@ -521,7 +549,6 @@ class ChangeRevision:
             digest=self.digest,
             depotfile=self.depotFile,
         )
-
 
 
 class P4Base(object):
@@ -650,6 +677,7 @@ class GitSource(P4Base):
 
     def __init__(self, section, options):
         super(GitSource, self).__init__(section, options, 'src')
+        self.gitinfo = GitInfo(self.logger)
 
     def run_cmd(self, cmd, dir=".", get_output=True, timeout=35, stop_on_error=True):
         "Run cmd logging input and output"
@@ -682,35 +710,27 @@ class GitSource(P4Base):
         return output
 
     def missingCommits(self, counter):
-        self.gather_commits()
-        revRange = ''
-        if counter and counter != '0':
-            revRange = '{rev}..HEAD'.format(rev=counter)
-        maxChanges = 0
-        if self.options.change_batch_size:
-            maxChanges = self.options.change_batch_size
-        if self.options.maximum and self.options.maximum < maxChanges:
-            maxChanges = self.options.maximum
+        # self.gather_commits()
+        self.gitinfo = GitInfo(self.logger)
+        commitList, commits = self.gitinfo.getCommitDiffs(['master'])
+        self.logger.debug("commits: %s" % b' '.join(commitList))
+        # revRange = ''
+        # if counter and counter != '0':
+        #     revRange = '{rev}..HEAD'.format(rev=counter)
+        # maxChanges = 0
+        # if self.options.change_batch_size:
+        #     maxChanges = self.options.change_batch_size
+        # if self.options.maximum and self.options.maximum < maxChanges:
+        #     maxChanges = self.options.maximum
         args = ['git', 'rev-list', '--reverse']
-        if maxChanges > 0:
-            args.append('--max-count=%d' % maxChanges)
-        args.append(revRange)
-        args.append('master')
-        self.logger.debug('reading changes: %s' % ' '.join(args))
-        commits = self.run_cmd(' '.join(args)).split('\n')
-        commits = [x for x in commits if x]
-        self.logger.debug('processing %d commits' % len(commits))
-        return commits
-
-    def getCommit(self, commitID):
-        """returns commit members"""
-        args = ['git', 'log', '--max-count=1', commitID]
-        logLines = self.run_cmd(' '.join(args))
-        return GitCommit(logLines=logLines)
+        # if maxChanges > 0:
+        #     args.append('--max-count=%d' % maxChanges)
+        self.logger.debug('processing %d commits' % len(commitList))
+        return commitList, commits
 
     def checkoutCommit(self, commitID):
         """Expects change number as a string, and returns list of filerevs"""
-        args = ['git', 'checkout', '-b', tempBranch.getNext(), commitID]
+        args = ['git', 'checkout', '-b', tempBranch.getNext(), commitID.decode()]
         self.run_cmd(' '.join(args))
         if tempBranch.getOld():
             args = ['git', 'branch', '-D', '-f', tempBranch.getOld()]
@@ -753,8 +773,8 @@ class P4Target(P4Base):
             # self.fixFileTypes(fileRevs, openedFiles)
             description = self.formatChangeDescription(
                 sourceDescription=commit.description,
-                sourceChange=commit.hash, sourcePort='git_repo',
-                sourceUser=commit.author)
+                sourceChange=commit.commitID, sourcePort='git_repo',
+                sourceUser=commit.name)
             newChangeId = 0
             result = None
             try:
@@ -781,8 +801,8 @@ class P4Target(P4Base):
                 self.logger.info("source = {} : target  = {}".format(commit, newChangeId))
                 description = self.formatChangeDescription(
                     sourceDescription=commit.description,
-                    sourceChange=commit.hash, sourcePort='git_repo',
-                    sourceUser=commit.author)
+                    sourceChange=commit.commitID, sourcePort='git_repo',
+                    sourceUser=commit.name)
                 self.updateChange(newChangeId=newChangeId, description=description)
             else:
                 self.logger.error("failed to replicate change {}".format(commit))
@@ -948,7 +968,7 @@ class GitP4Transfer(object):
         "Perform a replication loop"
         self.target.connect('target replicate')
         self.target.createClientWorkspace()
-        commitIDs = self.source.missingCommits(self.target.getCounter())
+        commitIDs, commits = self.source.missingCommits(self.target.getCounter())
         if self.options.notransfer:
             self.logger.info("Would transfer %d commits - stopping due to --notransfer" % len(commitIDs))
             return 0
@@ -963,9 +983,8 @@ class GitP4Transfer(object):
                     self.logger.info("Transfer stopped due to --end-datetime being exceeded")
                     return changesTransferred
                 msg = 'Processing commit: {}'.format(id)
-                self.source.checkoutCommit(id)
-                commit = self.source.getCommit(id)
                 self.logger.info(msg)
+                commit = commits[id]
                 self.source.checkoutCommit(id)
                 self.target.replicateCommit(commit)
                 self.target.setCounter(id)
