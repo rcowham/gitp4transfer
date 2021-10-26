@@ -460,7 +460,8 @@ class GitInfo:
                     shas = splits[0:n]
                     splits = splits[n].split('\t')
                     change_types = splits[0]
-                    filenames = [PathQuoting.dequote(x) for x in splits[1:]]
+                    # filenames = [PathQuoting.dequote(x) for x in splits[1:]]
+                    filenames = [x for x in splits[1:]]
                     fileChanges.append(GitFileChanges(modes, shas, change_types, filenames))
 
             commits[commitID] = GitCommit(commitID, name, email, '\n'.join(desc))
@@ -768,7 +769,7 @@ class GitSource(P4Base):
         super(GitSource, self).__init__(section, options, 'src')
         self.gitinfo = GitInfo(self.logger)
 
-    def run_cmd(self, cmd, dir=".", get_output=True, timeout=35, stop_on_error=True):
+    def run_cmd(self, cmd, dir=".", get_output=True, timeout=2*60*60, stop_on_error=True):
         "Run cmd logging input and output"
         output = ""
         try:

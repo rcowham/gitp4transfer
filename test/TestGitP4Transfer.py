@@ -95,7 +95,7 @@ def getP4ConfigFilename():
     return ".p4config"
 
 
-def run_cmd(cmd, dir=".", get_output=True, timeout=35, stop_on_error=True):
+def run_cmd(cmd, dir=".", get_output=True, timeout=2*60*60, stop_on_error=True):
     "Run cmd logging input and output"
     output = ""
     try:
