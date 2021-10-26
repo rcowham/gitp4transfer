@@ -826,6 +826,109 @@ class TestGitP4Transfer(unittest.TestCase):
         result = self.target.p4cmd('print', '//depot/import/file1')
         self.assertEqual(b'Test content\nbranch change\n', result[1])
 
+    def testMultipleBranches(self):
+        "Multiple branches with merge"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        contents = ['0'] * 12
+        create_file(file1, "\n".join(contents) + "\n")
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "first change"')
+        self.source.run_cmd('git branch branch1')
+        self.source.run_cmd('git branch branch2')
+        self.source.run_cmd('git branch branch3')
+
+        contents[0] = 'master'
+        create_file(file1, "\n".join(contents) + "\n")
+        self.source.run_cmd('git commit -am "change on master"')
+
+        self.source.run_cmd('git checkout branch1')
+        contents = ['0'] * 12
+        contents[3] = 'branch1'
+        create_file(file1, "\n".join(contents) + "\n")
+        self.source.run_cmd('git commit -am "branch1"')
+
+        self.source.run_cmd('git checkout branch2')
+        contents = ['0'] * 12
+        contents[6] = 'branch2'
+        create_file(file1, "\n".join(contents) + "\n")
+        self.source.run_cmd('git commit -am "branch2"')
+
+        self.source.run_cmd('git checkout master')
+        self.source.run_cmd('git merge --no-edit branch2')
+
+        self.source.run_cmd('git checkout branch3')
+        contents = ['0'] * 12
+        contents[11] = 'branch3'
+        create_file(file1, "\n".join(contents) + "\n")
+        self.source.run_cmd('git commit -am "branch3"')
+
+        self.source.run_cmd('git checkout master')
+        self.source.run_cmd('git merge --no-edit branch1')
+        self.source.run_cmd('git merge --no-edit branch3')
+        self.source.run_cmd('cat file1')
+        self.source.run_cmd('git log --graph --abbrev-commit --oneline')
+
+        # Validate the parsing of the branches
+        gitinfo = GitP4Transfer.GitInfo(test_logger)
+        branchRefs = ['master']
+        commitList, commits = gitinfo.getCommitDiffs(branchRefs)
+        self.assertEqual(8, len(commitList))
+        gitinfo.updateBranchInfo(branchRefs, commitList, commits)
+        self.assertEqual('master', commits[commitList[0]].branch)
+        self.assertEqual('master', commits[commitList[1]].branch)
+        self.assertEqual('_anon0001', commits[commitList[2]].branch)
+        self.assertEqual('master', commits[commitList[3]].branch)
+
+        self.run_GitP4Transfer()
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(8, len(changes))
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(4, len(files))
+        self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/anon_branches/_anon0002/file1', files[1]['depotFile'])
+        self.assertEqual('//depot/anon_branches/_anon0003/file1', files[2]['depotFile'])
+        self.assertEqual('//depot/import/file1', files[3]['depotFile'])
+
+        filelogs = self.target.p4cmd('filelog', '//depot/...')
+        self.assertEqual(4, len(filelogs))
+        # self.assertEqual('add', filelogs[2]['action'][0])
+
+        result = self.target.p4cmd('print', '//depot/import/file1#2')
+        contents = ['0'] * 12
+        contents[0] = 'master'
+        tcontents = '\n'.join(contents) + '\n'
+        self.assertEqual(tcontents.encode(), result[1])
+
+        result = self.target.p4cmd('print', '//depot/import/file1#3')
+        contents = ['0'] * 12
+        contents[0] = 'master'
+        contents[6] = 'branch2'
+        tcontents = '\n'.join(contents) + '\n'
+        self.assertEqual(tcontents.encode(), result[1])
+
+        result = self.target.p4cmd('print', '//depot/import/file1#4')
+        contents = ['0'] * 12
+        contents[0] = 'master'
+        contents[4] = 'branch1'
+        contents[6] = 'branch2'
+        tcontents = '\n'.join(contents) + '\n'
+        self.assertEqual(tcontents.encode(), result[1])
+
+        result = self.target.p4cmd('print', '//depot/import/file1')
+        contents = ['0'] * 12
+        contents[0] = 'master'
+        contents[4] = 'branch1'
+        contents[6] = 'branch2'
+        contents[11] = 'branch3'
+        tcontents = '\n'.join(contents) + '\n'
+        self.assertEqual(tcontents.encode(), result[1])
+
     # def testNonSuperUser(self):
     #     "Test when not a superuser - who can't update"
     #     self.setupTransfer()

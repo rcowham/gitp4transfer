@@ -826,6 +826,12 @@ class GitSource(P4Base):
         self.commitList = commitList
         self.commits = commits
         return commitList, commits
+    
+    def fileModified(self, filename):
+        "Returns true if git thinks file has changed on disk"
+        args = ['git', 'status', '-z', filename]
+        result = self.run_cmd(' '.join(args))
+        return len(result) > 0
 
     def checkoutCommit(self, commitID):
         """Expects change number as a string, and returns list of filerevs"""
@@ -885,17 +891,18 @@ class P4Target(P4Base):
                 self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
                 if fc.changeTypes == 'A':
                     self.p4cmd('add', fc.filenames[0])
-                elif fc.changeTypes == 'M':
+                elif fc.changeTypes == 'M' or fc.changeTypes == 'MM':
                     # Translate target depot to source via client map and branch map
                     depotFile = self.depotmap.translate(os.path.join(self.source.git_repo, fc.filenames[0]))
                     src = branchMap.translate(depotFile, 0)
                     self.p4cmd('sync', '-k', fc.filenames[0])
                     self.p4cmd('integrate', src, fc.filenames[0])
                     self.p4cmd('resolve', '-at')
-                    self.p4cmd('edit', fc.filenames[0])
                     # After whatever p4 has done to the file contents we ensure it is as per git
-                    args = ['git', 'restore', fc.filenames[0]]
-                    self.source.run_cmd(' '.join(args))
+                    if self.source.fileModified(fc.filenames[0]):
+                        self.p4cmd('edit', fc.filenames[0])
+                        args = ['git', 'restore', fc.filenames[0]]
+                        self.source.run_cmd(' '.join(args))
                 elif fc.changeTypes == 'D':
                     self.p4cmd('delete', fc.filenames[0])
                 else: # Better safe than sorry! Various known actions not yet implemented
