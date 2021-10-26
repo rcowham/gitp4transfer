@@ -820,7 +820,7 @@ class TestGitP4Transfer(unittest.TestCase):
         self.assertEqual(3, len(filelogs))
         self.assertEqual('add', filelogs[0]['action'][0])
         self.assertEqual('add', filelogs[1]['action'][1])
-        self.assertEqual('edit', filelogs[1]['action'][0])
+        self.assertEqual('integrate', filelogs[1]['action'][0])
         self.assertEqual('add', filelogs[2]['action'][0])
 
         result = self.target.p4cmd('print', '//depot/import/file1')
