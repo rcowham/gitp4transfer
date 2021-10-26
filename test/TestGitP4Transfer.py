@@ -273,6 +273,7 @@ class TestGitP4Transfer(unittest.TestCase):
         config['transfer_client'] = TRANSFER_CLIENT
         config['target_remote'] = TRANSFER_TARGET_REMOTE
         config['workspace_root'] = self.transfer_client_root
+        config['anon_branches_root'] = '//depot/anon_branches'
         config['branch_maps'] = [{'git_branch': 'master',
                             'targ': '//depot/import'}]
         return config
@@ -725,6 +726,105 @@ class TestGitP4Transfer(unittest.TestCase):
         self.assertEqual('add', filelogs[0]['action'][1])
         self.assertEqual('delete', filelogs[1]['action'][0])
         self.assertEqual('add', filelogs[1]['action'][1])
+
+        result = self.target.p4cmd('print', '//depot/import/file1')
+        self.assertEqual(b'Test content\nMore stuff', result[1])
+
+    def testAddSimpleBranch(self):
+        "Basic simple branch and merge of a file"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        create_file(file1, 'Test content\n')
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "first change"')
+
+        self.source.run_cmd('git checkout -b branch1')
+        append_to_file(file1, "branch change\n")
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "edit change"')
+
+        self.source.run_cmd('git checkout master')
+        self.source.run_cmd('git merge --no-edit branch1')
+        self.source.run_cmd('git commit -m "merged change"')
+        # The above becomes a fast-forward
+
+        self.run_GitP4Transfer()
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(2, len(changes))
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(1, len(files))
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+
+        filelogs = self.target.p4cmd('filelog', '//depot/...')
+        self.assertEqual(1, len(filelogs))
+        self.assertEqual('edit', filelogs[0]['action'][0])
+        self.assertEqual('add', filelogs[0]['action'][1])
+
+        result = self.target.p4cmd('print', '//depot/import/file1')
+        self.assertEqual(b'Test content\nbranch change\n', result[1])
+
+    def testSimpleMerge(self):
+        "Basic simple branch and merge"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        file2 = os.path.join(inside, "file2")
+        create_file(file1, 'Test content\n')
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "first change"')
+
+        self.source.run_cmd('git checkout -b branch1')
+        append_to_file(file1, "branch change\n")
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "edit change"')
+
+        self.source.run_cmd('git checkout master')
+        create_file(file2, 'Test content2\n')
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "new file on master"')
+
+        self.source.run_cmd('git merge --no-edit branch1')
+        self.source.run_cmd('git commit -m "merged change"')
+        self.source.run_cmd('git log --graph --abbrev-commit --oneline')
+
+        # Validate the parsing of the branches
+        gitinfo = GitP4Transfer.GitInfo(test_logger)
+        branchRefs = ['master']
+        commitList, commits = gitinfo.getCommitDiffs(branchRefs)
+        self.assertEqual(4, len(commitList))
+        gitinfo.updateBranchInfo(branchRefs, commitList, commits)
+        self.assertEqual('master', commits[commitList[0]].branch)
+        self.assertEqual('master', commits[commitList[1]].branch)
+        self.assertEqual('_anon0001', commits[commitList[2]].branch)
+        self.assertEqual('master', commits[commitList[3]].branch)
+
+        self.run_GitP4Transfer()
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(4, len(changes))
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(3, len(files))
+        self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/import/file1', files[1]['depotFile'])
+        self.assertEqual('//depot/import/file2', files[2]['depotFile'])
+
+        filelogs = self.target.p4cmd('filelog', '//depot/...')
+        self.assertEqual(3, len(filelogs))
+        self.assertEqual('add', filelogs[0]['action'][0])
+        self.assertEqual('add', filelogs[1]['action'][1])
+        self.assertEqual('edit', filelogs[1]['action'][0])
+        self.assertEqual('add', filelogs[2]['action'][0])
+
+        result = self.target.p4cmd('print', '//depot/import/file1')
+        self.assertEqual(b'Test content\nbranch change\n', result[1])
 
     # def testNonSuperUser(self):
     #     "Test when not a superuser - who can't update"

@@ -38,7 +38,7 @@ DESCRIPTION:
 
     This script transfers changes in one direction - from a source Git server to a target p4 server.
     It handles LFS files in the source server (assuming git LFS is suitably installed and enabled)
-    
+
     Requires Git version 2.7+ due to use of formatting flags
 
     Usage:
@@ -65,7 +65,7 @@ DESCRIPTION:
 #       Simple changes
 #       Branch changes
 #       Merge changes
-    
+
 from __future__ import print_function, division
 from os import error
 
@@ -93,6 +93,7 @@ yaml = YAML()
 subproc = subprocess  # Could have a wrapper for use on Windows
 
 VERSION = """$Id: 74939df934a7a660e6beff62870f65635918300b $"""
+ANON_BRANCH_PREFIX = "_anon"
 
 
 if bytes is not str:
@@ -103,6 +104,10 @@ else:
     # For python2.7, pass read strings as-is
     def decode_text_stream(s):
         return s
+
+
+def anonymousBranch(branch):
+    return branch.startswith(ANON_BRANCH_PREFIX)
 
 
 def logrepr(self):
@@ -252,11 +257,11 @@ branch_maps:
   - git_branch:  "master"
     targ:   "//git_import/master"
 
-# temp_branches_root: A depot path used for temp branches (names automatically generated).
+# anon_branches_root: A depot path used for anonymous git branches (names automatically generated).
 #   Mandatory.
 #   Such branches only contain files modified on git branch.
-#   Name is something like git_temp_<suffix>
-temp_branches_root: //git_import/temp_branches
+#   Name of branch under this root is _anonNNNN with a unique ID.
+anon_branches_root: //git_import/temp_branches
 
 """)
 
@@ -357,14 +362,17 @@ class GitCommit():
         self.parents = []
         self.fileChanges = []
         self.branch = None
+        self.parentBranch = None
+        self.firstOnBranch = False
 
 
 class GitInfo:
     "Extract info about Git repo"
-    
+
     def __init__(self, logger) -> None:
         self.logger = logger
-    
+        self.anonBranchInd = 0
+
     def getBasicCommitInfo(self, refs):
         "Return a dict indexed by commit hash of populated GitCommit objects"
         # Format string: %cn=committer, %ce=committer email, %B=raw desc
@@ -385,7 +393,7 @@ class GitInfo:
             name = decode_text_stream(f.readline()).rstrip()
             email = decode_text_stream(f.readline()).rstrip()
             desc = []
-            
+
             in_desc = True
             while in_desc:
                 line = decode_text_stream(f.readline()).rstrip()
@@ -418,7 +426,7 @@ class GitInfo:
         if not line:
             return commitList, commits
         cont = bool(line)
-        
+
         while cont:
             commitID = decode_text_stream(line).rstrip()
             parents = decode_text_stream(f.readline()).split()
@@ -476,6 +484,34 @@ class GitInfo:
             raise SystemExit(("Error: rev-list|diff-tree pipeline failed; see above.")) # pragma: no cover
         return commitList, commits
 
+    def getFileChanges(self, commit):
+        "Return file changes for a commit which is a merge - thus itself against its first parent"
+        cmd = ('git diff-tree -r {} {}'.format(commit.commitID, commit.parents[0]))
+        if self.logger:
+            self.logger.debug(cmd)
+        dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
+        f = dtp.stdout
+        fileChanges = []
+        for line in f:
+            line = decode_text_stream(line)
+            if not line.startswith(':'):
+                continue
+            n = 2 # 1 + max(1, len(commit.parents))
+            assert line.startswith(':'*(n-1))
+            relevant = line[n-1:-1]
+            splits = relevant.split(None, n)
+            modes = splits[0:n]
+            splits = splits[n].split(None, n)
+            shas = splits[0:n]
+            splits = splits[n].split('\t')
+            change_types = splits[0]
+            filenames = [PathQuoting.dequote(x) for x in splits[1:]]
+            fileChanges.append(GitFileChanges(modes, shas, change_types, filenames))
+        dtp.stdout.close()
+        if dtp.wait():
+            raise SystemExit(("Error: {} failed; see above.".format(cmd))) # pragma: no cover
+        return fileChanges
+
     def getBranchCommits(self, branchRefs):
         "Returns a list of commit ids on the referenced branches"
         branchCommits = {}
@@ -502,32 +538,27 @@ class GitInfo:
             raise SystemExit("Error: {} failed; see above.".format(cmd)) # pragma: no cover
         return branchCommits
 
-    # def getCommitBranches(self, refs, branchCommits, commits):
-    #     "Update dict of commits with their branch names - some of which may be anonymous"
-    #     # Setup the rev-list/diff-tree process and read info about file diffs
-    #     cmd = ('git rev-list --topo-order {}'.format(' '.join(refs)) +
-    #                  ' --format=%P')
-    #     dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
-    #     f = dtp.stdout
-    #     line = f.readline()
-    #     if not line:
-    #         return
-    #     cont = bool(line)
-    #     while cont:
-    #         commit = line.rstrip()
-    #         parents = f.readline().split()
-
-    #         if commit in commits:
-    #         commits.append((commit, parents, fileChanges))
-    #         line = f.readline()
-    #         if not line:
-    #             break
-
-    #     # Close the output, ensure rev-list|diff-tree pipeline completed successfully
-    #     dtp.stdout.close()
-    #     if dtp.wait():
-    #         raise SystemExit(("Error: rev-list pipeline failed; see above.")) # pragma: no cover
-    #     return
+    def updateBranchInfo(self, branchRefs, commitList, commits):
+        "Updates the branch details for every commit"
+        branchCommits = self.getBranchCommits(branchRefs)
+        for b in branchRefs:
+            for id in branchCommits[b]:
+                if not id in commitList:
+                    raise P4TException("Failed to find commit: %s" % id)
+                commits[id].branch = b
+        # Now update anonymous branches - in commit order (so parents first)
+        for id in commitList:
+            if not commits[id].branch:
+                firstParent = commits[id].parents[0]
+                assert(commits[firstParent].branch is not None)
+                if not commits[firstParent].branch.startswith(ANON_BRANCH_PREFIX):
+                    self.anonBranchInd += 1
+                    anonBranch = "%s%04d" % (ANON_BRANCH_PREFIX, self.anonBranchInd)
+                    commits[id].branch = anonBranch
+                    commits[id].parentBranch = commits[firstParent].branch
+                    commits[id].firstOnBranch = True
+                else:
+                    commits[id].branch = commits[firstParent].branch
 
 
 class ChangeRevision:
@@ -647,14 +678,12 @@ class P4Base(object):
         clientspec["Options"] = clientspec["Options"].replace("noallwrite", "allwrite")
         clientspec["LineEnd"] = "unix"
         clientView = []
-        for v in self.options.branch_maps:
-            exclude = ''
-            # srcPath = v['git_branch']
-            line = "%s%s/... //%s/..." % (exclude, v['targ'], self.p4.client)
+        v = self.options.branch_maps[0] # Start with first one - assume to be equivalent of master
+        line = "%s/... //%s/..." % (v['targ'], self.p4.client)
+        clientView.append(line)
+        for exclude in ['.git/...']:
+            line = "-%s/%s //%s/%s" % (v['targ'], exclude, self.p4.client, exclude)
             clientView.append(line)
-            for exclude in ['.git*', '.git/...']:
-                line = "-%s/%s //%s/%s" % (v['targ'], exclude, self.p4.client, exclude)
-                clientView.append(line)
 
         clientspec._view = clientView
         self.clientmap = P4.Map(clientView)
@@ -663,10 +692,59 @@ class P4Base(object):
         logOnce(self.logger, "updated %s:%s:%s" % (self.p4id, self.p4.client, pprint.pformat(clientspec)))
 
         self.p4.cwd = self.root
-
         ctr = P4.Map('//"'+clientspec._client+'/..."   "' + clientspec._root + '/..."')
         self.localmap = P4.Map.join(self.clientmap, ctr)
         self.depotmap = self.localmap.reverse()
+
+    def updateClientWorkspace(self, branch):
+        """ Adjust client workspace for new branch"""
+        clientspec = self.p4.fetch_client(self.p4.client)
+        logOnce(self.logger, "orig %s:%s:%s" % (self.p4id, self.p4.client, pprint.pformat(clientspec)))
+
+        clientView = []
+        if anonymousBranch(branch):
+            targ = "%s/%s" % (self.options.anon_branches_root, branch)
+        else:
+            for v in self.options.branch_maps:
+                if v['git_branch'] == branch:
+                    targ = v['targ']
+                    break
+        line = "%s/... //%s/..." % (targ, self.p4.client)
+        clientView.append(line)
+        for exclude in ['.git/...']:
+            line = "-%s/%s //%s/%s" % (targ, exclude, self.p4.client, exclude)
+            clientView.append(line)
+
+        clientspec._view = clientView
+        self.clientmap = P4.Map(clientView)
+        self.clientspec = clientspec
+        self.p4.save_client(clientspec)
+        logOnce(self.logger, "updated %s:%s:%s" % (self.p4id, self.p4.client, pprint.pformat(clientspec)))
+        self.logger.debug("Updated client view for branch: %s" % branch)
+        ctr = P4.Map('//"'+clientspec._client+'/..."   "' + clientspec._root + '/..."')
+        self.localmap = P4.Map.join(self.clientmap, ctr)
+        self.depotmap = self.localmap.reverse()
+
+    def getBranchMap(self, origBranch, newBranch):
+        """Create a mapping between original and new branches"""
+        src = ""
+        targ = ""
+        if anonymousBranch(origBranch):
+            src = "%s/%s" % (self.options.anon_branches_root, origBranch)
+        else:
+            for v in self.options.branch_maps:
+                if v['git_branch'] == origBranch:
+                    src = v['targ']
+        if anonymousBranch(newBranch):
+            targ = "%s/%s" % (self.options.anon_branches_root, newBranch)
+        else:
+            for v in self.options.branch_maps:
+                if v['git_branch'] == newBranch:
+                    targ = v['targ']
+        line = "%s/... %s/..." % (src, targ)
+        self.logger.debug("Map: %s" % line)
+        branchMap = P4.Map(line)
+        return branchMap
 
 
 class TempBranch:
@@ -732,21 +810,21 @@ class GitSource(P4Base):
 
     def missingCommits(self, counter):
         # self.gather_commits()
+        branchRefs = ['master']   # TODO
         self.gitinfo = GitInfo(self.logger)
-        commitList, commits = self.gitinfo.getCommitDiffs(['master'])
+        commitList, commits = self.gitinfo.getCommitDiffs(branchRefs)
+        self.gitinfo.updateBranchInfo(branchRefs, commitList, commits)
         self.logger.debug("commits: %s" % ' '.join(commitList))
-        # revRange = ''
-        # if counter and counter != '0':
-        #     revRange = '{rev}..HEAD'.format(rev=counter)
-        # maxChanges = 0
-        # if self.options.change_batch_size:
-        #     maxChanges = self.options.change_batch_size
-        # if self.options.maximum and self.options.maximum < maxChanges:
-        #     maxChanges = self.options.maximum
-        args = ['git', 'rev-list', '--reverse']
-        # if maxChanges > 0:
-        #     args.append('--max-count=%d' % maxChanges)
+        maxChanges = 0
+        if self.options.change_batch_size:
+            maxChanges = self.options.change_batch_size
+        if self.options.maximum and self.options.maximum < maxChanges:
+            maxChanges = self.options.maximum
+        if maxChanges > 0:
+            commitList = commitList[:maxChanges]
         self.logger.debug('processing %d commits' % len(commitList))
+        self.commitList = commitList
+        self.commits = commits
         return commitList, commits
 
     def checkoutCommit(self, commitID):
@@ -764,6 +842,7 @@ class P4Target(P4Base):
         super(P4Target, self).__init__(section, options, 'targ')
         self.source = source
         self.filesToIgnore = []
+        self.currentBranch = ""
 
     def formatChangeDescription(self, **kwargs):
         """Format using specified format options - see call in replicateCommit"""
@@ -786,16 +865,53 @@ class P4Target(P4Base):
         """This is the heart of it all. Replicate a single commit/change"""
 
         self.filesToIgnore = []
-        for fc in commit.fileChanges:
-            # self.p4cmd('reconcile', '-mead')
-            if fc.changeTypes == 'A':
-                self.p4cmd('add', fc.filenames[0])
-            elif fc.changeTypes == 'M':
-                self.p4cmd('edit', fc.filenames[0])
-            elif fc.changeTypes == 'D':
-                self.p4cmd('delete', fc.filenames[0])
+        if self.currentBranch == "":
+            self.currentBranch = commit.branch
+        if self.currentBranch != commit.branch:
+            self.updateClientWorkspace(commit.branch)
+            if commit.firstOnBranch:
+                self.p4cmd('sync', '-k')
+            fileChanges = commit.fileChanges
+            if len(commit.parents) > 1:
+                # merge commit
+                parentBranch = self.source.commits[commit.parents[1]].branch
+                branchMap = self.getBranchMap(parentBranch, commit.branch)
             else:
-                self.logger.error('Unknown action: %s', fc.changeTypes)
+                branchMap = self.getBranchMap(commit.parentBranch, commit.branch)
+            if len(fileChanges) == 0:
+                # Do a git diff-tree to make sure we detect files changed on the target branch.
+                fileChanges = self.source.gitinfo.getFileChanges(commit)
+            for fc in fileChanges:
+                self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
+                if fc.changeTypes == 'A':
+                    self.p4cmd('add', fc.filenames[0])
+                elif fc.changeTypes == 'M':
+                    # Translate target depot to source via client map and branch map
+                    depotFile = self.depotmap.translate(os.path.join(self.source.git_repo, fc.filenames[0]))
+                    src = branchMap.translate(depotFile, 0)
+                    self.p4cmd('sync', '-k', fc.filenames[0])
+                    self.p4cmd('integrate', src, fc.filenames[0])
+                    self.p4cmd('resolve', '-at')
+                    self.p4cmd('edit', fc.filenames[0])
+                    # After whatever p4 has done to the file contents we ensure it is as per git
+                    args = ['git', 'restore', fc.filenames[0]]
+                    self.source.run_cmd(' '.join(args))
+                elif fc.changeTypes == 'D':
+                    self.p4cmd('delete', fc.filenames[0])
+                else: # Better safe than sorry! Various known actions not yet implemented
+                    raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
+            self.currentBranch = commit.branch
+        else:
+            for fc in commit.fileChanges:
+                self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
+                if fc.changeTypes == 'A':
+                    self.p4cmd('add', fc.filenames[0])
+                elif fc.changeTypes == 'M':
+                    self.p4cmd('edit', fc.filenames[0])
+                elif fc.changeTypes == 'D':
+                    self.p4cmd('delete', fc.filenames[0])
+                else: # Better safe than sorry! Various known actions not yet implemented
+                    raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
         openedFiles = self.p4cmd('opened')
         lenOpenedFiles = len(openedFiles)
         if lenOpenedFiles > 0:
@@ -828,7 +944,7 @@ class P4Target(P4Base):
                 raise e
 
             if newChangeId:
-                self.logger.info("source = {} : target  = {}".format(commit, newChangeId))
+                self.logger.info("source = {} : target  = {}".format(commit.commitID, newChangeId))
                 description = self.formatChangeDescription(
                     sourceDescription=commit.description,
                     sourceChange=commit.commitID, sourcePort='git_repo',
@@ -952,6 +1068,7 @@ class GitP4Transfer(object):
         self.options.branch_maps = self.getOption(GENERAL_SECTION, "branch_maps")
         if not self.options.branch_maps:
             errors.append("Option branch_maps must not be empty")
+        self.options.anon_branches_root = self.getOption(GENERAL_SECTION, "anon_branches_root")
         self.options.ignore_files = self.getOption(GENERAL_SECTION, "ignore_files")
         self.options.re_ignore_files = []
         if self.options.ignore_files:
