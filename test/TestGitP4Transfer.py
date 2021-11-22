@@ -273,7 +273,8 @@ class TestGitP4Transfer(unittest.TestCase):
         config['transfer_client'] = TRANSFER_CLIENT
         config['target_remote'] = TRANSFER_TARGET_REMOTE
         config['workspace_root'] = self.transfer_client_root
-        config['anon_branches_root'] = '//depot/anon_branches'
+        config['import_anon_branches'] = 'n'
+        config['anon_branches_root'] = ''
         config['branch_maps'] = [{'git_branch': 'master',
                             'targ': '//depot/import'}]
         return config
@@ -626,17 +627,18 @@ class TestGitP4Transfer(unittest.TestCase):
         commitList, commits = gitinfo.getCommitDiffs(branches)
         self.assertEqual(2, len(commitList))
         test_logger.debug("commits: %s" % ' '.join(commitList))
-        self.assertEqual('first change', commits[commitList[0]].description)
+        self.assertEqual('2nd change', commits[commitList[0]].description)
+        self.assertEqual('first change', commits[commitList[1]].description)
         fc = commits[commitList[0]].fileChanges
+        self.assertEqual(1, len(fc))
+        self.assertEqual('file2', fc[0].filenames[0])
+        self.assertEqual('A', fc[0].changeTypes)
+        self.assertEqual('first change', commits[commitList[1]].description)
+        fc = commits[commitList[1]].fileChanges
         self.assertEqual(2, len(fc))
+        self.assertEqual(commits[commitList[1]].commitID, commits[commitList[0]].parents[0])
         self.assertEqual('.p4config', fc[0].filenames[0])
         self.assertEqual('file1', fc[1].filenames[0])
-        self.assertEqual('A', fc[1].changeTypes)
-        self.assertEqual('2nd change', commits[commitList[1]].description)
-        fc = commits[commitList[1]].fileChanges
-        self.assertEqual(1, len(fc))
-        self.assertEqual(commits[commitList[0]].commitID, commits[commitList[1]].parents[0])
-        self.assertEqual('file2', fc[0].filenames[0])
 
     def testAdd(self):
         "Basic file add"
@@ -769,7 +771,7 @@ class TestGitP4Transfer(unittest.TestCase):
         self.assertEqual(b'Test content\nbranch change\n', result[1])
 
     def testSimpleMerge(self):
-        "Basic simple branch and merge"
+        "Basic simple branch and merge - only taking master changes"
         self.setupTransfer()
 
         inside = self.source.repo_root
@@ -778,50 +780,50 @@ class TestGitP4Transfer(unittest.TestCase):
         create_file(file1, 'Test content\n')
 
         self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "first change"')
+        self.source.run_cmd('git commit -m "1: first change"')
 
         self.source.run_cmd('git checkout -b branch1')
         append_to_file(file1, "branch change\n")
         self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "edit change"')
+        self.source.run_cmd('git commit -m "2: branch edit change"')
 
         self.source.run_cmd('git checkout master')
         create_file(file2, 'Test content2\n')
         self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "new file on master"')
+        self.source.run_cmd('git commit -m "3: new file on master"')
 
         self.source.run_cmd('git merge --no-edit branch1')
-        self.source.run_cmd('git commit -m "merged change"')
+        self.source.run_cmd('git commit -m "4: merged change"')
         self.source.run_cmd('git log --graph --abbrev-commit --oneline')
 
         # Validate the parsing of the branches
         gitinfo = GitP4Transfer.GitInfo(test_logger)
         branchRefs = ['master']
         commitList, commits = gitinfo.getCommitDiffs(branchRefs)
-        self.assertEqual(4, len(commitList))
+        self.assertEqual(3, len(commitList))
         gitinfo.updateBranchInfo(branchRefs, commitList, commits)
         self.assertEqual('master', commits[commitList[0]].branch)
         self.assertEqual('master', commits[commitList[1]].branch)
-        self.assertEqual('_anon0001', commits[commitList[2]].branch)
-        self.assertEqual('master', commits[commitList[3]].branch)
+        # self.assertEqual('_anon0001', commits[commitList[2]].branch)
+        self.assertEqual('master', commits[commitList[2]].branch)
 
         self.run_GitP4Transfer()
 
         changes = self.target.p4cmd('changes')
-        self.assertEqual(4, len(changes))
+        self.assertEqual(3, len(changes))
 
         files = self.target.p4cmd('files', '//depot/...')
-        self.assertEqual(3, len(files))
-        self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
-        self.assertEqual('//depot/import/file1', files[1]['depotFile'])
-        self.assertEqual('//depot/import/file2', files[2]['depotFile'])
+        self.assertEqual(2, len(files))
+        # self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/import/file2', files[1]['depotFile'])
 
         filelogs = self.target.p4cmd('filelog', '//depot/...')
-        self.assertEqual(3, len(filelogs))
-        self.assertEqual('add', filelogs[0]['action'][0])
-        self.assertEqual('add', filelogs[1]['action'][1])
-        self.assertEqual('integrate', filelogs[1]['action'][0])
-        self.assertEqual('add', filelogs[2]['action'][0])
+        self.assertEqual(2, len(filelogs))
+        self.assertEqual('edit', filelogs[0]['action'][0])
+        self.assertEqual('add', filelogs[1]['action'][0])
+        # self.assertEqual('integrate', filelogs[1]['action'][0])
+        self.assertEqual('add', filelogs[1]['action'][0])
 
         result = self.target.p4cmd('print', '//depot/import/file1')
         self.assertEqual(b'Test content\nbranch change\n', result[1])
@@ -876,28 +878,28 @@ class TestGitP4Transfer(unittest.TestCase):
         gitinfo = GitP4Transfer.GitInfo(test_logger)
         branchRefs = ['master']
         commitList, commits = gitinfo.getCommitDiffs(branchRefs)
-        self.assertEqual(8, len(commitList))
+        self.assertEqual(5, len(commitList))
         gitinfo.updateBranchInfo(branchRefs, commitList, commits)
         self.assertEqual('master', commits[commitList[0]].branch)
         self.assertEqual('master', commits[commitList[1]].branch)
-        self.assertEqual('_anon0001', commits[commitList[2]].branch)
+        # self.assertEqual('_anon0001', commits[commitList[2]].branch)
         self.assertEqual('master', commits[commitList[3]].branch)
 
         self.run_GitP4Transfer()
 
         changes = self.target.p4cmd('changes')
-        self.assertEqual(8, len(changes))
+        self.assertEqual(5, len(changes))
 
         files = self.target.p4cmd('files', '//depot/...')
-        self.assertEqual(4, len(files))
-        self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
-        self.assertEqual('//depot/anon_branches/_anon0002/file1', files[1]['depotFile'])
-        self.assertEqual('//depot/anon_branches/_anon0003/file1', files[2]['depotFile'])
-        self.assertEqual('//depot/import/file1', files[3]['depotFile'])
+        self.assertEqual(1, len(files))
+        # self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
+        # self.assertEqual('//depot/anon_branches/_anon0002/file1', files[1]['depotFile'])
+        # self.assertEqual('//depot/anon_branches/_anon0003/file1', files[2]['depotFile'])
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
 
         filelogs = self.target.p4cmd('filelog', '//depot/...')
-        self.assertEqual(4, len(filelogs))
-        # self.assertEqual('add', filelogs[2]['action'][0])
+        self.assertEqual(1, len(filelogs))
+        self.assertEqual('edit', filelogs[0]['action'][0])
 
         result = self.target.p4cmd('print', '//depot/import/file1#2')
         contents = ['0'] * 12

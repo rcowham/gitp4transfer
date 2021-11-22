@@ -251,17 +251,23 @@ target:
     p4charset:
 
 # branch_maps: An array of git branches to migrate and where to.
-#    Note that other branches encountered will be given temp names under temp_branches_root
-#    Entries specify git_branch and targ. No wildcards.
+#    Note that other branches encountered will be given temp names under anon_branches_root
+#    Entries specify 'git_branch' and 'targ'. No wildcards.
 branch_maps:
   - git_branch:  "master"
     targ:   "//git_import/master"
+
+# import_anon_branches: Set this to 'y' to import anonymous branches
+#   Any other value means they will not be imported.
+import_anon_branches: n
 
 # anon_branches_root: A depot path used for anonymous git branches (names automatically generated).
 #   Mandatory.
 #   Such branches only contain files modified on git branch.
 #   Name of branch under this root is _anonNNNN with a unique ID.
-anon_branches_root: //git_import/temp_branches
+#   If this field is empty, then no anonymous branches will be created/imported.
+#anon_branches_root: //git_import/temp_branches
+anon_branches_root:
 
 """)
 
@@ -403,7 +409,7 @@ class GitInfo:
         "Return array of commits in reverse topo order for processing, together with dict of commits"
         # Setup the rev-list/diff-tree process and read info about file diffs
         # Learned from git-filter-repo
-        cmd = ('git rev-list --topo-order --reverse {}'.format(' '.join(refs)) +
+        cmd = ('git rev-list --first-parent --reverse {}'.format(' '.join(refs)) +
                      ' | git diff-tree --stdin --always --root --format=%H%n%P%n%cn%n%ce%n%B%n"__END_OF_DESC__"%n%cd' +
                      ' --date=iso-local -M -t -c --raw --combined-all-paths')
         if self.logger:
@@ -804,7 +810,7 @@ class GitSource(P4Base):
         branchRefs = ['master']   # TODO
         self.gitinfo = GitInfo(self.logger)
         commitList, commits = self.gitinfo.getCommitDiffs(branchRefs)
-        self.gitinfo.updateBranchInfo(branchRefs, commitList, commits)
+        # self.gitinfo.updateBranchInfo(branchRefs, commitList, commits)
         self.logger.debug("commits: %s" % ' '.join(commitList))
         maxChanges = 0
         if self.options.change_batch_size:
@@ -900,7 +906,11 @@ class P4Target(P4Base):
                     raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
             self.currentBranch = commit.branch
         else:
-            for fc in commit.fileChanges:
+            fileChanges = commit.fileChanges
+            if not fileChanges or (len(fileChanges) == 1 and fileChanges[0].changeTypes == 'MM'):
+                # Do a git diff-tree to make sure we detect files changed on the target branch.
+                fileChanges = self.source.gitinfo.getFileChanges(commit)
+            for fc in fileChanges:
                 self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
                 if fc.changeTypes == 'A':
                     self.p4cmd('add', fc.filenames[0])
@@ -989,7 +999,7 @@ class GitP4Transfer(object):
         parser = argparse.ArgumentParser(
             description=desc,
             formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="Copyright (C) 2012-21 Sven Erik Knop/Robert Cowham, Perforce Software Ltd"
+            epilog="Copyright (C) 2021 Robert Cowham, Perforce Software Ltd"
         )
 
         parser.add_argument('-c', '--config', default=CONFIG_FILE, help="Default is " + CONFIG_FILE)
@@ -1067,6 +1077,7 @@ class GitP4Transfer(object):
         if not self.options.branch_maps:
             errors.append("Option branch_maps must not be empty")
         self.options.anon_branches_root = self.getOption(GENERAL_SECTION, "anon_branches_root")
+        self.options.import_anon_branches = self.getOption(GENERAL_SECTION, "import_anon_branches", "n")
         self.options.ignore_files = self.getOption(GENERAL_SECTION, "ignore_files")
         self.options.re_ignore_files = []
         if self.options.ignore_files:
