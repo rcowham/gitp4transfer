@@ -689,6 +689,45 @@ class TestGitP4Transfer(unittest.TestCase):
 
         self.assertCounters(2, 2)
 
+    def testAdd2Seperate(self):
+        "Basic 2 add commits in seperate runs"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        file2 = os.path.join(inside, "file2")
+        create_file(file1, 'Test content')
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "first change"')
+
+        self.run_GitP4Transfer()
+        self.assertCounters(1, 1)
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(1, len(changes))
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(1, len(files))
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+
+        self.source.run_cmd('git checkout master')
+        create_file(file2, 'Test content2')
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "second change"')
+
+        self.run_GitP4Transfer()
+        self.assertCounters(2, 2)
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(2, len(files))
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/import/file2', files[1]['depotFile'])
+        self.run_GitP4Transfer()
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(2, len(changes))
+
     def testAddEditDelete(self):
         "Basic add/edit and delete commits"
         self.setupTransfer()

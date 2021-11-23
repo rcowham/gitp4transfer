@@ -406,7 +406,7 @@ class GitInfo:
         return commits
 
     def getCommitDiffs(self, refs):
-        "Return array of commits in reverse topo order for processing, together with dict of commits"
+        "Return array of commits in reverse order for processing, together with dict of commits"
         # Setup the rev-list/diff-tree process and read info about file diffs
         # Learned from git-filter-repo
         cmd = ('git rev-list --first-parent --reverse {}'.format(' '.join(refs)) +
@@ -810,6 +810,11 @@ class GitSource(P4Base):
         branchRefs = ['master']   # TODO
         self.gitinfo = GitInfo(self.logger)
         commitList, commits = self.gitinfo.getCommitDiffs(branchRefs)
+        try:
+            ind = commitList.index(counter)
+            commitList = commitList[ind+1:]
+        except ValueError:
+            pass
         # self.gitinfo.updateBranchInfo(branchRefs, commitList, commits)
         self.logger.debug("commits: %s" % ' '.join(commitList))
         maxChanges = 0
