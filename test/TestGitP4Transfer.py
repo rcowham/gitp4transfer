@@ -867,6 +867,40 @@ class TestGitP4Transfer(unittest.TestCase):
         result = self.target.p4cmd('print', '//depot/import/file1')
         self.assertEqual(b'Test content\nbranch change\n', result[1])
 
+    def testRename(self):
+        "Basic rename"
+        self.setupTransfer()
+
+        inside = self.source.repo_root
+        file1 = os.path.join(inside, "file1")
+        file2 = os.path.join(inside, "file2")
+        create_file(file1, 'Test content\n')
+
+        self.source.run_cmd('git add .')
+        self.source.run_cmd('git commit -m "1: first change"')
+
+        self.source.run_cmd('git mv %s %s' % (file1, file2))
+        self.source.run_cmd('git commit -m "2: rename"')
+
+        self.run_GitP4Transfer()
+        self.assertCounters(2, 2)
+
+        changes = self.target.p4cmd('changes')
+        self.assertEqual(2, len(changes))
+
+        files = self.target.p4cmd('files', '//depot/...')
+        self.assertEqual(2, len(files))
+        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+        self.assertEqual('//depot/import/file2', files[1]['depotFile'])
+
+        filelogs = self.target.p4cmd('filelog', '//depot/...')
+        self.assertEqual(3, len(filelogs))
+        self.assertEqual('move/delete', filelogs[0]['action'][0])
+        self.assertEqual('move/add', filelogs[1]['action'][0])
+
+        result = self.target.p4cmd('print', '//depot/import/file2')
+        self.assertEqual(b'Test content\n', result[1])
+
     def testMultipleBranches(self):
         "Multiple branches with merge"
         self.setupTransfer()

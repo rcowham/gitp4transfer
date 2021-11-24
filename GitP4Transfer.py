@@ -81,6 +81,7 @@ import os.path
 from datetime import datetime
 import logging
 import time
+import platform
 import collections
 
 # Non-standard modules
@@ -124,6 +125,88 @@ def logOnce(logger, *args):
     if msg not in alreadyLogged:
         alreadyLogged[msg] = 1
         logger.debug(msg)
+
+
+#
+# P4 wildcards are not allowed in filenames.  P4 complains
+# if you simply add them, but you can force it with "-f", in
+# which case it translates them into %xx encoding internally.
+#
+def wildcard_decode(path):
+    # Search for and fix just these four characters.  Do % last so
+    # that fixing it does not inadvertently create new %-escapes.
+    # Cannot have * in a filename in windows; untested as to
+    # what p4 would do in such a case.
+    if not platform.system() == "Windows":
+        path = path.replace("%2A", "*")
+    path = path.replace("%23", "#") \
+               .replace("%40", "@") \
+               .replace("%25", "%")
+    return path
+
+
+def wildcard_encode(path):
+    # do % first to avoid double-encoding the %s introduced here
+    path = path.replace("%", "%25") \
+               .replace("*", "%2A") \
+               .replace("#", "%23") \
+               .replace("@", "%40")
+    return path
+
+
+def wildcard_present(path):
+    m = re.search("[*#@%]", path)
+    return m is not None
+
+def isModeExec(mode):
+    # Returns True if the given git mode represents an executable file,
+    # otherwise False.
+    return mode[-3:] == "755"
+
+
+def isModeExecChanged(src_mode, dst_mode):
+    return isModeExec(src_mode) != isModeExec(dst_mode)
+
+
+_diff_tree_pattern = None
+
+
+def parseDiffTreeEntry(entry):
+    """Parses a single diff tree entry into its component elements.
+
+    See git-diff-tree(1) manpage for details about the format of the diff
+    output. This method returns a dictionary with the following elements:
+
+    src_mode - The mode of the source file
+    dst_mode - The mode of the destination file
+    src_sha1 - The sha1 for the source file
+    dst_sha1 - The sha1 fr the destination file
+    status - The one letter status of the diff (i.e. 'A', 'M', 'D', etc)
+    status_score - The score for the status (applicable for 'C' and 'R'
+                   statuses). This is None if there is no score.
+    src - The path for the source file.
+    dst - The path for the destination file. This is only present for
+          copy or renames. If it is not present, this is None.
+
+    If the pattern is not matched, None is returned."""
+
+    global _diff_tree_pattern
+    if not _diff_tree_pattern:
+        _diff_tree_pattern = re.compile(':(\d+) (\d+) (\w+) (\w+) ([A-Z])(\d+)?\t(.*?)((\t(.*))|$)')
+
+    match = _diff_tree_pattern.match(entry)
+    if match:
+        return {
+            'src_mode': match.group(1),
+            'dst_mode': match.group(2),
+            'src_sha1': match.group(3),
+            'dst_sha1': match.group(4),
+            'status': match.group(5),
+            'status_score': match.group(6),
+            'src': match.group(7),
+            'dst': match.group(10)
+        }
+    return None
 
 
 P4.Revision.__repr__ = logrepr
@@ -368,6 +451,17 @@ class GitInfo:
     def __init__(self, logger) -> None:
         self.logger = logger
         self.anonBranchInd = 0
+
+    def read_pipe_lines(self, c):
+        self.logger.debug('Reading pipe: %s\n' % str(c))
+
+        expand = not isinstance(c, list)
+        p = subprocess.Popen(c, stdout=subprocess.PIPE, shell=expand)
+        pipe = p.stdout
+        val = [decode_text_stream(line) for line in pipe.readlines()]
+        if pipe.close() or p.wait():
+            raise Exception('Command failed: %s' % str(c))
+        return val
 
     def getBasicCommitInfo(self, refs):
         "Return a dict indexed by commit hash of populated GitCommit objects"
@@ -868,11 +962,44 @@ class P4Target(P4Base):
             if exp.search(fname):
                 return True
         return False
+    
+    def p4_integrate(self, src, dest):
+        self.p4cmd("integrate", "-Dt", wildcard_encode(src), wildcard_encode(dest))
+
+    # def p4_sync(f, *options):
+    #     p4_system(["sync"] + list(options) + [wildcard_encode(f)])
+
+    def p4_add(self, f):
+        # forcibly add file names with wildcards
+        if wildcard_present(f):
+            self.p4cmd("add", "-f", f)
+        else:
+            self.p4cmd("add", f)
+
+    def p4_delete(self, f):
+        self.p4cmd("delete", wildcard_encode(f))
+
+    def p4_edit(self, f, *options):
+        self.p4cmd("edit", options, wildcard_encode(f))
+
+    def p4_revert(self, f):
+        self.p4cmd("revert", wildcard_encode(f))
+
+    def p4_reopen(self, type, f):
+        self.p4cmd("reopen", "-t", type, wildcard_encode(f))
+
+    # def p4_reopen_in_change(changelist, files):
+    #     cmd = ["reopen", "-c", str(changelist)] + files
+    #     p4_system(cmd)
+
+    def p4_move(self, src, dest):
+        self.p4cmd("move", "-k", wildcard_encode(src), wildcard_encode(dest))
 
     def replicateCommit(self, commit):
         """This is the heart of it all. Replicate a single commit/change"""
 
         self.filesToIgnore = []
+        # Branch processing currently removed for now.
         # if self.currentBranch == "":
         #     self.currentBranch = commit.branch
         # if self.currentBranch != commit.branch:
@@ -916,16 +1043,97 @@ class P4Target(P4Base):
         if not fileChanges or (0 < len([f for f in fileChanges if f.changeTypes == 'MM'])):
             # Do a git diff-tree to make sure we detect files changed on the target branch rather than just dirs
             fileChanges = self.source.gitinfo.getFileChanges(commit)
-        for fc in fileChanges:
-            self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
-            if fc.changeTypes == 'A':
-                self.p4cmd('rec', '-af', fc.filenames[0])
-            elif fc.changeTypes == 'M':
-                self.p4cmd('rec', '-e', fc.filenames[0])
-            elif fc.changeTypes == 'D':
-                self.p4cmd('rec', '-d', fc.filenames[0])
-            else: # Better safe than sorry! Various known actions not yet implemented
-                raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
+        
+        if not commit.parents:
+            for fc in fileChanges:
+                self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
+                if fc.changeTypes == 'A':
+                    self.p4cmd('rec', '-af', fc.filenames[0])
+                elif fc.changeTypes == 'M':
+                    self.p4cmd('rec', '-e', fc.filenames[0])
+                elif fc.changeTypes == 'D':
+                    self.p4cmd('rec', '-d', fc.filenames[0])
+                else: # Better safe than sorry! Various known actions not yet implemented
+                    raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
+        else:
+            diff = self.source.gitinfo.read_pipe_lines("git diff-tree -r %s \"%s^\" \"%s\"" % (
+                        "-M", commit.commitID, commit.commitID))
+            filesToAdd = set()
+            filesToChangeType = set()
+            filesToDelete = set()
+            editedFiles = set()
+            pureRenameCopy = set()
+            symlinks = set()
+            filesToChangeExecBit = {}
+            all_files = list()
+
+            for line in diff:
+                diff = parseDiffTreeEntry(line)
+                modifier = diff['status']
+                path = diff['src']
+                all_files.append(path)
+
+                if modifier == "M":
+                    self.p4_edit(path)
+                    if isModeExecChanged(diff['src_mode'], diff['dst_mode']):
+                        filesToChangeExecBit[path] = diff['dst_mode']
+                    editedFiles.add(path)
+                elif modifier == "A":
+                    filesToAdd.add(path)
+                    filesToChangeExecBit[path] = diff['dst_mode']
+                    if path in filesToDelete:
+                        filesToDelete.remove(path)
+                    dst_mode = int(diff['dst_mode'], 8)
+                    if dst_mode == 0o120000:
+                        symlinks.add(path)
+                elif modifier == "D":
+                    filesToDelete.add(path)
+                    if path in filesToAdd:
+                        filesToAdd.remove(path)
+                elif modifier == "C":
+                    src, dest = diff['src'], diff['dst']
+                    all_files.append(dest)
+                    self.p4_integrate(src, dest)
+                    pureRenameCopy.add(dest)
+                    if diff['src_sha1'] != diff['dst_sha1']:
+                        self.p4_edit(dest)
+                        pureRenameCopy.discard(dest)
+                    if isModeExecChanged(diff['src_mode'], diff['dst_mode']):
+                        self.p4_edit(dest)
+                        pureRenameCopy.discard(dest)
+                        filesToChangeExecBit[dest] = diff['dst_mode']
+                    if self.isWindows:
+                        # turn off read-only attribute
+                        os.chmod(dest, stat.S_IWRITE)
+                    os.unlink(dest)
+                    editedFiles.add(dest)
+                elif modifier == "R":
+                    src, dest = diff['src'], diff['dst']
+                    all_files.append(dest)
+                    self.p4_edit(src, "-k")  # src must be open before move but may not exist
+                    self.p4_move(src, dest)  # opens for (move/delete, move/add)
+                    if isModeExecChanged(diff['src_mode'], diff['dst_mode']):
+                        filesToChangeExecBit[dest] = diff['dst_mode']
+                    editedFiles.add(dest)
+                elif modifier == "T":
+                    filesToChangeType.add(path)
+                else:
+                    raise Exception("unknown modifier %s for %s" % (modifier, path))
+        
+            for f in filesToChangeType:
+                self.p4_edit(f, "-t", "auto")
+            for f in filesToAdd:
+                self.p4_add(f)
+            for f in filesToDelete:
+                self.p4_revert(f)
+                self.p4_delete(f)
+
+            # Set/clear executable bits
+            # TODO
+            # for f in filesToChangeExecBit.keys():
+            #     mode = filesToChangeExecBit[f]
+            #     setP4ExecBit(f, mode)
+
         openedFiles = self.p4cmd('opened')
         lenOpenedFiles = len(openedFiles)
         if lenOpenedFiles > 0:
