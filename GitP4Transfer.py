@@ -912,13 +912,13 @@ class P4Target(P4Base):
             self.currentBranch = commit.branch
         else:
             fileChanges = commit.fileChanges
-            if not fileChanges or (len(fileChanges) == 1 and fileChanges[0].changeTypes == 'MM'):
-                # Do a git diff-tree to make sure we detect files changed on the target branch.
+            if not fileChanges or (0 < len([f for f in fileChanges if f.changeTypes == 'MM'])):
+                # Do a git diff-tree to make sure we detect files changed on the target branch rather than just dirs
                 fileChanges = self.source.gitinfo.getFileChanges(commit)
             for fc in fileChanges:
                 self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
                 if fc.changeTypes == 'A':
-                    self.p4cmd('add', fc.filenames[0])
+                    self.p4cmd('add', '-f', fc.filenames[0])
                 elif fc.changeTypes == 'M':
                     self.p4cmd('edit', fc.filenames[0])
                 elif fc.changeTypes == 'D':
