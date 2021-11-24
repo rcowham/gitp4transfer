@@ -838,28 +838,7 @@ class P4Base(object):
         return branchMap
 
 
-class TempBranch:
-    "Alternates between branch names - allowing old one to be deleted"
-
-    def __init__(self):
-        self.tempBranches = ['p4_export1', 'p4_export2']
-        self.ind = -1
-        self.currBranch = ''
-        self.oldBranch = ''
-
-    def getNext(self):
-        "Swap temp branches, and we delete old one after"
-        self.ind = (self.ind + 1) % 2
-        if self.currBranch:
-            self.oldBranch = self.currBranch
-        self.currBranch = self.tempBranches[self.ind]
-        return self.currBranch
-
-    def getOld(self):
-        return self.oldBranch
-
-
-tempBranch = TempBranch()
+tempBranch = "p4_exportBranch"
 
 
 class GitSource(P4Base):
@@ -931,11 +910,8 @@ class GitSource(P4Base):
 
     def checkoutCommit(self, commitID):
         """Expects change number as a string, and returns list of filerevs"""
-        args = ['git', 'checkout', '-b', tempBranch.getNext(), commitID]
-        self.run_cmd(' '.join(args))
-        if tempBranch.getOld():
-            args = ['git', 'branch', '-D', '-f', tempBranch.getOld()]
-            self.run_cmd(' '.join(args))
+        args = ['git', 'switch', '-C', tempBranch, commitID]
+        self.run_cmd(' '.join(args), get_output=False)
 
 class P4Target(P4Base):
     "Functionality for transferring changes to target Perforce repository"
