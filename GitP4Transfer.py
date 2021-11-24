@@ -892,7 +892,7 @@ class P4Target(P4Base):
             for fc in fileChanges:
                 self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
                 if fc.changeTypes == 'A':
-                    self.p4cmd('add', fc.filenames[0])
+                    self.p4cmd('rec', '-af', fc.filenames[0])
                 elif fc.changeTypes == 'M' or fc.changeTypes == 'MM':
                     # Translate target depot to source via client map and branch map
                     depotFile = self.depotmap.translate(os.path.join(self.source.git_repo, fc.filenames[0]))
@@ -906,7 +906,7 @@ class P4Target(P4Base):
                         args = ['git', 'restore', fc.filenames[0]]
                         self.source.run_cmd(' '.join(args))
                 elif fc.changeTypes == 'D':
-                    self.p4cmd('delete', fc.filenames[0])
+                    self.p4cmd('rec', '-d', fc.filenames[0])
                 else: # Better safe than sorry! Various known actions not yet implemented
                     raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
             self.currentBranch = commit.branch
@@ -918,11 +918,11 @@ class P4Target(P4Base):
             for fc in fileChanges:
                 self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
                 if fc.changeTypes == 'A':
-                    self.p4cmd('add', '-f', fc.filenames[0])
+                    self.p4cmd('rec', '-af', fc.filenames[0])
                 elif fc.changeTypes == 'M':
-                    self.p4cmd('edit', fc.filenames[0])
+                    self.p4cmd('rec', '-e', fc.filenames[0])
                 elif fc.changeTypes == 'D':
-                    self.p4cmd('delete', fc.filenames[0])
+                    self.p4cmd('rec', '-d', fc.filenames[0])
                 else: # Better safe than sorry! Various known actions not yet implemented
                     raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
         openedFiles = self.p4cmd('opened')
