@@ -873,58 +873,59 @@ class P4Target(P4Base):
         """This is the heart of it all. Replicate a single commit/change"""
 
         self.filesToIgnore = []
-        if self.currentBranch == "":
-            self.currentBranch = commit.branch
-        if self.currentBranch != commit.branch:
-            self.updateClientWorkspace(commit.branch)
-            if commit.firstOnBranch:
-                self.p4cmd('sync', '-k')
-            fileChanges = commit.fileChanges
-            if len(commit.parents) > 1:
-                # merge commit
-                parentBranch = self.source.commits[commit.parents[1]].branch
-                branchMap = self.getBranchMap(parentBranch, commit.branch)
-            else:
-                branchMap = self.getBranchMap(commit.parentBranch, commit.branch)
-            if len(fileChanges) == 0:
-                # Do a git diff-tree to make sure we detect files changed on the target branch.
-                fileChanges = self.source.gitinfo.getFileChanges(commit)
-            for fc in fileChanges:
-                self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
-                if fc.changeTypes == 'A':
-                    self.p4cmd('rec', '-af', fc.filenames[0])
-                elif fc.changeTypes == 'M' or fc.changeTypes == 'MM':
-                    # Translate target depot to source via client map and branch map
-                    depotFile = self.depotmap.translate(os.path.join(self.source.git_repo, fc.filenames[0]))
-                    src = branchMap.translate(depotFile, 0)
-                    self.p4cmd('sync', '-k', fc.filenames[0])
-                    self.p4cmd('integrate', src, fc.filenames[0])
-                    self.p4cmd('resolve', '-at')
-                    # After whatever p4 has done to the file contents we ensure it is as per git
-                    if self.source.fileModified(fc.filenames[0]):
-                        self.p4cmd('edit', fc.filenames[0])
-                        args = ['git', 'restore', fc.filenames[0]]
-                        self.source.run_cmd(' '.join(args))
-                elif fc.changeTypes == 'D':
-                    self.p4cmd('rec', '-d', fc.filenames[0])
-                else: # Better safe than sorry! Various known actions not yet implemented
-                    raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
-            self.currentBranch = commit.branch
-        else:
-            fileChanges = commit.fileChanges
-            if not fileChanges or (0 < len([f for f in fileChanges if f.changeTypes == 'MM'])):
-                # Do a git diff-tree to make sure we detect files changed on the target branch rather than just dirs
-                fileChanges = self.source.gitinfo.getFileChanges(commit)
-            for fc in fileChanges:
-                self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
-                if fc.changeTypes == 'A':
-                    self.p4cmd('rec', '-af', fc.filenames[0])
-                elif fc.changeTypes == 'M':
-                    self.p4cmd('rec', '-e', fc.filenames[0])
-                elif fc.changeTypes == 'D':
-                    self.p4cmd('rec', '-d', fc.filenames[0])
-                else: # Better safe than sorry! Various known actions not yet implemented
-                    raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
+        # if self.currentBranch == "":
+        #     self.currentBranch = commit.branch
+        # if self.currentBranch != commit.branch:
+        #     self.updateClientWorkspace(commit.branch)
+        #     if commit.firstOnBranch:
+        #         self.p4cmd('sync', '-k')
+        #     fileChanges = commit.fileChanges
+        #     if len(commit.parents) > 1:
+        #         # merge commit
+        #         parentBranch = self.source.commits[commit.parents[1]].branch
+        #         branchMap = self.getBranchMap(parentBranch, commit.branch)
+        #     else:
+        #         branchMap = self.getBranchMap(commit.parentBranch, commit.branch)
+        #     if len(fileChanges) == 0:
+        #         # Do a git diff-tree to make sure we detect files changed on the target branch.
+        #         fileChanges = self.source.gitinfo.getFileChanges(commit)
+        #     for fc in fileChanges:
+        #         self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
+        #         if fc.changeTypes == 'A':
+        #             self.p4cmd('rec', '-af', fc.filenames[0])
+        #         elif fc.changeTypes == 'M' or fc.changeTypes == 'MM':
+        #             # Translate target depot to source via client map and branch map
+        #             depotFile = self.depotmap.translate(os.path.join(self.source.git_repo, fc.filenames[0]))
+        #             src = branchMap.translate(depotFile, 0)
+        #             self.p4cmd('sync', '-k', fc.filenames[0])
+        #             self.p4cmd('integrate', src, fc.filenames[0])
+        #             self.p4cmd('resolve', '-at')
+        #             # After whatever p4 has done to the file contents we ensure it is as per git
+        #             if self.source.fileModified(fc.filenames[0]):
+        #                 self.p4cmd('edit', fc.filenames[0])
+        #                 args = ['git', 'restore', fc.filenames[0]]
+        #                 self.source.run_cmd(' '.join(args))
+        #         elif fc.changeTypes == 'D':
+        #             self.p4cmd('rec', '-d', fc.filenames[0])
+        #         else: # Better safe than sorry! Various known actions not yet implemented
+        #             raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
+        #     self.currentBranch = commit.branch
+        # else:
+        self.p4cmd('sync', '-k')
+        fileChanges = commit.fileChanges
+        if not fileChanges or (0 < len([f for f in fileChanges if f.changeTypes == 'MM'])):
+            # Do a git diff-tree to make sure we detect files changed on the target branch rather than just dirs
+            fileChanges = self.source.gitinfo.getFileChanges(commit)
+        for fc in fileChanges:
+            self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
+            if fc.changeTypes == 'A':
+                self.p4cmd('rec', '-af', fc.filenames[0])
+            elif fc.changeTypes == 'M':
+                self.p4cmd('rec', '-e', fc.filenames[0])
+            elif fc.changeTypes == 'D':
+                self.p4cmd('rec', '-d', fc.filenames[0])
+            else: # Better safe than sorry! Various known actions not yet implemented
+                raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
         openedFiles = self.p4cmd('opened')
         lenOpenedFiles = len(openedFiles)
         if lenOpenedFiles > 0:
