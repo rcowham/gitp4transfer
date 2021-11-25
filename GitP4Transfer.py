@@ -596,7 +596,8 @@ class GitInfo:
             shas = splits[0:n]
             splits = splits[n].split('\t')
             change_types = splits[0]
-            filenames = [PathQuoting.dequote(x) for x in splits[1:]]
+            # filenames = [PathQuoting.dequote(x) for x in splits[1:]]
+            filenames = [x for x in splits[1:]]
             fileChanges.append(GitFileChanges(modes, shas, change_types, filenames))
         dtp.stdout.close()
         if dtp.wait():
