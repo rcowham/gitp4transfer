@@ -242,6 +242,7 @@ LOGGER_NAME = "GitP4Transfer"
 CHANGE_MAP_DESC = "Updated change_map_file"
 
 # This is for writing to sample config file
+yaml.preserve_quotes = True
 DEFAULT_CONFIG = yaml.load(r"""
 # counter_name: Unique counter on target server to use for recording source changes processed. No spaces.
 #    Name sensibly if you have multiple instances transferring into the same target p4 repository.
