@@ -882,7 +882,7 @@ class GitSource(P4Base):
 
     def missingCommits(self, counter):
         # self.gather_commits()
-        branchRefs = ['master']   # TODO
+        branchRefs = [t['git_branch'] for t in self.options.branch_maps]
         self.gitinfo = GitInfo(self.logger)
         commitList, commits = self.gitinfo.getCommitDiffs(branchRefs)
         try:
