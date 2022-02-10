@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"reflect"
 	"time"
 
-	"git.lukeshu.com/go/libfastimport"
+	libfastimport "github.com/rcowham/go-libgitfastimport"
 
 	"github.com/rcowham/p4training/version"
 	"github.com/sirupsen/logrus"
@@ -97,7 +96,7 @@ func main() {
 		default:
 			fmt.Printf("Not handled\n")
 			fmt.Printf("Found cmd %v\n", cmd)
-			fmt.Printf("Cmd type %v\n", reflect.TypeOf(cmd))
+			fmt.Printf("Cmd type %T\n", cmd)
 		}
 	}
 

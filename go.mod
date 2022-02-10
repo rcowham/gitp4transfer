@@ -3,7 +3,7 @@ module github.com/rcowham/gitp4transfer
 go 1.17
 
 require (
-	git.lukeshu.com/go/libfastimport v0.0.0-20210228000015-6ec90a33b5ae
+	github.com/rcowham/go-libgitfastimport v0.1.0
 	github.com/rcowham/p4training v0.2.0
 	github.com/sirupsen/logrus v1.8.1
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
