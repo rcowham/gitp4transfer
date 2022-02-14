@@ -14,6 +14,20 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
+func Humanize(b int) string {
+	const unit = 1000
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB",
+		float64(b)/float64(div), "kMGTPE"[exp])
+}
+
 func main() {
 	// Tracing code
 	// ft, err := os.Create("trace.out")
@@ -71,7 +85,7 @@ func main() {
 		switch cmd.(type) {
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
-			fmt.Printf("Blob: Mark:%d OriginalOID:%s\n", blob.Mark, blob.OriginalOID)
+			fmt.Printf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			fmt.Printf("Reset: - %+v\n", reset)
@@ -93,9 +107,12 @@ func main() {
 		case libfastimport.FileRename:
 			f := cmd.(libfastimport.FileRename)
 			fmt.Printf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
+		case libfastimport.CmdTag:
+			t := cmd.(libfastimport.CmdTag)
+			fmt.Printf("CmdTag: %+v\n", t)
 		default:
 			fmt.Printf("Not handled\n")
-			fmt.Printf("Found cmd %v\n", cmd)
+			fmt.Printf("Found cmd %+v\n", cmd)
 			fmt.Printf("Cmd type %T\n", cmd)
 		}
 	}
