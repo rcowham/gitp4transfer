@@ -2,9 +2,12 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 
 	libfastimport "github.com/rcowham/go-libgitfastimport"
@@ -28,6 +31,117 @@ func Humanize(b int) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
+// GitFile - A git file record
+type GitFile struct {
+	name     string
+	fileType string
+	blob     *libfastimport.CmdBlob
+}
+
+// GitCommit - A git commit
+type GitCommit struct {
+	commit *libfastimport.CmdCommit
+	files  []GitFile
+}
+
+type CommitMap map[int]*GitCommit
+type FileMap map[int]*GitFile
+
+// GitP4Transfer - Transfer via git fast-export file
+type GitP4Transfer struct {
+	exportFile string
+	logger     *logrus.Logger
+	testInput  string // For testing only
+}
+
+func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
+	return &GitP4Transfer{logger: logger}
+}
+
+func getOID(dataref string) (int, error) {
+	if !strings.HasPrefix(dataref, ":") {
+		return 0, errors.New("Invalid dataref")
+	}
+	return strconv.Atoi(dataref[1:])
+}
+
+func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
+	var buf io.Reader
+
+	if g.testInput != "" {
+		buf = strings.NewReader(g.testInput)
+	} else {
+		file, err := os.Open(gitImportFile)
+		if err != nil {
+			fmt.Printf("ERROR: Failed to open file '%s': %v\n", gitImportFile, err)
+			os.Exit(1)
+		}
+		defer file.Close()
+		buf = bufio.NewReader(file)
+	}
+
+	commitIDs := make(map[int]*GitCommit, 0)
+	fileIDs := make(map[int]*GitFile, 0)
+	var currCommit *GitCommit
+
+	f := libfastimport.NewFrontend(buf, nil, nil)
+	for {
+		cmd, err := f.ReadCmd()
+		if err != nil {
+			if err != io.EOF {
+				fmt.Printf("ERROR: Failed to read cmd: %v\n", err)
+			}
+			break
+		}
+		switch cmd.(type) {
+		case libfastimport.CmdBlob:
+			blob := cmd.(libfastimport.CmdBlob)
+			g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
+			fileIDs[blob.Mark] = &GitFile{blob: &blob}
+		case libfastimport.CmdReset:
+			reset := cmd.(libfastimport.CmdReset)
+			g.logger.Debugf("Reset: - %+v\n", reset)
+		case libfastimport.CmdCommit:
+			commit := cmd.(libfastimport.CmdCommit)
+			g.logger.Debugf("Commit:  %+v\n", commit)
+			currCommit = &GitCommit{commit: &commit, files: make([]GitFile, 0)}
+			commitIDs[commit.Mark] = currCommit
+		case libfastimport.CmdCommitEnd:
+			commit := cmd.(libfastimport.CmdCommitEnd)
+			g.logger.Debugf("CommitEnd:  %+v\n", commit)
+		case libfastimport.FileModify:
+			f := cmd.(libfastimport.FileModify)
+			g.logger.Debugf("FileModify:  %+v\n", f)
+			oid, err := getOID(f.DataRef)
+			if err != nil {
+				g.logger.Errorf("Failed to get oid: %+v", f)
+			}
+			gf, ok := fileIDs[oid]
+			if ok {
+				gf.name = f.Path.String()
+				currCommit.files = append(currCommit.files, *gf)
+			}
+		case libfastimport.FileDelete:
+			f := cmd.(libfastimport.FileDelete)
+			g.logger.Debugf("FileModify: Path:%s\n", f.Path)
+		case libfastimport.FileCopy:
+			f := cmd.(libfastimport.FileCopy)
+			g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
+		case libfastimport.FileRename:
+			f := cmd.(libfastimport.FileRename)
+			g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
+		case libfastimport.CmdTag:
+			t := cmd.(libfastimport.CmdTag)
+			g.logger.Debugf("CmdTag: %+v\n", t)
+		default:
+			g.logger.Debugf("Not handled\n")
+			g.logger.Debugf("Found cmd %+v\n", cmd)
+			g.logger.Debugf("Cmd type %T\n", cmd)
+		}
+	}
+	return commitIDs, fileIDs
+}
+
 func main() {
 	// Tracing code
 	// ft, err := os.Create("trace.out")
@@ -41,11 +155,12 @@ func main() {
 	// }
 	// defer trace.Stop()
 	// End of trace code
-	var err error
+	// var err error
 	var (
 		gitimport = kingpin.Arg(
 			"gitimport",
-			"Git fast-export files to process.").String()
+			"Git fast-export file to process.",
+		).String()
 		debug = kingpin.Flag(
 			"debug",
 			"Enable debugging level.",
@@ -65,56 +180,13 @@ func main() {
 	logger.Infof("%v", version.Print("log2sql"))
 	logger.Infof("Starting %s, gitimport: %v", startTime, *gitimport)
 
-	file, err := os.Open(*gitimport)
-	if err != nil {
-		fmt.Printf("ERROR: Failed to open file '%s': %v\n", *gitimport, err)
-		os.Exit(1)
+	g := NewGitP4Transfer(logger)
+	commits, files := g.Run(*gitimport)
+
+	for _, v := range commits {
+		g.logger.Infof("Found commit: id %d, files: %d", v.commit.Mark, len(v.files))
 	}
-
-	buf := bufio.NewReader(file)
-
-	f := libfastimport.NewFrontend(buf, nil, nil)
-	for {
-		cmd, err := f.ReadCmd()
-		if err != nil {
-			if err != io.EOF {
-				fmt.Printf("ERROR: Failed to read cmd: %v\n", err)
-			}
-			break
-		}
-		switch cmd.(type) {
-		case libfastimport.CmdBlob:
-			blob := cmd.(libfastimport.CmdBlob)
-			fmt.Printf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-		case libfastimport.CmdReset:
-			reset := cmd.(libfastimport.CmdReset)
-			fmt.Printf("Reset: - %+v\n", reset)
-		case libfastimport.CmdCommit:
-			commit := cmd.(libfastimport.CmdCommit)
-			fmt.Printf("Commit:  %+v\n", commit)
-		case libfastimport.CmdCommitEnd:
-			commit := cmd.(libfastimport.CmdCommitEnd)
-			fmt.Printf("CommitEnd:  %+v\n", commit)
-		case libfastimport.FileModify:
-			f := cmd.(libfastimport.FileModify)
-			fmt.Printf("FileModify:  %+v\n", f)
-		case libfastimport.FileDelete:
-			f := cmd.(libfastimport.FileDelete)
-			fmt.Printf("FileModify: Path:%s\n", f.Path)
-		case libfastimport.FileCopy:
-			f := cmd.(libfastimport.FileCopy)
-			fmt.Printf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
-		case libfastimport.FileRename:
-			f := cmd.(libfastimport.FileRename)
-			fmt.Printf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
-		case libfastimport.CmdTag:
-			t := cmd.(libfastimport.CmdTag)
-			fmt.Printf("CmdTag: %+v\n", t)
-		default:
-			fmt.Printf("Not handled\n")
-			fmt.Printf("Found cmd %+v\n", cmd)
-			fmt.Printf("Cmd type %T\n", cmd)
-		}
+	for _, v := range files {
+		g.logger.Infof("Found file: %s, %d", v.name, v.blob.Mark)
 	}
-
 }
