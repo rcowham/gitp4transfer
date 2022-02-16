@@ -87,6 +87,7 @@ M 100644 :1 test.txt
 			assert.Equal(t, 1, len(v.files))
 			assert.Equal(t, "Robert Cowham", v.commit.Committer.Name)
 			assert.Equal(t, "rcowham@perforce.com", v.commit.Author.Email)
+			assert.Equal(t, "refs/heads/main", v.commit.Ref)
 		default:
 			assert.Fail(t, "Unexpected range")
 		}
@@ -97,6 +98,150 @@ M 100644 :1 test.txt
 		case 1:
 			assert.Equal(t, "test.txt", v.name)
 			assert.Equal(t, "test\n", v.blob.Data)
+		default:
+			assert.Fail(t, fmt.Sprintf("Unexpected range: %d", k))
+		}
+	}
+
+}
+
+func TestSimpleBranch(t *testing.T) {
+	logger := logrus.New()
+	// logger.Level = logrus.InfoLevel
+	logger.Level = logrus.DebugLevel
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	src := "src.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	runCmd("git checkout -b branch1")
+	srcContents2 := "contents2\n"
+	writeToFile(src, srcContents2)
+	runCmd("git add .")
+	runCmd("git commit -m 'changed on branch'")
+
+	runCmd("git checkout main")
+	runCmd("git merge branch1")
+	export := "export.txt"
+	// fast-export with rename detection implemented
+	output, err := runCmd(fmt.Sprintf("git fast-export --all -M > %s", export))
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", export, err)
+	}
+	assert.Equal(t, "", output)
+	// logger.Debugf("Export file:\n%s", export)
+
+	// buf := strings.NewReader(input)
+	g := NewGitP4Transfer(logger)
+
+	commits, files := g.Run(export)
+
+	assert.Equal(t, 2, len(commits))
+	for k, v := range commits {
+		switch k {
+		case 2:
+			assert.Equal(t, 2, v.commit.Mark)
+			assert.Equal(t, "refs/heads/branch1", v.commit.Ref)
+			assert.Equal(t, 1, len(v.files))
+		case 4:
+			assert.Equal(t, 4, v.commit.Mark)
+			assert.Equal(t, "refs/heads/branch1", v.commit.Ref)
+			assert.Equal(t, 1, len(v.files))
+		default:
+			assert.Fail(t, fmt.Sprintf("Unexpected range: %d", k))
+		}
+	}
+	assert.Equal(t, 2, len(files))
+	for k, v := range files {
+		switch k {
+		case 1:
+			assert.Equal(t, src, v.name)
+			assert.Equal(t, srcContents1, v.blob.Data)
+		case 3:
+			assert.Equal(t, src, v.name)
+			assert.Equal(t, srcContents2, v.blob.Data)
+		default:
+			assert.Fail(t, fmt.Sprintf("Unexpected range: %d", k))
+		}
+	}
+
+}
+
+func TestSimpleBranchMerge(t *testing.T) {
+	logger := logrus.New()
+	// logger.Level = logrus.InfoLevel
+	logger.Level = logrus.DebugLevel
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	file1 := "file1.txt"
+	file2 := "file2.txt"
+	contents1 := "contents\n"
+	writeToFile(file1, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m 'initial commit on main'")
+
+	writeToFile(file1, contents1+contents1)
+	runCmd("git add .")
+	runCmd("git commit -m 'commit2 on main'")
+
+	runCmd("git checkout -b branch1")
+	contents2 := "contents2\n"
+	writeToFile(file2, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m 'changed on branch'")
+
+	runCmd("git checkout main")
+	runCmd("git merge branch1")
+	export := "export.txt"
+	// fast-export with rename detection implemented
+	output, err := runCmd(fmt.Sprintf("git fast-export main --all -M"))
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", export, err)
+	}
+	assert.NotEqual(t, "", output)
+	logger.Debugf("Export file:\n%s", output)
+
+	// buf := strings.NewReader(input)
+	g := NewGitP4Transfer(logger)
+	g.testInput = output
+	commits, files := g.Run("")
+
+	assert.Equal(t, 3, len(commits))
+	for k, v := range commits {
+		switch k {
+		case 2:
+			assert.Equal(t, 2, v.commit.Mark)
+			assert.Equal(t, "refs/heads/main", v.commit.Ref)
+			assert.Equal(t, 1, len(v.files))
+		case 4:
+			assert.Equal(t, 4, v.commit.Mark)
+			assert.Equal(t, "refs/heads/main", v.commit.Ref)
+			assert.Equal(t, 1, len(v.files))
+		case 6:
+			assert.Equal(t, 6, v.commit.Mark)
+			assert.Equal(t, "refs/heads/main", v.commit.Ref)
+			assert.Equal(t, 1, len(v.files))
+		default:
+			assert.Fail(t, fmt.Sprintf("Unexpected range: %d", k))
+		}
+	}
+	assert.Equal(t, 3, len(files))
+	for k, v := range files {
+		switch k {
+		case 1:
+			assert.Equal(t, file1, v.name)
+			assert.Equal(t, contents1, v.blob.Data)
+		case 3:
+			assert.Equal(t, file1, v.name)
+			assert.Equal(t, contents1+contents1, v.blob.Data)
+		case 5:
+			assert.Equal(t, file2, v.name)
+			assert.Equal(t, contents2, v.blob.Data)
 		default:
 			assert.Fail(t, fmt.Sprintf("Unexpected range: %d", k))
 		}

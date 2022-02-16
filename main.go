@@ -80,8 +80,8 @@ func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
 		buf = bufio.NewReader(file)
 	}
 
-	commitIDs := make(map[int]*GitCommit, 0)
-	fileIDs := make(map[int]*GitFile, 0)
+	commits := make(map[int]*GitCommit, 0)
+	files := make(map[int]*GitFile, 0)
 	var currCommit *GitCommit
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
@@ -97,7 +97,7 @@ func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
 			g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-			fileIDs[blob.Mark] = &GitFile{blob: &blob}
+			files[blob.Mark] = &GitFile{blob: &blob}
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Debugf("Reset: - %+v\n", reset)
@@ -105,7 +105,7 @@ func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
 			commit := cmd.(libfastimport.CmdCommit)
 			g.logger.Debugf("Commit:  %+v\n", commit)
 			currCommit = &GitCommit{commit: &commit, files: make([]GitFile, 0)}
-			commitIDs[commit.Mark] = currCommit
+			commits[commit.Mark] = currCommit
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
 			g.logger.Debugf("CommitEnd:  %+v\n", commit)
@@ -116,7 +116,7 @@ func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
 			if err != nil {
 				g.logger.Errorf("Failed to get oid: %+v", f)
 			}
-			gf, ok := fileIDs[oid]
+			gf, ok := files[oid]
 			if ok {
 				gf.name = f.Path.String()
 				currCommit.files = append(currCommit.files, *gf)
@@ -139,7 +139,7 @@ func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
 			g.logger.Debugf("Cmd type %T\n", cmd)
 		}
 	}
-	return commitIDs, fileIDs
+	return commits, files
 }
 
 func main() {
