@@ -158,6 +158,7 @@ def wildcard_present(path):
     m = re.search("[*#@%]", path)
     return m is not None
 
+
 def isModeExec(mode):
     # Returns True if the given git mode represents an executable file,
     # otherwise False.
@@ -203,8 +204,8 @@ def parseDiffTreeEntry(entry):
             'dst_sha1': match.group(4),
             'status': match.group(5),
             'status_score': match.group(6),
-            'src': match.group(7),
-            'dst': match.group(10)
+            'src': PathQuoting.dequote(match.group(7)),
+            'dst': PathQuoting.dequote(match.group(10))
         }
     return None
 
@@ -389,18 +390,19 @@ def fmtsize(num):
 
 
 class PathQuoting:
+    """From git-filter-repo.py - great for python2 - but needs conversion to bytes for python3"""
     _unescape = {b'a': b'\a',
-                b'b': b'\b',
-                b'f': b'\f',
-                b'n': b'\n',
-                b'r': b'\r',
-                b't': b'\t',
-                b'v': b'\v',
-                b'"': b'"',
-                b'\\':b'\\'}
+                 b'b': b'\b',
+                 b'f': b'\f',
+                 b'n': b'\n',
+                 b'r': b'\r',
+                 b't': b'\t',
+                 b'v': b'\v',
+                 b'"': b'"',
+                 b'\\':b'\\'}
     _unescape_re = re.compile(br'\\([a-z"\\]|[0-9]{3})')
     _escape = [bytes([x]) for x in range(127)]+[
-               b'\\'+bytes(ord(c) for c in oct(x)[2:]) for x in range(127,256)]
+              b'\\'+bytes(ord(c) for c in oct(x)[2:]) for x in range(127,256)]
     _reverse = dict(map(reversed, _unescape.items()))
     for x in _reverse:
         _escape[ord(x)] = b'\\'+_reverse[x]
@@ -409,16 +411,17 @@ class PathQuoting:
     @staticmethod
     def unescape_sequence(orig):
         seq = orig.group(1)
-        return PathQuoting._unescape[seq].decode() if len(seq) == 1 else bytes([int(seq, 8)]).decode()
+        return PathQuoting._unescape[seq] if len(seq) == 1 else bytes([int(seq, 8)])
 
     @staticmethod
     def dequote(quoted_string):
-        quoted_string = quoted_string.encode()
-        if quoted_string.startswith(b'"'):
-            assert quoted_string.endswith(b'"')
-            return PathQuoting._unescape_re.sub(PathQuoting.unescape_sequence,
-                                                quoted_string[1:-1]).decode()
-        return quoted_string.decode()
+        if quoted_string and quoted_string.startswith('"'):
+            assert quoted_string.endswith('"')
+            quoted_string = quoted_string.encode()
+            result = PathQuoting._unescape_re.sub(PathQuoting.unescape_sequence,
+                                          quoted_string[1:-1])
+            return result.decode()
+        return quoted_string
 
 
 class GitFileChanges():
@@ -561,8 +564,7 @@ class GitInfo:
                     shas = splits[0:n]
                     splits = splits[n].split('\t')
                     change_types = splits[0]
-                    # filenames = [PathQuoting.dequote(x) for x in splits[1:]]
-                    filenames = [x for x in splits[1:]]
+                    filenames = [PathQuoting.dequote(x) for x in splits[1:]]
                     fileChanges.append(GitFileChanges(modes, shas, change_types, filenames))
 
             commits[commitID] = GitCommit(commitID, name, email, '\n'.join(desc))
@@ -1025,14 +1027,16 @@ class P4Target(P4Base):
         if not commit.parents:
             for fc in fileChanges:
                 self.logger.debug("fileChange: %s %s" % (fc.changeTypes, fc.filenames[0]))
-                if fc.changeTypes == 'A':
-                    self.p4cmd('rec', '-af', fc.filenames[0])
-                elif fc.changeTypes == 'M':
-                    self.p4cmd('rec', '-e', fc.filenames[0])
-                elif fc.changeTypes == 'D':
-                    self.p4cmd('rec', '-d', fc.filenames[0])
-                else: # Better safe than sorry! Various known actions not yet implemented
-                    raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
+                if fc.filenames[0]:
+                    filename = PathQuoting.dequote(fc.filenames[0])
+                    if fc.changeTypes == 'A':
+                        self.p4cmd('rec', '-af', filename)
+                    elif fc.changeTypes == 'M':
+                        self.p4cmd('rec', '-e', filename)
+                    elif fc.changeTypes == 'D':
+                        self.p4cmd('rec', '-d', filename)
+                    else: # Better safe than sorry! Various known actions not yet implemented
+                        raise P4TLogicException('Action not yet implemented: %s', fc.changeTypes)
         else:
             diff = self.source.gitinfo.read_pipe_lines("git diff-tree -r %s \"%s^\" \"%s\"" % (
                         "-M", commit.commitID, commit.commitID))
