@@ -866,8 +866,8 @@ class GitSource(P4Base):
                 # rc = p.returncode
                 self.logger.debug("Output:\n%s" % output)
             else:
-                result = subprocess.check_call(cmd, stderr=subprocess.STDOUT, shell=True, timeout=timeout)
-                self.logger.debug('Result: %d' % result)
+                result = subprocess.run(cmd, shell=True, check=True, capture_output=True)
+                self.logger.debug('Result: %s' % str(result))
         except subprocess.CalledProcessError as e:
             self.logger.debug("Output: %s" % e.output)
             if stop_on_error:
