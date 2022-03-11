@@ -292,10 +292,11 @@ func TestSimpleMerge(t *testing.T) {
 
 	runCmd("git merge branch1")
 	export := "export.txt"
-	// fast-export with rename detection implemented
+	// Pretty output
 	debugOut, _ := runCmd("git log --graph --oneline --decorate")
 	logger.Debugf("Git log:\n%s", debugOut)
 
+	// fast-export with rename detection implemented
 	output, err := runCmd(fmt.Sprintf("git fast-export --all -M --show-original-ids"))
 	if err != nil {
 		t.Errorf("ERROR: Failed to git export '%s': %v\n", export, err)
