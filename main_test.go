@@ -3,6 +3,7 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -11,6 +12,12 @@ import (
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
+
+var debug bool = false
+
+func init() {
+	flag.BoolVar(&debug, "debug", false, "Set to have debug logging for tests.")
+}
 
 func runCmd(cmdLine string) (string, error) {
 	cmd := exec.Command("/bin/bash", "-c", cmdLine)
@@ -72,8 +79,9 @@ M 100644 :1 test.txt
 
 	logger := logrus.New()
 	logger.Level = logrus.InfoLevel
-	// logger.Level = logrus.DebugLevel
-	// buf := strings.NewReader(input)
+	if *&debug {
+		logger.Level = logrus.DebugLevel
+	}
 	g := NewGitP4Transfer(logger)
 	g.testInput = input
 
@@ -107,8 +115,10 @@ M 100644 :1 test.txt
 
 func TestSimpleBranch(t *testing.T) {
 	logger := logrus.New()
-	// logger.Level = logrus.InfoLevel
-	logger.Level = logrus.DebugLevel
+	logger.Level = logrus.InfoLevel
+	if *&debug {
+		logger.Level = logrus.DebugLevel
+	}
 	d := createGitRepo(t)
 	os.Chdir(d)
 	logger.Debugf("Git repo: %s", d)
@@ -173,8 +183,10 @@ func TestSimpleBranch(t *testing.T) {
 
 func TestSimpleBranchMerge(t *testing.T) {
 	logger := logrus.New()
-	// logger.Level = logrus.InfoLevel
-	logger.Level = logrus.DebugLevel
+	logger.Level = logrus.InfoLevel
+	if *&debug {
+		logger.Level = logrus.DebugLevel
+	}
 	d := createGitRepo(t)
 	os.Chdir(d)
 	logger.Debugf("Git repo: %s", d)
@@ -249,10 +261,12 @@ func TestSimpleBranchMerge(t *testing.T) {
 
 }
 
-func TestSimplePull(t *testing.T) {
+func TestSimpleMerge(t *testing.T) {
 	logger := logrus.New()
-	// logger.Level = logrus.InfoLevel
-	logger.Level = logrus.DebugLevel
+	logger.Level = logrus.InfoLevel
+	if *&debug {
+		logger.Level = logrus.DebugLevel
+	}
 	d := createGitRepo(t)
 	os.Chdir(d)
 	logger.Debugf("Git repo: %s", d)
