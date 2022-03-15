@@ -544,66 +544,6 @@ class TestGitP4Transfer(unittest.TestCase):
     #     logoutput = saved_stdoutput.getvalue()
     #     matches = re.findall("INFO: Logging to file:", logoutput)
     #     self.assertEqual(len(matches), 3)
-
-    def testBasicCommitInfo(self):
-        "Basic git info"
-        self.setupTransfer()
-
-        inside = self.source.repo_root
-        file1 = os.path.join(inside, "file1")
-        create_file(file1, 'Test content')
-
-        self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "first change"')
-
-        gitinfo = GitP4Transfer.GitInfo(test_logger)
-        commits = gitinfo.getBasicCommitInfo(['main'])
-        test_logger.debug("commits: %s" % ' '.join(commits))
-        self.assertEqual(1, len(commits))
-        for _, v in commits.items():
-            self.assertEqual('first change', v.description)
-
-    def testBranchCommitInfo(self):
-        "Basic git info for a branch"
-        self.setupTransfer()
-
-        inside = self.source.repo_root
-        file1 = os.path.join(inside, "file1")
-        file2 = os.path.join(inside, "file2")
-        create_file(file1, 'Test content')
-
-        self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "first change"')
-
-        self.source.run_cmd('git checkout -b branch1')
-        create_file(file2, 'Test content2')
-        self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "2nd change"')
-
-        gitinfo = GitP4Transfer.GitInfo(test_logger)
-        branch = 'main'
-        commits = gitinfo.getBasicCommitInfo([branch])
-        branchCommits = gitinfo.getBranchCommits([branch])
-        clist = branchCommits[branch]
-        test_logger.debug("commits: %s" % ' '.join(clist))
-        self.assertEqual(1, len(clist))
-        for id in clist:
-            self.assertTrue(id in commits)
-            self.assertEqual('first change', commits[id].description)
-
-        branch = 'branch1'
-        commits = gitinfo.getBasicCommitInfo([branch])
-        branchCommits = gitinfo.getBranchCommits([branch])
-        clist = branchCommits[branch]
-        test_logger.debug("commits: %s" % ' '.join(clist))
-        self.assertEqual(2, len(clist))
-        for id in clist:
-            self.assertTrue(id in commits)
-
-        branches = ['main', 'branch1']
-        commits = gitinfo.getBasicCommitInfo(branches)
-        branchCommits = gitinfo.getBranchCommits([branch])
-        self.assertEqual(2, len(commits))
             
     def testCommitDiffs(self):
         "Basic git info including file diffs"
@@ -831,63 +771,63 @@ class TestGitP4Transfer(unittest.TestCase):
         result = self.target.p4cmd('print', '//depot/import/file1')
         self.assertEqual(b'Test content\nbranch change\n', result[1])
 
-    def testSimpleMerge(self):
-        "Basic simple branch and merge - only taking main changes"
-        self.setupTransfer()
+    # def testSimpleMerge(self):
+    #     "Basic simple branch and merge - only taking main changes"
+    #     self.setupTransfer()
 
-        inside = self.source.repo_root
-        file1 = os.path.join(inside, "file1")
-        file2 = os.path.join(inside, "file2")
-        create_file(file1, 'Test content\n')
+    #     inside = self.source.repo_root
+    #     file1 = os.path.join(inside, "file1")
+    #     file2 = os.path.join(inside, "file2")
+    #     create_file(file1, 'Test content\n')
 
-        self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "1: first change"')
+    #     self.source.run_cmd('git add .')
+    #     self.source.run_cmd('git commit -m "1: first change"')
 
-        self.source.run_cmd('git checkout -b branch1')
-        append_to_file(file1, "branch change\n")
-        self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "2: branch edit change"')
+    #     self.source.run_cmd('git checkout -b branch1')
+    #     append_to_file(file1, "branch change\n")
+    #     self.source.run_cmd('git add .')
+    #     self.source.run_cmd('git commit -m "2: branch edit change"')
 
-        self.source.run_cmd('git checkout main')
-        create_file(file2, 'Test content2\n')
-        self.source.run_cmd('git add .')
-        self.source.run_cmd('git commit -m "3: new file on main"')
+    #     self.source.run_cmd('git checkout main')
+    #     create_file(file2, 'Test content2\n')
+    #     self.source.run_cmd('git add .')
+    #     self.source.run_cmd('git commit -m "3: new file on main"')
 
-        self.source.run_cmd('git merge --no-edit branch1')
-        self.source.run_cmd('git commit -m "4: merged change"')
-        self.source.run_cmd('git log --graph --abbrev-commit --oneline')
+    #     self.source.run_cmd('git merge --no-edit branch1')
+    #     self.source.run_cmd('git commit -m "4: merged change"')
+    #     self.source.run_cmd('git log --graph --abbrev-commit --oneline')
 
-        # Validate the parsing of the branches
-        gitinfo = GitP4Transfer.GitInfo(test_logger)
-        branchRefs = ['main']
-        commitList, commits = gitinfo.getCommitDiffs(branchRefs)
-        self.assertEqual(3, len(commitList))
-        gitinfo.updateBranchInfo(branchRefs, commitList, commits)
-        self.assertEqual('main', commits[commitList[0]].branch)
-        self.assertEqual('main', commits[commitList[1]].branch)
-        # self.assertEqual('_anon0001', commits[commitList[2]].branch)
-        self.assertEqual('main', commits[commitList[2]].branch)
+    #     # Validate the parsing of the branches
+    #     gitinfo = GitP4Transfer.GitInfo(test_logger)
+    #     branchRefs = ['main']
+    #     commitList, commits = gitinfo.getCommitDiffs(branchRefs)
+    #     self.assertEqual(3, len(commitList))
+    #     gitinfo.updateBranchInfo(branchRefs, commitList, commits)
+    #     self.assertEqual('main', commits[commitList[0]].branch)
+    #     self.assertEqual('main', commits[commitList[1]].branch)
+    #     # self.assertEqual('_anon0001', commits[commitList[2]].branch)
+    #     self.assertEqual('main', commits[commitList[2]].branch)
 
-        self.run_GitP4Transfer()
+    #     self.run_GitP4Transfer()
 
-        changes = self.target.p4cmd('changes')
-        self.assertEqual(3, len(changes))
+    #     changes = self.target.p4cmd('changes')
+    #     self.assertEqual(3, len(changes))
 
-        files = self.target.p4cmd('files', '//depot/...')
-        self.assertEqual(2, len(files))
-        # self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
-        self.assertEqual('//depot/import/file1', files[0]['depotFile'])
-        self.assertEqual('//depot/import/file2', files[1]['depotFile'])
+    #     files = self.target.p4cmd('files', '//depot/...')
+    #     self.assertEqual(2, len(files))
+    #     # self.assertEqual('//depot/anon_branches/_anon0001/file1', files[0]['depotFile'])
+    #     self.assertEqual('//depot/import/file1', files[0]['depotFile'])
+    #     self.assertEqual('//depot/import/file2', files[1]['depotFile'])
 
-        filelogs = self.target.p4cmd('filelog', '//depot/...')
-        self.assertEqual(2, len(filelogs))
-        self.assertEqual('edit', filelogs[0]['action'][0])
-        self.assertEqual('add', filelogs[1]['action'][0])
-        # self.assertEqual('integrate', filelogs[1]['action'][0])
-        self.assertEqual('add', filelogs[1]['action'][0])
+    #     filelogs = self.target.p4cmd('filelog', '//depot/...')
+    #     self.assertEqual(2, len(filelogs))
+    #     self.assertEqual('edit', filelogs[0]['action'][0])
+    #     self.assertEqual('add', filelogs[1]['action'][0])
+    #     # self.assertEqual('integrate', filelogs[1]['action'][0])
+    #     self.assertEqual('add', filelogs[1]['action'][0])
 
-        result = self.target.p4cmd('print', '//depot/import/file1')
-        self.assertEqual(b'Test content\nbranch change\n', result[1])
+    #     result = self.target.p4cmd('print', '//depot/import/file1')
+    #     self.assertEqual(b'Test content\nbranch change\n', result[1])
 
     def testRename(self):
         "Basic rename"

@@ -449,25 +449,47 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div id="toc" class="toc">
 <div id="toctitle">Table of Contents</div>
 <ul class="sectlevel1">
-<li><a href="#_pre_requisites">1. Pre-requisites</a>
+<li><a href="#_gitp4transfer_py">1. GitP4Transfer.py</a>
 <ul class="sectlevel2">
-<li><a href="#_install_git">1.1. Install Git</a></li>
-<li><a href="#_clone_repo">1.2. Clone repo</a></li>
-<li><a href="#_fetch_all_lfs_objects">1.3. Fetch all LFS objects</a></li>
-<li><a href="#_install_python3_8">1.4. Install Python3.8</a></li>
-<li><a href="#_install_gitp4transfer">1.5. Install GitP4Transfer</a></li>
-<li><a href="#_perforce_structure">1.6. Perforce structure</a></li>
+<li><a href="#_overview">1.1. Overview</a></li>
+<li><a href="#_pre_requisites">1.2. Pre-requisites</a>
+<ul class="sectlevel3">
+<li><a href="#_install_gitgit_lfs">1.2.1. Install Git/Git LFS</a></li>
+<li><a href="#_clone_repo">1.2.2. Clone repo</a></li>
+<li><a href="#_fetch_all_lfs_objects">1.2.3. Fetch all LFS objects</a></li>
+<li><a href="#_install_python3_8">1.2.4. Install Python3.8</a></li>
+<li><a href="#_install_gitp4transfer_py">1.2.5. Install GitP4Transfer.py</a></li>
+<li><a href="#_note_about_temp_branch">1.2.6. Note about temp branch</a></li>
+<li><a href="#_things_to_do">1.2.7. Things to do</a></li>
+<li><a href="#_branch_diffs">1.2.8. Branch diffs</a></li>
 </ul>
 </li>
-<li><a href="#_things_to_do">2. Things to do</a></li>
-<li><a href="#_branch_diffs">3. Branch diffs</a></li>
+</ul>
+</li>
+<li><a href="#_gitp4transfer_go_program">2. gitp4transfer - Go program</a>
+<ul class="sectlevel2">
+<li><a href="#_todo">2.1. Todo</a></li>
+<li><a href="#_test_scenarios">2.2. Test Scenarios</a></li>
+</ul>
+</li>
 </ul>
 </div>
 </div>
 <div id="content">
 <div class="sect1">
-<h2 id="_pre_requisites">1. Pre-requisites</h2>
+<h2 id="_gitp4transfer_py">1. GitP4Transfer.py</h2>
 <div class="sectionbody">
+<div class="sect2">
+<h3 id="_overview">1.1. Overview</h3>
+<div class="paragraph">
+<p>This is a functional script to import git LFS commits for a single branch (e.g. master/main) into Helix Core.</p>
+</div>
+<div class="paragraph">
+<p>It includes some ideas from <code>git-p4</code> and <code>git-filter-repo.py</code>.</p>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_pre_requisites">1.2. Pre-requisites</h3>
 <div class="ulist">
 <ul>
 <li>
@@ -478,15 +500,11 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </li>
 </ul>
 </div>
-<div class="sect2">
-<h3 id="_install_git">1.1. Install Git</h3>
-<div class="ulist">
-<ul>
-<li>
-<p>Git</p>
-</li>
-<li>
-<p>Git LFS</p>
+<div class="sect3">
+<h4 id="_install_gitgit_lfs">1.2.1. Install Git/Git LFS</h4>
+<div class="paragraph">
+<p>Easiest to install these from Wandisco to get recent versions (not 1.8 for example):</p>
+</div>
 <div class="literalblock">
 <div class="content">
 <pre>sudo yum install http://opensource.wandisco.com/centos/7/git/x86_64/wandisco-git-release-7-2.noarch.rpm
@@ -494,12 +512,9 @@ sudo yum install git git-lfs
 git --version</pre>
 </div>
 </div>
-</li>
-</ul>
 </div>
-</div>
-<div class="sect2">
-<h3 id="_clone_repo">1.2. Clone repo</h3>
+<div class="sect3">
+<h4 id="_clone_repo">1.2.2. Clone repo</h4>
 <div class="literalblock">
 <div class="content">
 <pre>cd /hxdepots
@@ -509,8 +524,8 @@ git clone &lt;url&gt;</pre>
 </div>
 </div>
 </div>
-<div class="sect2">
-<h3 id="_fetch_all_lfs_objects">1.3. Fetch all LFS objects</h3>
+<div class="sect3">
+<h4 id="_fetch_all_lfs_objects">1.2.3. Fetch all LFS objects</h4>
 <div class="olist arabic">
 <ol class="arabic">
 <li>
@@ -531,8 +546,8 @@ git clone &lt;url&gt;</pre>
 <pre>$ git lfs fetch --all
 fetch: 163739 object(s) found, done.
 fetch: Fetching all references...
-Username for 'https://git.assembla.com': fred.bloggs
-Password for 'https://robert.cowham.p4@git.assembla.com':
+Username for 'https://git.example.com': fred.bloggs
+Password for 'https://fred.bloggs@example.com':
 Downloading LFS objects:   4% (6561/163738), 9.1 GB | 100 MB/s</pre>
 </div>
 </div>
@@ -579,8 +594,11 @@ fetch: Fetching all references...</pre>
 </ol>
 </div>
 </div>
-<div class="sect2">
-<h3 id="_install_python3_8">1.4. Install Python3.8</h3>
+<div class="sect3">
+<h4 id="_install_python3_8">1.2.4. Install Python3.8</h4>
+<div class="paragraph">
+<p>Unfortunately 3.6 is missing some required changes in the <code>subproc</code> library, so need to build from source. Ubuntu is similar (but different!)</p>
+</div>
 <div class="literalblock">
 <div class="content">
 <pre>yum install wget yum-utils make gcc openssl-devel bzip2-devel libffi-devel zlib-devel
@@ -593,8 +611,8 @@ make install</pre>
 </div>
 </div>
 </div>
-<div class="sect2">
-<h3 id="_install_gitp4transfer">1.5. Install GitP4Transfer</h3>
+<div class="sect3">
+<h4 id="_install_gitp4transfer_py">1.2.5. Install GitP4Transfer.py</h4>
 <div class="olist arabic">
 <ol class="arabic">
 <li>
@@ -616,7 +634,7 @@ yum install perforce-p4python3</pre>
 </div>
 </li>
 <li>
-<p>As normal user <code>perforce</code>:</p>
+<p>As normal user, e.g. <code>perforce</code>:</p>
 <div class="literalblock">
 <div class="content">
 <pre>pip3 install --user requests ruamel.yaml</pre>
@@ -649,14 +667,17 @@ python3 GitP4Transfer.py -h</pre>
 </div>
 </li>
 <li>
-<p>Do a test of config</p>
+<p>Create appropriate target depot, e.g. <code>//git_import/repoA/master</code> and ensure setup in config file.</p>
+</li>
+<li>
+<p>Do a test of config:</p>
 <div class="literalblock">
 <div class="content">
 <pre>python3 GitP4Transfer.py -c transfer_config.yaml -n</pre>
 </div>
 </div>
 <div class="paragraph">
-<p>Validate log files</p>
+<p>Validate log files for success.</p>
 </div>
 </li>
 <li>
@@ -681,21 +702,40 @@ python3 GitP4Transfer.py -h</pre>
 </ol>
 </div>
 </div>
-<div class="sect2">
-<h3 id="_perforce_structure">1.6. Perforce structure</h3>
-<div class="olist arabic">
-<ol class="arabic">
-<li>
-<p>Create appropriate target depot, e.g. <code>//git_import/repoA/master</code></p>
-</li>
-</ol>
+<div class="sect3">
+<h4 id="_note_about_temp_branch">1.2.6. Note about temp branch</h4>
+<div class="paragraph">
+<p>The script works by replaying each commit. To do this it executes:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>for each commitid in reverse order:
+    git switch -C p4_exportBranch &lt;commitid&gt;
+    parse the output of git diff-tree against previous commit
+    run various p4 commands</pre>
 </div>
 </div>
+<div class="paragraph">
+<p>As a result, expect the new branch <code>p4_exportBranch</code> to be created and continually updated. This is effectively a dummy branch.</p>
+</div>
+<div class="paragraph">
+<p>When the script has finished you may need to: <code>git checkout master</code> or similar to reset to your current branch.</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+if the script fails, then the active branch is going to be the temp one - don&#8217;t assume it is HEAD/master!
+</td>
+</tr>
+</table>
 </div>
 </div>
-<div class="sect1">
-<h2 id="_things_to_do">2. Things to do</h2>
-<div class="sectionbody">
+<div class="sect3">
+<h4 id="_things_to_do">1.2.7. Things to do</h4>
 <div class="ulist">
 <ul>
 <li>
@@ -707,13 +747,14 @@ python3 GitP4Transfer.py -h</pre>
 <li>
 <p>Interleave in date/time order</p>
 </li>
+<li>
+<p>More informative commit messages</p>
+</li>
 </ul>
 </div>
 </div>
-</div>
-<div class="sect1">
-<h2 id="_branch_diffs">3. Branch diffs</h2>
-<div class="sectionbody">
+<div class="sect3">
+<h4 id="_branch_diffs">1.2.8. Branch diffs</h4>
 <div class="paragraph">
 <p>Generated by:</p>
 </div>
@@ -725,9 +766,160 @@ python3 GitP4Transfer.py -h</pre>
 </div>
 </div>
 </div>
+</div>
+<div class="sect1">
+<h2 id="_gitp4transfer_go_program">2. gitp4transfer - Go program</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>This uses git&#8217;s fast-import file format.</p>
+</div>
+<div class="paragraph">
+<p>Probably won&#8217;t work for LFS files, although maybe via <code>git lfs migrate</code>??</p>
+</div>
+<div class="admonitionblock important">
+<table>
+<tr>
+<td class="icon">
+<i class="fa icon-important" title="Important"></i>
+</td>
+<td class="content">
+Not yet functional - very much a work in progress!!!
+</td>
+</tr>
+</table>
+</div>
+<div class="sect2">
+<h3 id="_todo">2.1. Todo</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Report on everything</p>
+</li>
+<li>
+<p>Write checkpoint (2004.1 format)</p>
+</li>
+<li>
+<p>What will happen with .gz for all files including text? Maybe just use filetypes and fix after upgrades?</p>
+</li>
+<li>
+<p>Option to extract all</p>
+</li>
+<li>
+<p>Need to rename branches, or remap them</p>
+</li>
+<li>
+<p>When extracting file contents, consider multiple refs to same file</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Duplicate - or auto-write branch values?</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Create channels:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Commits</p>
+</li>
+<li>
+<p>Files</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Concerns:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Converts to string - should we leave as bytes?</p>
+</li>
+<li>
+<p>Gzip in threads?</p>
+</li>
+<li>
+<p>UTF encoding issues?</p>
+</li>
+</ul>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_test_scenarios">2.2. Test Scenarios</h3>
+<div class="ulist">
+<ul>
+<li>
+<p>Given a root dir, write files</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Make root dir configurable</p>
+</li>
+<li>
+<p>For objects, write files as soon as you get a filename? Or at least consider that.</p>
+</li>
+<li>
+<p>Gzip or not</p>
+</li>
+<li>
+<p>Detect base file formats using magic signatures</p>
+</li>
+<li>
+<p>Issue around main/branch files</p>
+<div class="ulist">
+<ul>
+<li>
+<p>If From: is blank then assume on main/master?</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Specify main/master and follow back commits on that branch</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Options:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Parse files and contents and write out</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Requires changelist numbers - just use Marks from file.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Option to filter only a subset of files (on any branch)</p>
+</li>
+<li>
+<p>Option to filter a single branch</p>
+</li>
+<li>
+<p>Mappings - to rename branches</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+</div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2022-03-10 14:29:58 UTC
+Last updated 2022-03-15 13:40:49 UTC
 </div>
 </div>
 </body>

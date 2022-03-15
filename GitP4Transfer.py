@@ -62,9 +62,6 @@ DESCRIPTION:
 #   Scan all commits for other key info
 #   Find start commit
 #   Process in reverse order
-#       Simple changes
-#       Branch changes
-#       Merge changes
 
 from __future__ import print_function, division
 from os import error
@@ -227,7 +224,7 @@ class P4TException(Exception):
     pass
 
 
-class P4TLogicException(Exception):
+class P4TLogicException(P4TException):
     pass
 
 
@@ -342,12 +339,12 @@ branch_maps:
   - git_branch:  "master"
     targ:   "//git_import/master"
 
-# import_anon_branches: Set this to 'y' to import anonymous branches
+# import_anon_branches: Set this to 'y' to import anonymous branches - NOT YET FUNCTIONAL!!!
 #   Any other value means they will not be imported.
 import_anon_branches: n
 
 # anon_branches_root: A depot path used for anonymous git branches (names automatically generated).
-#   Mandatory.
+#   NOT YET FUNCTIONAL
 #   Such branches only contain files modified on git branch.
 #   Name of branch under this root is _anonNNNN with a unique ID.
 #   If this field is empty, then no anonymous branches will be created/imported.
@@ -417,6 +414,7 @@ class PathQuoting:
     def dequote(quoted_string):
         if quoted_string and quoted_string.startswith('"'):
             assert quoted_string.endswith('"')
+            # Python3 - convert to bytes for magic above
             quoted_string = quoted_string.encode()
             result = PathQuoting._unescape_re.sub(PathQuoting.unescape_sequence,
                                           quoted_string[1:-1])
@@ -466,42 +464,6 @@ class GitInfo:
         if pipe.close() or p.wait():
             raise Exception('Command failed: %s' % str(c))
         return val
-
-    def getBasicCommitInfo(self, refs):
-        "Return a dict indexed by commit hash of populated GitCommit objects"
-        # Format string: %cn=committer, %ce=committer email, %B=raw desc
-        cmd = ('git rev-list %s %s' % (' '.join(refs), '--format=%cn%n%ce%n%B%n"__END_OF_DESC__"'))
-        if self.logger:
-            self.logger.debug(cmd)
-        dtp = subproc.Popen(cmd, shell=True, bufsize=-1, stdout=subprocess.PIPE)
-        f = dtp.stdout
-        line = decode_text_stream(f.readline())
-        if not line:
-            raise SystemExit(("Nothing to analyze; repository is empty."))
-        cont = bool(line)
-        commits = {}
-        while cont:
-            if not line:
-                break
-            commitID = decode_text_stream(line).rstrip().split()[1]
-            name = decode_text_stream(f.readline()).rstrip()
-            email = decode_text_stream(f.readline()).rstrip()
-            desc = []
-
-            in_desc = True
-            while in_desc:
-                line = decode_text_stream(f.readline()).rstrip()
-                if line.startswith('__END_OF_DESC__'):
-                    in_desc = False
-                elif line:
-                    desc.append(line)
-            commits[commitID] = GitCommit(commitID, name, email, '\n'.join(desc))
-            line = decode_text_stream(f.readline())
-        # Close the output, ensure command completed successfully
-        dtp.stdout.close()
-        if dtp.wait():
-            raise SystemExit(("Error: rev-list pipeline failed; see above.")) # pragma: no cover
-        return commits
 
     def getCommitDiffs(self, refs):
         "Return array of commits in reverse order for processing, together with dict of commits"
@@ -599,8 +561,7 @@ class GitInfo:
             shas = splits[0:n]
             splits = splits[n].split('\t')
             change_types = splits[0]
-            # filenames = [PathQuoting.dequote(x) for x in splits[1:]]
-            filenames = [x for x in splits[1:]]
+            filenames = [PathQuoting.dequote(x) for x in splits[1:]]
             fileChanges.append(GitFileChanges(modes, shas, change_types, filenames))
         dtp.stdout.close()
         if dtp.wait():
@@ -633,27 +594,27 @@ class GitInfo:
             raise SystemExit("Error: {} failed; see above.".format(cmd)) # pragma: no cover
         return branchCommits
 
-    def updateBranchInfo(self, branchRefs, commitList, commits):
-        "Updates the branch details for every commit"
-        branchCommits = self.getBranchCommits(branchRefs)
-        for b in branchRefs:
-            for id in branchCommits[b]:
-                if not id in commitList:
-                    raise P4TException("Failed to find commit: %s" % id)
-                commits[id].branch = b
-        # Now update anonymous branches - in commit order (so parents first)
-        for id in commitList:
-            if not commits[id].branch:
-                firstParent = commits[id].parents[0]
-                assert(commits[firstParent].branch is not None)
-                if not commits[firstParent].branch.startswith(ANON_BRANCH_PREFIX):
-                    self.anonBranchInd += 1
-                    anonBranch = "%s%04d" % (ANON_BRANCH_PREFIX, self.anonBranchInd)
-                    commits[id].branch = anonBranch
-                    commits[id].parentBranch = commits[firstParent].branch
-                    commits[id].firstOnBranch = True
-                else:
-                    commits[id].branch = commits[firstParent].branch
+    # def updateBranchInfo(self, branchRefs, commitList, commits):
+    #     "Updates the branch details for every commit"
+    #     branchCommits = self.getBranchCommits(branchRefs)
+    #     for b in branchRefs:
+    #         for id in branchCommits[b]:
+    #             if not id in commitList:
+    #                 raise P4TException("Failed to find commit: %s" % id)
+    #             commits[id].branch = b
+    #     # Now update anonymous branches - in commit order (so parents first)
+    #     for id in commitList:
+    #         if not commits[id].branch:
+    #             firstParent = commits[id].parents[0]
+    #             assert(commits[firstParent].branch is not None)
+    #             if not commits[firstParent].branch.startswith(ANON_BRANCH_PREFIX):
+    #                 self.anonBranchInd += 1
+    #                 anonBranch = "%s%04d" % (ANON_BRANCH_PREFIX, self.anonBranchInd)
+    #                 commits[id].branch = anonBranch
+    #                 commits[id].parentBranch = commits[firstParent].branch
+    #                 commits[id].firstOnBranch = True
+    #             else:
+    #                 commits[id].branch = commits[firstParent].branch
 
 
 class ChangeRevision:
