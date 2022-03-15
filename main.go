@@ -31,9 +31,20 @@ func Humanize(b int) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
-// GitFile - A git file record
+type GitAction int
+
+const (
+	modify GitAction = iota
+	delete
+	copy
+	rename
+)
+
+// GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
 	name     string
+	action   GitAction
+	targ     string // For use with copy/move
 	fileType string
 	blob     *libfastimport.CmdBlob
 }
@@ -51,6 +62,7 @@ type FileMap map[int]*GitFile
 type GitP4Transfer struct {
 	exportFile string
 	logger     *logrus.Logger
+	gitChan    chan GitCommit
 	testInput  string // For testing only
 }
 
@@ -65,7 +77,8 @@ func getOID(dataref string) (int, error) {
 	return strconv.Atoi(dataref[1:])
 }
 
-func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
+// RunGetCommits - for small files - returns list of all commits and files.
+func (g *GitP4Transfer) RunGetCommits(gitImportFile string) (CommitMap, FileMap) {
 	var buf io.Reader
 
 	if g.testInput != "" {
@@ -142,6 +155,99 @@ func (g *GitP4Transfer) Run(gitImportFile string) (CommitMap, FileMap) {
 	return commits, files
 }
 
+// GitParse - returns channel which contains commits and files.
+func (g *GitP4Transfer) GitParse(gitImportFile string) chan GitCommit {
+	var buf io.Reader
+
+	if g.testInput != "" {
+		buf = strings.NewReader(g.testInput)
+	} else {
+		file, err := os.Open(gitImportFile)
+		if err != nil {
+			fmt.Printf("ERROR: Failed to open file '%s': %v\n", gitImportFile, err)
+			os.Exit(1)
+		}
+		defer file.Close()
+		buf = bufio.NewReader(file)
+	}
+
+	g.gitChan = make(chan GitCommit, 100)
+	files := make(map[int]*GitFile, 0)
+	var currCommit *GitCommit
+
+	f := libfastimport.NewFrontend(buf, nil, nil)
+	go func() {
+		defer close(g.gitChan)
+		for {
+			cmd, err := f.ReadCmd()
+			if err != nil {
+				if err != io.EOF {
+					g.logger.Errorf("ERROR: Failed to read cmd: %v\n", err)
+				}
+				break
+			}
+			switch cmd.(type) {
+			case libfastimport.CmdBlob:
+				blob := cmd.(libfastimport.CmdBlob)
+				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
+				files[blob.Mark] = &GitFile{blob: &blob, action: modify}
+			case libfastimport.CmdReset:
+				reset := cmd.(libfastimport.CmdReset)
+				g.logger.Debugf("Reset: - %+v\n", reset)
+			case libfastimport.CmdCommit:
+				if currCommit != nil {
+					g.gitChan <- *currCommit
+				}
+				commit := cmd.(libfastimport.CmdCommit)
+				g.logger.Debugf("Commit:  %+v\n", commit)
+				currCommit = &GitCommit{commit: &commit, files: make([]GitFile, 0)}
+			case libfastimport.CmdCommitEnd:
+				commit := cmd.(libfastimport.CmdCommitEnd)
+				g.logger.Debugf("CommitEnd:  %+v\n", commit)
+			case libfastimport.FileModify:
+				f := cmd.(libfastimport.FileModify)
+				g.logger.Debugf("FileModify:  %+v\n", f)
+				oid, err := getOID(f.DataRef)
+				if err != nil {
+					g.logger.Errorf("Failed to get oid: %+v", f)
+				}
+				gf, ok := files[oid]
+				if ok {
+					gf.name = f.Path.String()
+					currCommit.files = append(currCommit.files, *gf)
+				}
+			case libfastimport.FileDelete:
+				f := cmd.(libfastimport.FileDelete)
+				g.logger.Debugf("FileModify: Path:%s\n", f.Path)
+				gf := &GitFile{name: f.Path.String(), action: delete}
+				currCommit.files = append(currCommit.files, *gf)
+			case libfastimport.FileCopy:
+				f := cmd.(libfastimport.FileCopy)
+				g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
+				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
+				currCommit.files = append(currCommit.files, *gf)
+			case libfastimport.FileRename:
+				f := cmd.(libfastimport.FileRename)
+				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
+				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: rename}
+				currCommit.files = append(currCommit.files, *gf)
+			case libfastimport.CmdTag:
+				t := cmd.(libfastimport.CmdTag)
+				g.logger.Debugf("CmdTag: %+v\n", t)
+			default:
+				g.logger.Errorf("Not handled: Found cmd %+v\n", cmd)
+				g.logger.Errorf("Cmd type %T\n", cmd)
+			}
+		}
+		if currCommit != nil {
+			g.gitChan <- *currCommit
+		}
+
+	}()
+
+	return g.gitChan
+}
+
 func main() {
 	// Tracing code
 	// ft, err := os.Create("trace.out")
@@ -181,7 +287,7 @@ func main() {
 	logger.Infof("Starting %s, gitimport: %v", startTime, *gitimport)
 
 	g := NewGitP4Transfer(logger)
-	commits, files := g.Run(*gitimport)
+	commits, files := g.RunGetCommits(*gitimport)
 
 	for _, v := range commits {
 		g.logger.Infof("Found commit: id %d, files: %d", v.commit.Mark, len(v.files))
