@@ -466,12 +466,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </li>
 </ul>
 </li>
-<li><a href="#_gitp4transfer_go_program">2. gitp4transfer - Go program</a>
-<ul class="sectlevel2">
-<li><a href="#_todo">2.1. Todo</a></li>
-<li><a href="#_test_scenarios">2.2. Test Scenarios</a></li>
-</ul>
-</li>
+<li><a href="#_gitp4transfer_go_program">2. gitp4transfer - Go program</a></li>
 </ul>
 </div>
 </div>
@@ -774,7 +769,7 @@ if the script fails, then the active branch is going to be the temp one - don&#8
 <p>This uses git&#8217;s fast-import file format.</p>
 </div>
 <div class="paragraph">
-<p>Probably won&#8217;t work for LFS files, although maybe via <code>git lfs migrate</code>??</p>
+<p>For git LFS files, this might work via <code>git lfs migrate</code>??</p>
 </div>
 <div class="admonitionblock important">
 <table>
@@ -788,138 +783,12 @@ Not yet functional - very much a work in progress!!!
 </tr>
 </table>
 </div>
-<div class="sect2">
-<h3 id="_todo">2.1. Todo</h3>
-<div class="ulist">
-<ul>
-<li>
-<p>Report on everything</p>
-</li>
-<li>
-<p>Write checkpoint (2004.1 format)</p>
-</li>
-<li>
-<p>What will happen with .gz for all files including text? Maybe just use filetypes and fix after upgrades?</p>
-</li>
-<li>
-<p>Option to extract all</p>
-</li>
-<li>
-<p>Need to rename branches, or remap them</p>
-</li>
-<li>
-<p>When extracting file contents, consider multiple refs to same file</p>
-<div class="ulist">
-<ul>
-<li>
-<p>Duplicate - or auto-write branch values?</p>
-</li>
-</ul>
-</div>
-</li>
-<li>
-<p>Create channels:</p>
-<div class="ulist">
-<ul>
-<li>
-<p>Commits</p>
-</li>
-<li>
-<p>Files</p>
-</li>
-</ul>
-</div>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>Concerns:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>Converts to string - should we leave as bytes?</p>
-</li>
-<li>
-<p>Gzip in threads?</p>
-</li>
-<li>
-<p>UTF encoding issues?</p>
-</li>
-</ul>
-</div>
-</div>
-<div class="sect2">
-<h3 id="_test_scenarios">2.2. Test Scenarios</h3>
-<div class="ulist">
-<ul>
-<li>
-<p>Given a root dir, write files</p>
-<div class="ulist">
-<ul>
-<li>
-<p>Make root dir configurable</p>
-</li>
-<li>
-<p>For objects, write files as soon as you get a filename? Or at least consider that.</p>
-</li>
-<li>
-<p>Gzip or not</p>
-</li>
-<li>
-<p>Detect base file formats using magic signatures</p>
-</li>
-<li>
-<p>Issue around main/branch files</p>
-<div class="ulist">
-<ul>
-<li>
-<p>If From: is blank then assume on main/master?</p>
-</li>
-</ul>
-</div>
-</li>
-</ul>
-</div>
-</li>
-<li>
-<p>Specify main/master and follow back commits on that branch</p>
-</li>
-</ul>
-</div>
-<div class="paragraph">
-<p>Options:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>Parse files and contents and write out</p>
-<div class="ulist">
-<ul>
-<li>
-<p>Requires changelist numbers - just use Marks from file.</p>
-</li>
-</ul>
-</div>
-</li>
-<li>
-<p>Option to filter only a subset of files (on any branch)</p>
-</li>
-<li>
-<p>Option to filter a single branch</p>
-</li>
-<li>
-<p>Mappings - to rename branches</p>
-</li>
-</ul>
-</div>
-</div>
 </div>
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2022-03-15 13:40:49 UTC
+Last updated 2022-03-17 13:25:16 UTC
 </div>
 </div>
 </body>
