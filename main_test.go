@@ -3,12 +3,14 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"os"
 	"os/exec"
 	"testing"
 
+	"github.com/rcowham/gitp4transfer/journal"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -375,7 +377,8 @@ func TestAdd(t *testing.T) {
 
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
-	commitChan := g.GitParse("")
+	opts := GitParserOptions{importDepot: "import"}
+	commitChan := g.GitParse(opts)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
 	for c := range commitChan {
@@ -391,4 +394,25 @@ func TestAdd(t *testing.T) {
 	assert.Equal(t, src, f.name)
 	assert.Equal(t, srcContents1, f.blob.Data)
 
+	buf := new(bytes.Buffer)
+	j := journal.Journal{}
+	j.SetWriter(buf)
+	j.WriteHeader()
+	c = commits[0]
+	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+	f = c.files[0]
+	j.WriteRev(f.depotFile, 1, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+	dt := c.commit.Author.Time.Unix()
+	assert.Equal(t, fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
+@pv@ 3 @db.domain@ @import@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
+@pv@ 3 @db.user@ @git-user@ @git-user@@git-client@ @@ 0 0 @git-user@ @@ 0 @@ 0 
+@pv@ 0 @db.view@ @git-client@ 0 0 @//git-client/...@ @//import/...@ 
+@pv@ 3 @db.domain@ @git-client@ 99 @@ @/ws@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
+@pv@ 0 @db.desc@ 2 @initial
+@ 
+@pv@ 0 @db.change@ 2 2 @git-client@ @git-user@ %d 1 @initial
+@ 
+@pv@ 3 @db.rev@ @//import/src.txt@ 1 1 1 2 %d %d 00000000000000000000000000000000 @//import/src.txt@ @1.2@ 1 
+@pv@ 3 @db.revcx@ 2 @//import/src.txt@ @1.1@ 1 
+`, dt, dt, dt), buf.String())
 }

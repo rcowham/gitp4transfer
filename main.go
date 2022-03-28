@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/rcowham/gitp4transfer/journal"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
 	"github.com/rcowham/p4training/version"
@@ -31,6 +32,14 @@ func Humanize(b int) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
+type GitParserOptions struct {
+	gitImportFile string
+	extractFiles  bool
+	createJournal bool
+	importDepot   string
+	importPath    string // After depot
+}
+
 type GitAction int
 
 const (
@@ -42,17 +51,22 @@ const (
 
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
-	name     string
-	action   GitAction
-	targ     string // For use with copy/move
-	fileType string
-	blob     *libfastimport.CmdBlob
+	name      string
+	depotFile string
+	action    GitAction
+	targ      string // For use with copy/move
+	fileType  string
+	blob      *libfastimport.CmdBlob
 }
 
 // GitCommit - A git commit
 type GitCommit struct {
 	commit *libfastimport.CmdCommit
 	files  []GitFile
+}
+
+func (gc *GitCommit) writeCommit(j *journal.Journal) {
+	j.WriteChange(gc.commit.Mark, gc.commit.Msg, int(gc.commit.Author.Time.Unix()))
 }
 
 type CommitMap map[int]*GitCommit
@@ -63,11 +77,20 @@ type GitP4Transfer struct {
 	exportFile string
 	logger     *logrus.Logger
 	gitChan    chan GitCommit
+	opts       GitParserOptions
 	testInput  string // For testing only
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
 	return &GitP4Transfer{logger: logger}
+}
+
+func (gf *GitFile) setDepotPath(opts GitParserOptions) {
+	if len(opts.importPath) == 0 {
+		gf.depotFile = fmt.Sprintf("//%s/%s", opts.importDepot, gf.name)
+	} else {
+		gf.depotFile = fmt.Sprintf("//%s/%s/%s", opts.importDepot, opts.importPath, gf.name)
+	}
 }
 
 func getOID(dataref string) (int, error) {
@@ -77,21 +100,28 @@ func getOID(dataref string) (int, error) {
 	return strconv.Atoi(dataref[1:])
 }
 
+// WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
+func (gf *GitFile) WriteFile(depotRoot string, compressed bool, changeNo string) error {
+
+	return nil
+}
+
 // RunGetCommits - for small files - returns list of all commits and files.
-func (g *GitP4Transfer) RunGetCommits(gitImportFile string) (CommitMap, FileMap) {
+func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, FileMap) {
 	var buf io.Reader
 
 	if g.testInput != "" {
 		buf = strings.NewReader(g.testInput)
 	} else {
-		file, err := os.Open(gitImportFile)
+		file, err := os.Open(options.gitImportFile)
 		if err != nil {
-			fmt.Printf("ERROR: Failed to open file '%s': %v\n", gitImportFile, err)
+			fmt.Printf("ERROR: Failed to open file '%s': %v\n", options.gitImportFile, err)
 			os.Exit(1)
 		}
 		defer file.Close()
 		buf = bufio.NewReader(file)
 	}
+	g.opts = options
 
 	commits := make(map[int]*GitCommit, 0)
 	files := make(map[int]*GitFile, 0)
@@ -155,21 +185,22 @@ func (g *GitP4Transfer) RunGetCommits(gitImportFile string) (CommitMap, FileMap)
 	return commits, files
 }
 
-// GitParse - returns channel which contains commits and files.
-func (g *GitP4Transfer) GitParse(gitImportFile string) chan GitCommit {
+// GitParse - returns channel which contains commits with associated files.
+func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	var buf io.Reader
 
 	if g.testInput != "" {
 		buf = strings.NewReader(g.testInput)
 	} else {
-		file, err := os.Open(gitImportFile)
+		file, err := os.Open(options.gitImportFile)
 		if err != nil {
-			fmt.Printf("ERROR: Failed to open file '%s': %v\n", gitImportFile, err)
+			fmt.Printf("ERROR: Failed to open file '%s': %v\n", options.gitImportFile, err)
 			os.Exit(1)
 		}
 		defer file.Close()
 		buf = bufio.NewReader(file)
 	}
+	g.opts = options
 
 	g.gitChan = make(chan GitCommit, 100)
 	files := make(map[int]*GitFile, 0)
@@ -191,6 +222,7 @@ func (g *GitP4Transfer) GitParse(gitImportFile string) chan GitCommit {
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 				files[blob.Mark] = &GitFile{blob: &blob, action: modify}
+				files[blob.Mark].setDepotPath(g.opts)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v\n", reset)
@@ -214,22 +246,26 @@ func (g *GitP4Transfer) GitParse(gitImportFile string) chan GitCommit {
 				gf, ok := files[oid]
 				if ok {
 					gf.name = f.Path.String()
+					gf.setDepotPath(g.opts)
 					currCommit.files = append(currCommit.files, *gf)
 				}
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileModify: Path:%s\n", f.Path)
 				gf := &GitFile{name: f.Path.String(), action: delete}
+				gf.setDepotPath(g.opts)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
+				gf.setDepotPath(g.opts)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: rename}
+				gf.setDepotPath(g.opts)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
@@ -287,7 +323,10 @@ func main() {
 	logger.Infof("Starting %s, gitimport: %v", startTime, *gitimport)
 
 	g := NewGitP4Transfer(logger)
-	commits, files := g.RunGetCommits(*gitimport)
+	opts := GitParserOptions{
+		gitImportFile: *gitimport,
+	}
+	commits, files := g.RunGetCommits(opts)
 
 	for _, v := range commits {
 		g.logger.Infof("Found commit: id %d, files: %d", v.commit.Mark, len(v.files))
