@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -78,6 +79,7 @@ func writeBlob(rootDir string, blobID int, data *string) {
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
 	name      string
+	size      int
 	depotFile string
 	action    GitAction
 	targ      string // For use with copy/move
@@ -260,6 +262,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 
 	commits := make(map[int]*GitCommit, 0)
 	files := make(map[int]*GitFile, 0)
+	extSizes := make(map[string]int)
 	var currCommit *GitCommit
 	var commitSize = 0
 
@@ -276,13 +279,14 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
 			g.logger.Infof("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-			commitSize += len(blob.Data)
+			size := len(blob.Data)
+			commitSize += size
 			// We write the blobs as we go to avoid using up too much memory
 			if saveFiles {
 				writeBlob("", blob.Mark, &blob.Data)
 			}
 			blob.Data = ""
-			files[blob.Mark] = &GitFile{blob: &blob}
+			files[blob.Mark] = &GitFile{blob: &blob, size: size}
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Infof("Reset: - %+v\n", reset)
@@ -295,6 +299,9 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
 			g.logger.Infof("CommitEnd:  %+v\n", commit)
+			for _, f := range currCommit.files {
+				extSizes[filepath.Ext(f.name)] += f.size
+			}
 		case libfastimport.FileModify:
 			f := cmd.(libfastimport.FileModify)
 			g.logger.Infof("FileModify:  %+v\n", f)
@@ -323,6 +330,9 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			g.logger.Errorf("Not handled - found cmd %+v\n", cmd)
 			g.logger.Infof("Cmd type %T\n", cmd)
 		}
+	}
+	for ext, size := range extSizes {
+		g.logger.Infof("Ext %s: %s", ext, Humanize(size))
 	}
 }
 
