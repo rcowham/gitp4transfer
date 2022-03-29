@@ -15,7 +15,7 @@ import (
 	"github.com/rcowham/gitp4transfer/journal"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
-	"github.com/rcowham/p4training/version"
+	"github.com/perforce/p4prometheus/version"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/alecthomas/kingpin.v2"
 )
@@ -316,12 +316,12 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 				gf.name = f.Path.String()
 				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.Mark)
 				gf.archiveFile = archName
-				g.logger.Infof("FilePath:%s Size:%s Archive:%s", gf.name, Humanize(gf.size), gf.archiveFile)
+				g.logger.Infof("Path:%s Size:%s Archive:%s", gf.name, Humanize(gf.size), gf.archiveFile)
 				currCommit.files = append(currCommit.files, *gf)
 			}
 		case libfastimport.FileDelete:
 			f := cmd.(libfastimport.FileDelete)
-			g.logger.Infof("FileModify: Path:%s", f.Path)
+			g.logger.Infof("FileDelete: Path:%s", f.Path)
 		case libfastimport.FileCopy:
 			f := cmd.(libfastimport.FileCopy)
 			g.logger.Infof("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
@@ -483,7 +483,7 @@ func main() {
 		logger.Level = logrus.DebugLevel
 	}
 	startTime := time.Now()
-	logger.Infof("%v", version.Print("log2sql"))
+	logger.Infof("%v", version.Print("gitp4transfer"))
 	logger.Infof("Starting %s, gitimport: %v", startTime, *gitimport)
 
 	g := NewGitP4Transfer(logger)
