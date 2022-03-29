@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/rcowham/gitp4transfer/journal"
@@ -35,6 +36,57 @@ func createGitRepo(t *testing.T) string {
 	os.Chdir(d)
 	runCmd("git init -b main")
 	return d
+}
+
+func createP4DRepo(t *testing.T) string {
+	d := t.TempDir()
+	os.Chdir(d)
+	return d
+}
+
+type P4Test struct {
+	startDir   string
+	p4d        string
+	port       string
+	testRoot   string
+	serverRoot string
+	clientRoot string
+}
+
+func MakeP4Test(startDir string) *P4Test {
+	var err error
+	p4t := &P4Test{}
+	p4t.startDir = startDir
+	if err != nil {
+		panic(err)
+	}
+	p4t.testRoot = filepath.Join(p4t.startDir, "testroot")
+	p4t.serverRoot = filepath.Join(p4t.testRoot, "server")
+	p4t.clientRoot = filepath.Join(p4t.testRoot, "client")
+	p4t.ensureDirectories()
+	p4t.p4d = "p4d"
+	p4t.port = fmt.Sprintf("rsh:%s -r \"%s\" -L log -vserver=3 -i", p4t.p4d, p4t.serverRoot)
+	os.Chdir(p4t.clientRoot)
+	p4config := filepath.Join(p4t.startDir, os.Getenv("P4CONFIG"))
+	writeToFile(p4config, fmt.Sprintf("P4PORT=%s", p4t.port))
+	return p4t
+}
+
+func (p4t *P4Test) ensureDirectories() {
+	for _, d := range []string{p4t.serverRoot, p4t.clientRoot} {
+		err := os.MkdirAll(d, 0777)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create %s: %v", d, err)
+		}
+	}
+}
+
+func (p4t *P4Test) cleanupTestTree() {
+	os.Chdir(p4t.startDir)
+	err := os.RemoveAll(p4t.testRoot)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to remove %s: %v", p4t.startDir, err)
+	}
 }
 
 func writeToFile(fname, contents string) {
@@ -403,7 +455,7 @@ func TestAdd(t *testing.T) {
 	f = c.files[0]
 	j.WriteRev(f.depotFile, 1, c.commit.Mark, int(c.commit.Author.Time.Unix()))
 	dt := c.commit.Author.Time.Unix()
-	assert.Equal(t, fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
+	expectedJournal := fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
 @pv@ 3 @db.domain@ @import@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
 @pv@ 3 @db.user@ @git-user@ @git-user@@git-client@ @@ 0 0 @git-user@ @@ 0 @@ 0 
 @pv@ 0 @db.view@ @git-client@ 0 0 @//git-client/...@ @//import/...@ 
@@ -413,6 +465,104 @@ func TestAdd(t *testing.T) {
 @pv@ 0 @db.change@ 2 2 @git-client@ @git-user@ %d 1 @initial
 @ 
 @pv@ 3 @db.rev@ @//import/src.txt@ 1 1 1 2 %d %d 00000000000000000000000000000000 @//import/src.txt@ @1.2@ 1 
-@pv@ 3 @db.revcx@ 2 @//import/src.txt@ @1.1@ 1 
-`, dt, dt, dt), buf.String())
+@pv@ 0 @db.revcx@ 2 @//import/src.txt@ @1.1@ 1 
+`, dt, dt, dt)
+	assert.Equal(t, expectedJournal, buf.String())
+
+	p4t := MakeP4Test(t.TempDir())
+	os.Chdir(p4t.serverRoot)
+	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
+	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
+	writeToFile(jnl, expectedJournal)
+	runCmd("p4d -r . -jr jnl.0")
+	runCmd("p4d -r . -J journal -xu")
+	f.WriteFile(p4t.serverRoot, false, c.commit.Mark)
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/src.txt#1 - edit change 2 (text+F)\n", result)
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "", result)
+}
+
+func TestAddEdit(t *testing.T) {
+	logger := logrus.New()
+	logger.Level = logrus.InfoLevel
+	if *&debug {
+		logger.Level = logrus.DebugLevel
+	}
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	src := "src.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	srcContents2 := "contents\nappended\n"
+	writeToFile(src, srcContents2)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	// fast-export with rename detection implemented
+	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Export file:\n%s", output)
+
+	g := NewGitP4Transfer(logger)
+	g.testInput = output
+	opts := GitParserOptions{importDepot: "import"}
+	commitChan := g.GitParse(opts)
+	commits := make([]GitCommit, 0)
+	// just read all commits and test them
+	for c := range commitChan {
+		commits = append(commits, c)
+	}
+	assert.Equal(t, 2, len(commits))
+	c := commits[0]
+	assert.Equal(t, 2, c.commit.Mark)
+	assert.Equal(t, "refs/heads/main", c.commit.Ref)
+	assert.Equal(t, 1, len(c.files))
+	f := c.files[0]
+	assert.Equal(t, modify, f.action)
+	assert.Equal(t, src, f.name)
+	assert.Equal(t, srcContents1, f.blob.Data)
+	c = commits[1]
+	assert.Equal(t, 4, c.commit.Mark)
+	assert.Equal(t, "refs/heads/main", c.commit.Ref)
+	assert.Equal(t, 1, len(c.files))
+	f = c.files[0]
+	assert.Equal(t, modify, f.action)
+	assert.Equal(t, src, f.name)
+	assert.Equal(t, srcContents2, f.blob.Data)
+
+	buf := new(bytes.Buffer)
+	j := journal.Journal{}
+	j.SetWriter(buf)
+	j.WriteHeader()
+	c = commits[0]
+	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+	f = c.files[0]
+	j.WriteRev(f.depotFile, 1, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+	c = commits[1]
+	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+	f = c.files[0]
+	j.WriteRev(f.depotFile, 1, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+
+	p4t := MakeP4Test(t.TempDir())
+	os.Chdir(p4t.serverRoot)
+	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
+	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
+	writeToFile(jnl, buf.String())
+	runCmd("p4d -r . -jr jnl.0")
+	runCmd("p4d -r . -J journal -xu")
+	f.WriteFile(p4t.serverRoot, false, c.commit.Mark)
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/src.txt#2 - edit change 4 (text+F)\n", result)
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "", result)
 }
