@@ -37,6 +37,7 @@ func Humanize(b int) string {
 type GitParserOptions struct {
 	gitImportFile string
 	extractFiles  bool
+	archiveRoot   string
 	createJournal bool
 	importDepot   string
 	importPath    string // After depot
@@ -52,15 +53,15 @@ const (
 )
 
 // Performs simple hash
-func getBlobIDPath(blobID int) (dir string, name string) {
+func getBlobIDPath(rootDir string, blobID int) (dir string, name string) {
 	n := fmt.Sprintf("%08d", blobID)
-	d := path.Join(n[0:2], n[2:5], n[5:8])
+	d := path.Join(rootDir, n[0:2], n[2:5], n[5:8])
 	n = path.Join(d, n)
 	return d, n
 }
 
 func writeBlob(rootDir string, blobID int, data *string) {
-	dir, name := getBlobIDPath(blobID)
+	dir, name := getBlobIDPath(rootDir, blobID)
 	err := os.MkdirAll(dir, 0777)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create %s: %v", dir, err)
@@ -78,13 +79,14 @@ func writeBlob(rootDir string, blobID int, data *string) {
 
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
-	name      string
-	size      int
-	depotFile string
-	action    GitAction
-	targ      string // For use with copy/move
-	fileType  string
-	blob      *libfastimport.CmdBlob
+	name        string
+	size        int
+	depotFile   string
+	archiveFile string
+	action      GitAction
+	targ        string // For use with copy/move
+	fileType    string
+	blob        *libfastimport.CmdBlob
 }
 
 // GitCommit - A git commit
@@ -271,40 +273,40 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 		cmd, err := f.ReadCmd()
 		if err != nil {
 			if err != io.EOF {
-				fmt.Printf("ERROR: Failed to read cmd: %v\n", err)
+				fmt.Printf("ERROR: Failed to read cmd: %v", err)
 			}
 			break
 		}
 		switch cmd.(type) {
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
-			g.logger.Infof("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
+			g.logger.Infof("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 			size := len(blob.Data)
 			commitSize += size
 			// We write the blobs as we go to avoid using up too much memory
 			if saveFiles {
-				writeBlob("", blob.Mark, &blob.Data)
+				writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
 			}
 			blob.Data = ""
 			files[blob.Mark] = &GitFile{blob: &blob, size: size}
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
-			g.logger.Infof("Reset: - %+v\n", reset)
+			g.logger.Infof("Reset: - %+v", reset)
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
-			g.logger.Infof("Commit:  %+v\n", commit)
+			g.logger.Infof("Commit:  %+v", commit)
 			currCommit = &GitCommit{commit: &commit, commitSize: commitSize, files: make([]GitFile, 0)}
 			commitSize = 0
 			commits[commit.Mark] = currCommit
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
-			g.logger.Infof("CommitEnd:  %+v\n", commit)
+			g.logger.Infof("CommitEnd:  %+v", commit)
 			for _, f := range currCommit.files {
 				extSizes[filepath.Ext(f.name)] += f.size
 			}
 		case libfastimport.FileModify:
 			f := cmd.(libfastimport.FileModify)
-			g.logger.Infof("FileModify:  %+v\n", f)
+			g.logger.Infof("FileModify:  %+v", f)
 			oid, err := getOID(f.DataRef)
 			if err != nil {
 				g.logger.Errorf("Failed to get oid: %+v", f)
@@ -312,23 +314,26 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			gf, ok := files[oid]
 			if ok {
 				gf.name = f.Path.String()
+				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.Mark)
+				gf.archiveFile = archName
+				g.logger.Infof("FilePath:%s Size:%s Archive:%s", gf.name, Humanize(gf.size), gf.archiveFile)
 				currCommit.files = append(currCommit.files, *gf)
 			}
 		case libfastimport.FileDelete:
 			f := cmd.(libfastimport.FileDelete)
-			g.logger.Infof("FileModify: Path:%s\n", f.Path)
+			g.logger.Infof("FileModify: Path:%s", f.Path)
 		case libfastimport.FileCopy:
 			f := cmd.(libfastimport.FileCopy)
-			g.logger.Infof("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
+			g.logger.Infof("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
 		case libfastimport.FileRename:
 			f := cmd.(libfastimport.FileRename)
-			g.logger.Infof("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
+			g.logger.Infof("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
 		case libfastimport.CmdTag:
 			t := cmd.(libfastimport.CmdTag)
-			g.logger.Infof("CmdTag: %+v\n", t)
+			g.logger.Infof("CmdTag: %+v", t)
 		default:
-			g.logger.Errorf("Not handled - found cmd %+v\n", cmd)
-			g.logger.Infof("Cmd type %T\n", cmd)
+			g.logger.Errorf("Not handled - found cmd %+v", cmd)
+			g.logger.Infof("Cmd type %T", cmd)
 		}
 	}
 	for ext, size := range extSizes {
@@ -458,6 +463,10 @@ func main() {
 			"dump",
 			"Dump git file, saving the contained archive contents.",
 		).Bool()
+		archive = kingpin.Flag(
+			"archive.root",
+			"Archive root dir under which to store extracted archives if --dump set.",
+		).String()
 		debug = kingpin.Flag(
 			"debug",
 			"Enable debugging level.",
@@ -480,6 +489,7 @@ func main() {
 	g := NewGitP4Transfer(logger)
 	opts := GitParserOptions{
 		gitImportFile: *gitimport,
+		archiveRoot:   *archive,
 	}
 
 	if *dump {
