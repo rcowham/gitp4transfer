@@ -520,49 +520,45 @@ func TestAddEdit(t *testing.T) {
 	for c := range commitChan {
 		commits = append(commits, c)
 	}
-	assert.Equal(t, 2, len(commits))
-	c := commits[0]
-	assert.Equal(t, 2, c.commit.Mark)
-	assert.Equal(t, "refs/heads/main", c.commit.Ref)
-	assert.Equal(t, 1, len(c.files))
-	f := c.files[0]
-	assert.Equal(t, modify, f.action)
-	assert.Equal(t, src, f.name)
-	assert.Equal(t, srcContents1, f.blob.Data)
-	c = commits[1]
-	assert.Equal(t, 4, c.commit.Mark)
-	assert.Equal(t, "refs/heads/main", c.commit.Ref)
-	assert.Equal(t, 1, len(c.files))
-	f = c.files[0]
-	assert.Equal(t, modify, f.action)
-	assert.Equal(t, src, f.name)
-	assert.Equal(t, srcContents2, f.blob.Data)
 
 	buf := new(bytes.Buffer)
-	j := journal.Journal{}
-	j.SetWriter(buf)
-	j.WriteHeader()
-	c = commits[0]
-	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
-	f = c.files[0]
-	j.WriteRev(f.depotFile, 1, c.commit.Mark, int(c.commit.Author.Time.Unix()))
-	c = commits[1]
-	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
-	f = c.files[0]
-	j.WriteRev(f.depotFile, 1, c.commit.Mark, int(c.commit.Author.Time.Unix()))
-
 	p4t := MakeP4Test(t.TempDir())
 	os.Chdir(p4t.serverRoot)
 	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
+
+	j := journal.Journal{}
+	j.SetWriter(buf)
+	j.WriteHeader()
+	for _, c := range commits {
+		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+		for _, f := range c.files {
+			f.WriteFile(p4t.serverRoot, false, c.commit.Mark)
+			j.WriteRev(f.depotFile, f.rev, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+		}
+	}
+
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, buf.String())
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
-	f.WriteFile(p4t.serverRoot, false, c.commit.Mark)
-	result, err := runCmd("p4 files //...")
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/src.txt#1 - edit change 2 (text+F)\n", result)
+
+	result, err = runCmd("p4 print -q //import/src.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents1, result)
+
+	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "//import/src.txt#2 - edit change 4 (text+F)\n", result)
-	result, err = runCmd("p4 verify -qu //...")
+
+	result, err = runCmd("p4 print -q //import/src.txt#2")
 	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents2, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
 	assert.Equal(t, "", result)
 }

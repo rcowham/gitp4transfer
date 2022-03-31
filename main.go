@@ -81,7 +81,8 @@ func writeBlob(rootDir string, blobID int, data *string) {
 type GitFile struct {
 	name        string
 	size        int
-	depotFile   string
+	depotFile   string // Full depot path
+	rev         int    // Depot rev
 	archiveFile string
 	action      GitAction
 	targ        string // For use with copy/move
@@ -105,15 +106,16 @@ type FileMap map[int]*GitFile
 
 // GitP4Transfer - Transfer via git fast-export file
 type GitP4Transfer struct {
-	exportFile string
-	logger     *logrus.Logger
-	gitChan    chan GitCommit
-	opts       GitParserOptions
-	testInput  string // For testing only
+	exportFile    string
+	logger        *logrus.Logger
+	gitChan       chan GitCommit
+	opts          GitParserOptions
+	depotFileRevs map[string]int // Map depotFile to latest revision
+	testInput     string         // For testing only
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
-	return &GitP4Transfer{logger: logger}
+	return &GitP4Transfer{logger: logger, depotFileRevs: make(map[string]int)}
 }
 
 func (gf *GitFile) setDepotPath(opts GitParserOptions) {
@@ -341,6 +343,15 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 	}
 }
 
+// Maintain a list of latest revision counter indexed by depotFile
+func (g *GitP4Transfer) updateDepotRev(gf *GitFile) {
+	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
+		g.depotFileRevs[gf.depotFile] = 0
+	}
+	g.depotFileRevs[gf.depotFile] += 1
+	gf.rev = g.depotFileRevs[gf.depotFile]
+}
+
 // GitParse - returns channel which contains commits with associated files.
 func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	var buf io.Reader
@@ -359,7 +370,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	g.opts = options
 
 	g.gitChan = make(chan GitCommit, 100)
-	files := make(map[int]*GitFile, 0)
+	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
 	var currCommit *GitCommit
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
@@ -377,8 +388,9 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.CmdBlob:
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-				files[blob.Mark] = &GitFile{blob: &blob, action: modify}
-				files[blob.Mark].setDepotPath(g.opts)
+				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify}
+				blobFiles[blob.Mark].setDepotPath(g.opts)
+				g.updateDepotRev(blobFiles[blob.Mark])
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v\n", reset)
@@ -399,10 +411,11 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				if err != nil {
 					g.logger.Errorf("Failed to get oid: %+v", f)
 				}
-				gf, ok := files[oid]
+				gf, ok := blobFiles[oid]
 				if ok {
 					gf.name = f.Path.String()
 					gf.setDepotPath(g.opts)
+					g.updateDepotRev(gf)
 					currCommit.files = append(currCommit.files, *gf)
 				}
 			case libfastimport.FileDelete:
@@ -410,18 +423,21 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("FileModify: Path:%s\n", f.Path)
 				gf := &GitFile{name: f.Path.String(), action: delete}
 				gf.setDepotPath(g.opts)
+				g.updateDepotRev(gf)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
 				gf.setDepotPath(g.opts)
+				g.updateDepotRev(gf)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: rename}
 				gf.setDepotPath(g.opts)
+				g.updateDepotRev(gf)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
