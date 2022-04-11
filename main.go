@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"compress/gzip"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/h2non/filetype"
 	"github.com/rcowham/gitp4transfer/journal"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
@@ -86,7 +88,8 @@ type GitFile struct {
 	archiveFile string
 	action      GitAction
 	targ        string // For use with copy/move
-	fileType    string
+	fileType    journal.FileType
+	compressed  bool
 	blob        *libfastimport.CmdBlob
 }
 
@@ -126,6 +129,32 @@ func (gf *GitFile) setDepotPath(opts GitParserOptions) {
 	}
 }
 
+// Sets compression option and binary/text
+func (gf *GitFile) updateFileDetails() {
+	// Compression defaults to false
+	l := len(gf.blob.Data)
+	if l > 261 {
+		l = 261
+	}
+	head := []byte(gf.blob.Data[:l])
+	if filetype.IsImage(head) || filetype.IsVideo(head) || filetype.IsArchive(head) || filetype.IsAudio(head) {
+		gf.fileType = journal.UBinary
+		return
+	}
+	if filetype.IsDocument(head) {
+		gf.fileType = journal.Binary
+		kind, _ := filetype.Match(head)
+		switch kind.Extension {
+		case "docx", "pptx", "xlsx":
+			return // no compression
+		}
+		gf.compressed = true
+		return
+	}
+	gf.fileType = journal.CText
+	gf.compressed = true
+}
+
 func getOID(dataref string) (int, error) {
 	if !strings.HasPrefix(dataref, ":") {
 		return 0, errors.New("Invalid dataref")
@@ -134,21 +163,23 @@ func getOID(dataref string) (int, error) {
 }
 
 // WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
-func (gf *GitFile) WriteFile(depotRoot string, compressed bool, changeNo int) error {
+func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
 	rootDir := fmt.Sprintf("%s/%s,d", depotRoot, gf.depotFile[2:])
 	err := os.MkdirAll(rootDir, 0755)
 	if err != nil {
 		panic(err)
 	}
-	if compressed {
-		// TODO - actually compress!
+	if gf.compressed {
+		gf.compressed = true
 		fname := fmt.Sprintf("%s/1.%d.gz", rootDir, changeNo)
 		f, err := os.Create(fname)
 		if err != nil {
 			panic(err)
 		}
 		defer f.Close()
-		fmt.Fprint(f, gf.blob.Data)
+		zw := gzip.NewWriter(f)
+		defer zw.Close()
+		_, err = zw.Write([]byte(gf.blob.Data))
 		if err != nil {
 			panic(err)
 		}
@@ -223,6 +254,7 @@ func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, File
 			gf, ok := files[oid]
 			if ok {
 				gf.name = f.Path.String()
+				gf.updateFileDetails()
 				currCommit.files = append(currCommit.files, *gf)
 			}
 		case libfastimport.FileDelete:
@@ -415,6 +447,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				if ok {
 					gf.name = f.Path.String()
 					gf.setDepotPath(g.opts)
+					gf.updateFileDetails()
 					g.updateDepotRev(gf)
 					currCommit.files = append(currCommit.files, *gf)
 				}
@@ -430,6 +463,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
 				gf.setDepotPath(g.opts)
+				gf.updateFileDetails()
 				g.updateDepotRev(gf)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
@@ -437,6 +471,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: rename}
 				gf.setDepotPath(g.opts)
+				gf.updateFileDetails()
 				g.updateDepotRev(gf)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.CmdTag:

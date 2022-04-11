@@ -453,7 +453,7 @@ func TestAdd(t *testing.T) {
 	c = commits[0]
 	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
-	j.WriteRev(f.depotFile, 1, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+	j.WriteRev(f.depotFile, 1, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
 	dt := c.commit.Author.Time.Unix()
 	expectedJournal := fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
 @pv@ 3 @db.domain@ @import@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
@@ -464,7 +464,7 @@ func TestAdd(t *testing.T) {
 @ 
 @pv@ 0 @db.change@ 2 2 @git-client@ @git-user@ %d 1 @initial
 @ 
-@pv@ 3 @db.rev@ @//import/src.txt@ 1 1 1 2 %d %d 00000000000000000000000000000000 @//import/src.txt@ @1.2@ 1 
+@pv@ 3 @db.rev@ @//import/src.txt@ 1 3 1 2 %d %d 00000000000000000000000000000000 @//import/src.txt@ @1.2@ 3 
 @pv@ 0 @db.revcx@ 2 @//import/src.txt@ @1.1@ 1 
 `, dt, dt, dt)
 	assert.Equal(t, expectedJournal, buf.String())
@@ -476,10 +476,10 @@ func TestAdd(t *testing.T) {
 	writeToFile(jnl, expectedJournal)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
-	f.WriteFile(p4t.serverRoot, false, c.commit.Mark)
+	f.WriteFile(p4t.serverRoot, c.commit.Mark)
 	result, err := runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#1 - edit change 2 (text+F)\n", result)
+	assert.Equal(t, "//import/src.txt#1 - edit change 2 (text+C)\n", result)
 	result, err = runCmd("p4 verify -qu //...")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "", result)
@@ -532,8 +532,8 @@ func TestAddEdit(t *testing.T) {
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.WriteFile(p4t.serverRoot, false, c.commit.Mark)
-			j.WriteRev(f.depotFile, f.rev, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+			f.WriteFile(p4t.serverRoot, c.commit.Mark)
+			j.WriteRev(f.depotFile, f.rev, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
 		}
 	}
 
@@ -544,7 +544,7 @@ func TestAddEdit(t *testing.T) {
 
 	result, err := runCmd("p4 files //...@2")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#1 - edit change 2 (text+F)\n", result)
+	assert.Equal(t, "//import/src.txt#1 - edit change 2 (text+C)\n", result)
 
 	result, err = runCmd("p4 print -q //import/src.txt#1")
 	assert.Equal(t, nil, err)
@@ -552,7 +552,7 @@ func TestAddEdit(t *testing.T) {
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#2 - edit change 4 (text+F)\n", result)
+	assert.Equal(t, "//import/src.txt#2 - edit change 4 (text+C)\n", result)
 
 	result, err = runCmd("p4 print -q //import/src.txt#2")
 	assert.Equal(t, nil, err)
@@ -561,4 +561,10 @@ func TestAddEdit(t *testing.T) {
 	result, err = runCmd("p4 verify -qu //...")
 	assert.Equal(t, "<nil>", fmt.Sprint(err))
 	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/src.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrPath .*/1.4.gz`, result)
 }

@@ -142,6 +142,21 @@ import (
 // 0x2000	Save client mod time
 // 0xF000	Client modifier bits
 
+// TEXT("ltext", 0x00000001), // 'text+F' only ascii in sample
+// BINARY("ubinary", 0x00000101), // 'binary+F'
+// UTF8("unicode+F", 0x00080001), // 'unicode+F'
+// UTF16("utf16+F", 0x01080001), // 'utf16+F'
+// SYMLINK("symlink+F", 0x00040001), // 'symlink+F'
+
+type FileType int
+
+const (
+	UText   FileType = 0x00000001 // text+F
+	CText   FileType = 0x00000003 // text+C
+	UBinary FileType = 0x00000101 // binary+F
+	Binary  FileType = 0x00000103 // binary
+)
+
 type Journal struct {
 	filename string
 	w        io.Writer
@@ -224,12 +239,11 @@ func (j *Journal) WriteChange(chgNo int, description string, chgTime int) {
 // depotRev		Rev			Revision number of the filename in depot.
 // action		Action	File was opened for add/edit/delete/branch/integrate/import.
 
-func (j *Journal) WriteRev(depotFile string, depotRev int, chgNo int, chgTime int) {
+func (j *Journal) WriteRev(depotFile string, depotRev int, fileType FileType, chgNo int, chgTime int) {
 
-	const fileType = 1
 	const action = 1
 	const md5 = "00000000000000000000000000000000"
-	const lbrType = 1
+	lbrType := fileType
 
 	// @pv@ 3 @db.rev@ @//import/trunk/src/file.txt@ 1 1 0 1 1363872228 1363872228 00000000000000000000000000000000 @//import/trunk/src/file.txt@ @1.1@ 1
 	_, err := fmt.Fprintf(j.w,
