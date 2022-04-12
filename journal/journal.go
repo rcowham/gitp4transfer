@@ -157,6 +157,16 @@ const (
 	Binary  FileType = 0x00000103 // binary
 )
 
+type FileAction int
+
+const (
+	Add FileAction = iota
+	Edit
+	Delete
+	Branch
+	Integrate
+)
+
 type Journal struct {
 	filename string
 	w        io.Writer
@@ -239,9 +249,8 @@ func (j *Journal) WriteChange(chgNo int, description string, chgTime int) {
 // depotRev		Rev			Revision number of the filename in depot.
 // action		Action	File was opened for add/edit/delete/branch/integrate/import.
 
-func (j *Journal) WriteRev(depotFile string, depotRev int, fileType FileType, chgNo int, chgTime int) {
+func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fileType FileType, chgNo int, chgTime int) {
 
-	const action = 1
 	const md5 = "00000000000000000000000000000000"
 	lbrType := fileType
 

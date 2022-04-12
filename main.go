@@ -87,6 +87,7 @@ type GitFile struct {
 	rev         int    // Depot rev
 	archiveFile string
 	action      GitAction
+	p4action    journal.FileAction
 	targ        string // For use with copy/move
 	fileType    journal.FileType
 	compressed  bool
@@ -131,6 +132,13 @@ func (gf *GitFile) setDepotPath(opts GitParserOptions) {
 
 // Sets compression option and binary/text
 func (gf *GitFile) updateFileDetails() {
+	if gf.action == delete {
+		gf.p4action = journal.Delete
+		return
+	}
+	if gf.action == modify {
+		gf.p4action = journal.Edit
+	}
 	// Compression defaults to false
 	l := len(gf.blob.Data)
 	if l > 261 {
@@ -164,6 +172,9 @@ func getOID(dataref string) (int, error) {
 
 // WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
 func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
+	if gf.action == delete {
+		return nil
+	}
 	rootDir := fmt.Sprintf("%s/%s,d", depotRoot, gf.depotFile[2:])
 	err := os.MkdirAll(rootDir, 0755)
 	if err != nil {
@@ -382,6 +393,9 @@ func (g *GitP4Transfer) updateDepotRev(gf *GitFile) {
 	}
 	g.depotFileRevs[gf.depotFile] += 1
 	gf.rev = g.depotFileRevs[gf.depotFile]
+	if gf.rev == 1 && gf.action == modify {
+		gf.p4action = journal.Add
+	}
 }
 
 // GitParse - returns channel which contains commits with associated files.
@@ -453,9 +467,10 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				}
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
-				g.logger.Debugf("FileModify: Path:%s\n", f.Path)
+				g.logger.Debugf("FileDelete: Path:%s\n", f.Path)
 				gf := &GitFile{name: f.Path.String(), action: delete}
 				gf.setDepotPath(g.opts)
+				gf.updateFileDetails()
 				g.updateDepotRev(gf)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:

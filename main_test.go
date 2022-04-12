@@ -407,12 +407,72 @@ func writeToTempFile(contents string) string {
 
 // }
 
-func TestAdd(t *testing.T) {
+func zipBuf(data string) bytes.Buffer {
+	var b bytes.Buffer
+	gz := gzip.NewWriter(&b)
+	if _, err := gz.Write([]byte(data)); err != nil {
+		log.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		log.Fatal(err)
+	}
+	return b
+}
+
+func createLogger() *logrus.Logger {
 	logger := logrus.New()
 	logger.Level = logrus.InfoLevel
 	if *&debug {
 		logger.Level = logrus.DebugLevel
 	}
+	return logger
+}
+
+func runTransfer(t *testing.T, logger *logrus.Logger) {
+
+	// fast-export with rename detection implemented
+	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Export file:\n%s", output)
+
+	g := NewGitP4Transfer(logger)
+	g.testInput = output
+	opts := GitParserOptions{importDepot: "import"}
+	commitChan := g.GitParse(opts)
+	commits := make([]GitCommit, 0)
+	// just read all commits and test them
+	for c := range commitChan {
+		commits = append(commits, c)
+	}
+
+	buf := new(bytes.Buffer)
+	p4t := MakeP4Test(t.TempDir())
+	os.Chdir(p4t.serverRoot)
+	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
+
+	j := journal.Journal{}
+	j.SetWriter(buf)
+	j.WriteHeader()
+	for _, c := range commits {
+		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+		for _, f := range c.files {
+			f.WriteFile(p4t.serverRoot, c.commit.Mark)
+			j.WriteRev(f.depotFile, f.rev, f.p4action, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+		}
+	}
+
+	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
+	writeToFile(jnl, buf.String())
+	runCmd("p4d -r . -jr jnl.0")
+	runCmd("p4d -r . -J journal -xu")
+
+}
+
+func TestAdd(t *testing.T) {
+	logger := createLogger()
+
 	d := createGitRepo(t)
 	os.Chdir(d)
 	logger.Debugf("Git repo: %s", d)
@@ -455,7 +515,7 @@ func TestAdd(t *testing.T) {
 	c = commits[0]
 	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
-	j.WriteRev(f.depotFile, 1, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+	j.WriteRev(f.depotFile, f.rev, f.p4action, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
 	dt := c.commit.Author.Time.Unix()
 	expectedJournal := fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
 @pv@ 3 @db.domain@ @import@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
@@ -488,11 +548,8 @@ func TestAdd(t *testing.T) {
 }
 
 func TestAddEdit(t *testing.T) {
-	logger := logrus.New()
-	logger.Level = logrus.InfoLevel
-	if *&debug {
-		logger.Level = logrus.DebugLevel
-	}
+	logger := createLogger()
+
 	d := createGitRepo(t)
 	os.Chdir(d)
 	logger.Debugf("Git repo: %s", d)
@@ -506,43 +563,7 @@ func TestAddEdit(t *testing.T) {
 	runCmd("git add .")
 	runCmd("git commit -m initial")
 
-	// fast-export with rename detection implemented
-	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
-	if err != nil {
-		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
-	}
-	logger.Debugf("Export file:\n%s", output)
-
-	g := NewGitP4Transfer(logger)
-	g.testInput = output
-	opts := GitParserOptions{importDepot: "import"}
-	commitChan := g.GitParse(opts)
-	commits := make([]GitCommit, 0)
-	// just read all commits and test them
-	for c := range commitChan {
-		commits = append(commits, c)
-	}
-
-	buf := new(bytes.Buffer)
-	p4t := MakeP4Test(t.TempDir())
-	os.Chdir(p4t.serverRoot)
-	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
-
-	j := journal.Journal{}
-	j.SetWriter(buf)
-	j.WriteHeader()
-	for _, c := range commits {
-		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
-		for _, f := range c.files {
-			f.WriteFile(p4t.serverRoot, c.commit.Mark)
-			j.WriteRev(f.depotFile, f.rev, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
-		}
-	}
-
-	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
-	writeToFile(jnl, buf.String())
-	runCmd("p4d -r . -jr jnl.0")
-	runCmd("p4d -r . -J journal -xu")
+	runTransfer(t, logger)
 
 	result, err := runCmd("p4 files //...@2")
 	assert.Equal(t, nil, err)
@@ -571,27 +592,13 @@ func TestAddEdit(t *testing.T) {
 	assert.Regexp(t, `lbrPath .*/1.4.gz`, result)
 }
 
-func zipBuf(data string) bytes.Buffer {
-	var b bytes.Buffer
-	gz := gzip.NewWriter(&b)
-	if _, err := gz.Write([]byte(data)); err != nil {
-		log.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		log.Fatal(err)
-	}
-	return b
-}
-
 func TestAddBinary(t *testing.T) {
-	logger := logrus.New()
-	logger.Level = logrus.InfoLevel
-	if *&debug {
-		logger.Level = logrus.DebugLevel
-	}
+	logger := createLogger()
+
 	d := createGitRepo(t)
 	os.Chdir(d)
 	logger.Debugf("Git repo: %s", d)
+
 	src := "src.txt"
 	srcContents1 := "contents\n"
 	writeToFile(src, srcContents1)
@@ -599,43 +606,7 @@ func TestAddBinary(t *testing.T) {
 	runCmd("git add .")
 	runCmd("git commit -m initial")
 
-	// fast-export with rename detection implemented
-	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
-	if err != nil {
-		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
-	}
-	logger.Debugf("Export file:\n%s", output)
-
-	g := NewGitP4Transfer(logger)
-	g.testInput = output
-	opts := GitParserOptions{importDepot: "import"}
-	commitChan := g.GitParse(opts)
-	commits := make([]GitCommit, 0)
-	// just read all commits and test them
-	for c := range commitChan {
-		commits = append(commits, c)
-	}
-
-	buf := new(bytes.Buffer)
-	p4t := MakeP4Test(t.TempDir())
-	os.Chdir(p4t.serverRoot)
-	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
-
-	j := journal.Journal{}
-	j.SetWriter(buf)
-	j.WriteHeader()
-	for _, c := range commits {
-		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
-		for _, f := range c.files {
-			f.WriteFile(p4t.serverRoot, c.commit.Mark)
-			j.WriteRev(f.depotFile, f.rev, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
-		}
-	}
-
-	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
-	writeToFile(jnl, buf.String())
-	runCmd("p4d -r . -jr jnl.0")
-	runCmd("p4d -r . -J journal -xu")
+	runTransfer(t, logger)
 
 	result, err := runCmd("p4 files //...@2")
 	assert.Equal(t, nil, err)
@@ -649,5 +620,43 @@ func TestAddBinary(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType binary\+F`, result)
 	assert.Regexp(t, `lbrType binary\+F`, result)
-	assert.Regexp(t, `lbrPath .*/1.2`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2$`, result)
+}
+
+func TestDeleteFile(t *testing.T) {
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("rm " + src)
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
+
+	runTransfer(t, logger)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/src.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/src.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/src.txt#2 - delete change 3 (text)\n", result)
+
 }
