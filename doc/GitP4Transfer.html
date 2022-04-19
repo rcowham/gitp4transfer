@@ -671,6 +671,57 @@ yum install perforce-p4python3</pre>
 python3 GitP4Transfer.py -h</pre>
 </div>
 </div>
+<div class="paragraph">
+<p>The above should produce output like:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code class="language-python" data-lang="python">$ ./GitP4Transfer.py -h
+usage: GitP4Transfer.py [-h] [-c CONFIG] [-n] [-m MAXIMUM] [-r] [-s] [--sample-config] [--end-datetime END_DATETIME]
+
+NAME:
+    GitP4Transfer.py
+
+DESCRIPTION:
+    This python script (3.8+ compatible) will transfer Git changes into a Perforce
+    Helix Core Repository, somewhat similar to 'git p4' (not historical) and also
+    GitFusion (now deprecated).
+
+    This script transfers changes in one direction - from a source Git server to a
+    target p4 server.
+    It handles LFS files in the source server (assuming git LFS is suitably installed
+    and enabled)
+
+    Requires Git version 2.7+ due to use of formatting flags
+
+    Usage:
+
+        python3 GitP4Transfer.py -h
+
+    The script requires a config file, by default transfer.yaml. An initial example can be generated, e.g.
+
+        GitP4Transfer.py --sample-config &gt; transfer.yaml
+
+    For full documentation/usage, see project doc:
+
+        https://github.com/rcowham/gitp4transfer/blob/main/doc/GitP4Transfer.adoc
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -c CONFIG, --config CONFIG
+                        Default is transfer.yaml
+  -n, --notransfer      Validate config file and setup source/target workspaces but don't transfer anything
+  -m MAXIMUM, --maximum MAXIMUM
+                        Maximum number of changes to transfer
+  -r, --repeat          Repeat transfer in a loop - for continuous transfer as background task
+  -s, --stoponerror     Stop on any error even if --repeat has been specified
+  --sample-config       Print an example config file and exit
+  --end-datetime END_DATETIME
+                        Time to stop transfers, format: 'YYYY/MM/DD HH:mm' - useful for automation runs during quiet periods e.g. run overnight but stop first thing in the morning
+
+Copyright (C) 2021-22 Robert Cowham, Perforce Software Ltd</code></pre>
+</div>
+</div>
 </li>
 <li>
 <p>Setup config file</p>
@@ -807,7 +858,7 @@ Not yet functional - very much a work in progress!!!
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2022-04-19 12:27:10 +0100
+Last updated 2022-04-19 12:38:26 +0100
 </div>
 </div>
 </body>
