@@ -444,7 +444,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div class="details">
 <span id="author" class="author">Perforce Professional Services</span><br>
 <span id="email" class="email"><a href="mailto:consulting@perforce.com">consulting@perforce.com</a></span><br>
-<span id="revdate">2022-02-25</span>
+<span id="revdate">2022-04-19</span>
 </div>
 <div id="toc" class="toc">
 <div id="toctitle">Table of Contents</div>
@@ -477,7 +477,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div class="sect2">
 <h3 id="_overview">1.1. Overview</h3>
 <div class="paragraph">
-<p>This is a functional script to import git LFS commits for a single branch (e.g. master/main) into Helix Core.</p>
+<p>This is a functional script to import a git repo with LFS commits for a single branch (e.g. master/main) into Helix Core.</p>
 </div>
 <div class="paragraph">
 <p>It includes some ideas from <code>git-p4</code> and <code>git-filter-repo.py</code>.</p>
@@ -498,7 +498,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div class="sect3">
 <h4 id="_install_gitgit_lfs">1.2.1. Install Git/Git LFS</h4>
 <div class="paragraph">
-<p>Easiest to install these from Wandisco to get recent versions (not 1.8 for example):</p>
+<p>Easiest to install these from Wandisco to get recent versions (need 2.x and not 1.8 for example):</p>
 </div>
 <div class="literalblock">
 <div class="content">
@@ -510,12 +510,15 @@ git --version</pre>
 </div>
 <div class="sect3">
 <h4 id="_clone_repo">1.2.2. Clone repo</h4>
+<div class="paragraph">
+<p>This assumes a filesystem such as <code>/hxdepots</code> with plenty of free space.</p>
+</div>
 <div class="literalblock">
 <div class="content">
 <pre>cd /hxdepots
 mkdir work
 cd work
-git clone &lt;url&gt;</pre>
+git clone &lt;url of your git repo&gt;</pre>
 </div>
 </div>
 </div>
@@ -564,7 +567,7 @@ Downloading LFS objects:   4% (6561/163738), 9.1 GB | 100 MB/s</pre>
 </div>
 </li>
 <li>
-<p>Finally you can spawn the fetch which often takes hours:</p>
+<p>Finally you can spawn the full fetch of all LFS versions (which often takes hours depending on size of your repo):</p>
 <div class="literalblock">
 <div class="content">
 <pre>nohup git lfs fetch --all &gt; ../fetch.out &amp;</pre>
@@ -572,18 +575,31 @@ Downloading LFS objects:   4% (6561/163738), 9.1 GB | 100 MB/s</pre>
 </div>
 <div class="literalblock">
 <div class="content">
-<pre>perforce@ip-10-0-0-151 deadmatter.DeadMatter2021]$ cat ../fetch.out
+<pre>perforce@ip-10-0-0-151 gitrepo]$ cat ../fetch.out
 fetch: 163739 object(s) found, done.
 fetch: Fetching all references...</pre>
 </div>
 </div>
 </li>
 <li>
-<p>Check for LFS files not found too - all files less than 140 bytes in size:</p>
+<p>Check for LFS files not found too - all files less than 140 bytes in size are possible candidates to be checked:</p>
 <div class="literalblock">
 <div class="content">
 <pre>find .git/lfs/objects/ -type f -size -140c</pre>
 </div>
+</div>
+</li>
+<li>
+<p>LFS files which have not been replaced with their proper contents will be similar to this sort of format:</p>
+<div class="literalblock">
+<div class="content">
+<pre>version https://git-lfs.github.com/spec/v1
+oid sha256:8923f38904c1ae21cd3d3e6e93087c07fda86fe97ee01d8664bb95fc20cd1de
+size 858449</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>If such files are found, you will need to determine why they were not fetched and try to fix that to get proper LFS contents downloaded.</p>
 </div>
 </li>
 </ol>
@@ -592,7 +608,7 @@ fetch: Fetching all references...</pre>
 <div class="sect3">
 <h4 id="_install_python3_8">1.2.4. Install Python3.8</h4>
 <div class="paragraph">
-<p>Unfortunately 3.6 is missing some required changes in the <code>subproc</code> library, so need to build from source. Ubuntu is similar (but different!)</p>
+<p>Unfortunately 3.6 is missing some required changes in the <code>subproc</code> library, so you may ßneed to build from source. Ubuntu is similar (but different dependencies to install first!)</p>
 </div>
 <div class="literalblock">
 <div class="content">
@@ -600,7 +616,7 @@ fetch: Fetching all references...</pre>
 VER="3.8.12"
 wget https://www.python.org/ftp/python/$VER/Python-$VER.tgz
 tar zxvf Python-$ver.tgz
-cd Python-$ver.tgz
+cd Python-$ver
 ./configure
 make install</pre>
 </div>
@@ -608,6 +624,9 @@ make install</pre>
 </div>
 <div class="sect3">
 <h4 id="_install_gitp4transfer_py">1.2.5. Install GitP4Transfer.py</h4>
+<div class="paragraph">
+<p>We install dependencies and then the script itself.</p>
+</div>
 <div class="olist arabic">
 <ol class="arabic">
 <li>
@@ -676,10 +695,10 @@ python3 GitP4Transfer.py -h</pre>
 </div>
 </li>
 <li>
-<p>Consider setting up <code>p4 typemap</code> as appropriate</p>
+<p>Consider setting up <code>p4 typemap</code> as appropriate for your import (e.g. for Unreal Engine or Unity)</p>
 </li>
 <li>
-<p>Do a first test of one commit (note this is often quite a big commit!)</p>
+<p>Do a first test of one commit (note this is often quite a big commit so may still take a while!)</p>
 <div class="literalblock">
 <div class="content">
 <pre>python3 GitP4Transfer.py -c transfer_config.yaml -m1</pre>
@@ -687,7 +706,7 @@ python3 GitP4Transfer.py -h</pre>
 </div>
 </li>
 <li>
-<p>Kick off transfer and monitor log/output file</p>
+<p>If the above works, kick off a full transfer and monitor log/output file:</p>
 <div class="literalblock">
 <div class="content">
 <pre>nohup python3 GitP4Transfer.py -c transfer_config.yaml &gt; out &amp;</pre>
@@ -788,7 +807,7 @@ Not yet functional - very much a work in progress!!!
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2022-03-17 13:25:16 UTC
+Last updated 2022-04-19 12:27:10 +0100
 </div>
 </div>
 </body>

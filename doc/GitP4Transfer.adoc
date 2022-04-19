@@ -1,6 +1,6 @@
 = GitP4Transfer - Git to P4 Migration
 Perforce Professional Services <consulting@perforce.com>
-:revdate: 2022-02-25
+:revdate: 2022-04-19
 :doctype: book
 :icons: font
 :toc:
@@ -13,7 +13,7 @@ Perforce Professional Services <consulting@perforce.com>
 
 === Overview
 
-This is a functional script to import git LFS commits for a single branch (e.g. master/main) into Helix Core.
+This is a functional script to import a git repo with LFS commits for a single branch (e.g. master/main) into Helix Core.
 
 It includes some ideas from `git-p4` and `git-filter-repo.py`.
 
@@ -24,7 +24,7 @@ It includes some ideas from `git-p4` and `git-filter-repo.py`.
 
 ==== Install Git/Git LFS
 
-Easiest to install these from Wandisco to get recent versions (not 1.8 for example):
+Easiest to install these from Wandisco to get recent versions (need 2.x and not 1.8 for example):
 
     sudo yum install http://opensource.wandisco.com/centos/7/git/x86_64/wandisco-git-release-7-2.noarch.rpm
     sudo yum install git git-lfs
@@ -32,10 +32,12 @@ Easiest to install these from Wandisco to get recent versions (not 1.8 for examp
 
 ==== Clone repo
 
+This assumes a filesystem such as `/hxdepots` with plenty of free space.
+
     cd /hxdepots
     mkdir work
     cd work
-    git clone <url>
+    git clone <url of your git repo>
 
 ==== Fetch all LFS objects
 
@@ -61,31 +63,42 @@ Easiest to install these from Wandisco to get recent versions (not 1.8 for examp
 
     git lfs fetch --all
 
-. Finally you can spawn the fetch which often takes hours:
+. Finally you can spawn the full fetch of all LFS versions (which often takes hours depending on size of your repo):
 
     nohup git lfs fetch --all > ../fetch.out &
 
-    perforce@ip-10-0-0-151 deadmatter.DeadMatter2021]$ cat ../fetch.out
+    perforce@ip-10-0-0-151 gitrepo]$ cat ../fetch.out
     fetch: 163739 object(s) found, done.
     fetch: Fetching all references...
 
-. Check for LFS files not found too - all files less than 140 bytes in size:
+. Check for LFS files not found too - all files less than 140 bytes in size are possible candidates to be checked:
 
     find .git/lfs/objects/ -type f -size -140c
 
+. LFS files which have not been replaced with their proper contents will be similar to this sort of format:
+
+    version https://git-lfs.github.com/spec/v1
+    oid sha256:8923f38904c1ae21cd3d3e6e93087c07fda86fe97ee01d8664bb95fc20cd1de
+    size 858449
+
++
+If such files are found, you will need to determine why they were not fetched and try to fix that to get proper LFS contents downloaded.
+
 ==== Install Python3.8
 
-Unfortunately 3.6 is missing some required changes in the `subproc` library, so need to build from source. Ubuntu is similar (but different!)
+Unfortunately 3.6 is missing some required changes in the `subproc` library, so you may ßneed to build from source. Ubuntu is similar (but different dependencies to install first!)
 
     yum install wget yum-utils make gcc openssl-devel bzip2-devel libffi-devel zlib-devel
     VER="3.8.12"
     wget https://www.python.org/ftp/python/$VER/Python-$VER.tgz 
     tar zxvf Python-$ver.tgz
-    cd Python-$ver.tgz
+    cd Python-$ver
     ./configure
     make install
 
 ==== Install GitP4Transfer.py
+
+We install dependencies and then the script itself.
 
 . Run the following as `root`:
 
@@ -130,13 +143,13 @@ yum install perforce-p4python3
 +
 Validate log files for success.
 
-. Consider setting up `p4 typemap` as appropriate
+. Consider setting up `p4 typemap` as appropriate for your import (e.g. for Unreal Engine or Unity)
 
-. Do a first test of one commit (note this is often quite a big commit!)
+. Do a first test of one commit (note this is often quite a big commit so may still take a while!)
 
     python3 GitP4Transfer.py -c transfer_config.yaml -m1
 
-. Kick off transfer and monitor log/output file
+. If the above works, kick off a full transfer and monitor log/output file:
 
     nohup python3 GitP4Transfer.py -c transfer_config.yaml > out &
 
