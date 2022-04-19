@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2021 Robert Cowham, Perforce Software Ltd
+# Copyright (c) 2021-22 Robert Cowham, Perforce Software Ltd
 # ========================================
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions are
@@ -33,7 +33,7 @@ NAME:
     GitP4Transfer.py
 
 DESCRIPTION:
-    This python script (2.7/3.6+ compatible) will transfer Git changes into a Perforce
+    This python script (3.8+ compatible) will transfer Git changes into a Perforce
     Helix Core Repository, somewhat similar to 'git p4' (not historical) and also GitFusion (now deprecated).
 
     This script transfers changes in one direction - from a source Git server to a target p4 server.
@@ -45,9 +45,7 @@ DESCRIPTION:
 
         python3 GitP4Transfer.py -h
 
-    The script requires a config file, by default transfer.yaml.
-
-    An initial example can be generated, e.g.
+    The script requires a config file, by default transfer.yaml. An initial example can be generated, e.g.
 
         GitP4Transfer.py --sample-config > transfer.yaml
 
@@ -1156,7 +1154,7 @@ class GitP4Transfer(object):
         parser = argparse.ArgumentParser(
             description=desc,
             formatter_class=argparse.RawDescriptionHelpFormatter,
-            epilog="Copyright (C) 2021 Robert Cowham, Perforce Software Ltd"
+            epilog="Copyright (C) 2021-22 Robert Cowham, Perforce Software Ltd"
         )
 
         parser.add_argument('-c', '--config', default=CONFIG_FILE, help="Default is " + CONFIG_FILE)
