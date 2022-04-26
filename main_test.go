@@ -26,11 +26,8 @@ func init() {
 
 func runCmd(cmdLine string) (string, error) {
 	cmd := exec.Command("/bin/bash", "-c", cmdLine)
-	stdout, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return string(stdout), nil
+	stdout, err := cmd.CombinedOutput()
+	return string(stdout), err
 }
 
 func createGitRepo(t *testing.T) string {
@@ -428,7 +425,7 @@ func createLogger() *logrus.Logger {
 	return logger
 }
 
-func runTransfer(t *testing.T, logger *logrus.Logger) {
+func runTransfer(t *testing.T, logger *logrus.Logger) string {
 
 	// fast-export with rename detection implemented
 	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
@@ -459,7 +456,7 @@ func runTransfer(t *testing.T, logger *logrus.Logger) {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			f.WriteFile(p4t.serverRoot, c.commit.Mark)
-			j.WriteRev(f.depotFile, f.rev, f.p4action, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+			f.WriteJournal(&j, &c)
 		}
 	}
 
@@ -468,6 +465,7 @@ func runTransfer(t *testing.T, logger *logrus.Logger) {
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 
+	return p4t.serverRoot
 }
 
 func TestAdd(t *testing.T) {
@@ -515,7 +513,8 @@ func TestAdd(t *testing.T) {
 	c = commits[0]
 	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
-	j.WriteRev(f.depotFile, f.rev, f.p4action, f.fileType, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+	j.WriteRev(f.depotFile, f.rev, f.p4action, f.fileType, c.commit.Mark,
+		f.depotFile, c.commit.Mark, int(c.commit.Author.Time.Unix()))
 	dt := c.commit.Author.Time.Unix()
 	expectedJournal := fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
 @pv@ 3 @db.domain@ @import@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
@@ -665,4 +664,55 @@ func TestDeleteFile(t *testing.T) {
 	assert.NotRegexp(t, `lbrType text`, result)
 	assert.NotRegexp(t, `(?m)lbrPath `, result)
 
+}
+
+func TestRename(t *testing.T) {
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	targ := "targ.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd(fmt.Sprintf("mv %s %s", src, targ))
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/src.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/src.txt#1")
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Equal(t, nil, err)
+
+	result, err = runCmd("p4 files //...@3")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/src.txt#2 - delete change 3 (text+C)
+//import/targ.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 fstat -Ob //import/targ.txt#1")
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Equal(t, nil, err)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 fstat -Ob //import/targ.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/src.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
 }

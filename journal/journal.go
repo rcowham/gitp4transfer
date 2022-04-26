@@ -165,6 +165,24 @@ const (
 	Delete
 	Branch
 	Integrate
+	Rename // Special one
+)
+
+type IntegHow int
+
+const (
+	MergeFrom IntegHow = iota
+	MergeInto
+	BranchFrom
+	BranchInto
+	CopyFrom
+	CopyInto
+	Ignored
+	IgnoredBy
+	DeleteFrom
+	DeleteInto
+	DirtyBranchInto
+	DirtyMergeInto
 )
 
 type Journal struct {
@@ -249,7 +267,8 @@ func (j *Journal) WriteChange(chgNo int, description string, chgTime int) {
 // depotRev		Rev			Revision number of the filename in depot.
 // action		Action	File was opened for add/edit/delete/branch/integrate/import.
 
-func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fileType FileType, chgNo int, chgTime int) {
+func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fileType FileType,
+	chgNo int, lbrFile string, lbrRev int, chgTime int) {
 
 	const md5 = "00000000000000000000000000000000"
 	lbrType := fileType
@@ -257,7 +276,7 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 	// @pv@ 3 @db.rev@ @//import/trunk/src/file.txt@ 1 1 0 1 1363872228 1363872228 00000000000000000000000000000000 @//import/trunk/src/file.txt@ @1.1@ 1
 	_, err := fmt.Fprintf(j.w,
 		"@pv@ 3 @db.rev@ @%s@ %d %d %d %d %d %d %s @%s@ @1.%d@ %d \n",
-		depotFile, depotRev, fileType, action, chgNo, chgTime, chgTime, md5, depotFile, chgNo, lbrType)
+		depotFile, depotRev, fileType, action, chgNo, chgTime, chgTime, md5, lbrFile, lbrRev, lbrType)
 	if err != nil {
 		panic(err)
 	}
@@ -266,6 +285,53 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 	_, err = fmt.Fprintf(j.w,
 		"@pv@ 0 @db.revcx@ %d @%s@ @1.%d@ %d \n",
 		chgNo, depotFile, depotRev, action)
+	if err != nil {
+		panic(err)
+	}
+
+}
+
+// db.Integed - A permanent integration record (db.integed)
+
+// Name			Type		Explanation
+// toFile		File		Key: File from which integration is being performed.
+// fromFile		File		Secondary key: File to which integration is being performed.
+// startFromRev	Rev			Tertiary key: Starting revision of fromFile
+// endFromRev	Rev			Ending revision of fromFile.
+// 		If integrating from a single revision (i.e. not a revision range),
+// 		the startFromRev and endFromRev fields will be identical.
+// startToRev	Rev			Start revision of toFile into which integration is being performed.
+// endToRev		Rev			End revision of toFile into which integration is being performed. Only varies from startToRev for reverse integration records
+// how			IntegHow	Integration method: variations on merge/branch/copy/ignore/delete.
+// change		Change		Changelist associated with the integration.
+//
+// By way of example - here is the output of a p4 filelog on a file:
+// ... #31 change 2552 integrate on 1997/01/12 by user@client (filetype) 'description of change'
+// ... ... merge from //depot/main/p4-win/Jamfile#2,#4
+// ... ... branch into //depot/r97.1/p4/Jamfile#1
+// Field	Value
+// FromFile	Jamfile
+// ToFile	Jamfile
+// startFromRev	2
+// endFromRev	4
+// toRev	31
+
+func (j *Journal) WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
+	how IntegHow, chgNo int) {
+
+	reverseHow := how + 1
+
+	// @pv@ 0 @db.integed@ @//stream/dev/fred.txt@ @//stream/main/fred.txt@ 0 1 0 1 2 2
+	// @pv@ 0 @db.integed@ @//stream/main/fred.txt@ @//stream/dev/fred.txt@ 0 1 0 1 3 2
+	_, err := fmt.Fprintf(j.w,
+		"@pv@ 0 @db.integed@ @%s@ @%s@ %d %d %d %d %d %d \n",
+		toFile, fromFile, startFromRev, endFromRev, startToRev, endToRev, how, chgNo)
+	if err != nil {
+		panic(err)
+	}
+	_, err = fmt.Fprintf(j.w,
+		"@pv@ 0 @db.integed@ @%s@ @%s@ %d %d %d %d %d %d \n",
+		fromFile, toFile, startToRev, endToRev, startFromRev, endFromRev, reverseHow, chgNo)
 	if err != nil {
 		panic(err)
 	}

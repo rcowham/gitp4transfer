@@ -81,17 +81,21 @@ func writeBlob(rootDir string, blobID int, data *string) {
 
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
-	name        string
-	size        int
-	depotFile   string // Full depot path
-	rev         int    // Depot rev
-	archiveFile string
-	action      GitAction
-	p4action    journal.FileAction
-	targ        string // For use with copy/move
-	fileType    journal.FileType
-	compressed  bool
-	blob        *libfastimport.CmdBlob
+	name         string // Git filename (target for rename/copy)
+	size         int
+	depotFile    string // Full depot path
+	rev          int    // Depot rev
+	srcName      string // Name of git source file for rename/copy
+	srcDepotFile string //   "
+	srcRev       int    //   "
+	srcLbrRev    int    //   "
+	archiveFile  string
+	action       GitAction
+	p4action     journal.FileAction
+	targ         string // For use with copy/move
+	fileType     journal.FileType
+	compressed   bool
+	blob         *libfastimport.CmdBlob
 }
 
 // GitCommit - A git commit
@@ -107,36 +111,52 @@ func (gc *GitCommit) writeCommit(j *journal.Journal) {
 
 type CommitMap map[int]*GitCommit
 type FileMap map[int]*GitFile
+type RevChange struct { // Struct to remember revs and changes per depotFile
+	rev   int
+	chgNo int
+}
 
 // GitP4Transfer - Transfer via git fast-export file
 type GitP4Transfer struct {
-	exportFile    string
-	logger        *logrus.Logger
-	gitChan       chan GitCommit
-	opts          GitParserOptions
-	depotFileRevs map[string]int // Map depotFile to latest revision
-	testInput     string         // For testing only
+	exportFile     string
+	logger         *logrus.Logger
+	gitChan        chan GitCommit
+	opts           GitParserOptions
+	depotFileRevs  map[string]*RevChange       // Map depotFile to latest rev/chg
+	depotFileTypes map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
+	testInput      string                      // For testing only
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
-	return &GitP4Transfer{logger: logger, depotFileRevs: make(map[string]int)}
+	return &GitP4Transfer{logger: logger, depotFileRevs: make(map[string]*RevChange),
+		depotFileTypes: make(map[string]journal.FileType)}
 }
 
-func (gf *GitFile) setDepotPath(opts GitParserOptions) {
+func (gf *GitFile) getDepotPath(opts GitParserOptions, name string) string {
 	if len(opts.importPath) == 0 {
-		gf.depotFile = fmt.Sprintf("//%s/%s", opts.importDepot, gf.name)
+		return fmt.Sprintf("//%s/%s", opts.importDepot, name)
 	} else {
-		gf.depotFile = fmt.Sprintf("//%s/%s/%s", opts.importDepot, opts.importPath, gf.name)
+		return fmt.Sprintf("//%s/%s/%s", opts.importDepot, opts.importPath, name)
+	}
+}
+
+func (gf *GitFile) setDepotPaths(opts GitParserOptions) {
+	gf.depotFile = gf.getDepotPath(opts, gf.name)
+	if gf.srcName != "" {
+		gf.srcDepotFile = gf.getDepotPath(opts, gf.srcName)
 	}
 }
 
 // Sets compression option and binary/text
 func (gf *GitFile) updateFileDetails() {
-	if gf.action == delete {
+	switch gf.action {
+	case delete:
 		gf.p4action = journal.Delete
 		return
-	}
-	if gf.action == modify {
+	case rename:
+		gf.p4action = journal.Rename
+		return
+	case modify:
 		gf.p4action = journal.Edit
 	}
 	// Compression defaults to false
@@ -172,7 +192,7 @@ func getOID(dataref string) (int, error) {
 
 // WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
 func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
-	if gf.action == delete {
+	if gf.action == delete || gf.action == rename {
 		return nil
 	}
 	rootDir := fmt.Sprintf("%s/%s,d", depotRoot, gf.depotFile[2:])
@@ -207,6 +227,19 @@ func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
 		}
 	}
 	return nil
+}
+
+// WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
+func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
+	dt := int(c.commit.Author.Time.Unix())
+	chgNo := c.commit.Mark
+	if gf.action == modify || gf.action == delete {
+		j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
+	} else if gf.action == rename {
+		j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
+		j.WriteRev(gf.depotFile, gf.srcRev-1, journal.Add, gf.fileType, chgNo, gf.srcDepotFile, gf.srcLbrRev, dt)
+		j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, c.commit.Mark)
+	}
 }
 
 // RunGetCommits - for small files - returns list of all commits and files.
@@ -386,16 +419,49 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 	}
 }
 
-// Maintain a list of latest revision counter indexed by depotFile
-func (g *GitP4Transfer) updateDepotRev(gf *GitFile) {
+// Maintain a list of latest revision counters indexed by depotFile
+func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int, isRename bool) {
 	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
-		g.depotFileRevs[gf.depotFile] = 0
+		g.depotFileRevs[gf.depotFile] = &RevChange{0, chgNo}
 	}
-	g.depotFileRevs[gf.depotFile] += 1
-	gf.rev = g.depotFileRevs[gf.depotFile]
+	g.depotFileRevs[gf.depotFile].rev += 1
+	gf.rev = g.depotFileRevs[gf.depotFile].rev
 	if gf.rev == 1 && gf.action == modify {
 		gf.p4action = journal.Add
 	}
+	if gf.srcName == "" {
+		g.updateDepotFileTypes(gf)
+	} else {
+		gf.p4action = journal.Add
+		if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
+			panic(fmt.Sprintf("Expected to find %s", gf.srcDepotFile))
+		}
+		if isRename { // Rename means old file is being deleted
+			g.depotFileRevs[gf.srcDepotFile].rev += 1
+			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+			gf.srcLbrRev = g.depotFileRevs[gf.srcDepotFile].chgNo
+			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev-1)
+		} else { // Copy
+			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
+			gf.srcLbrRev = g.depotFileRevs[gf.srcDepotFile].chgNo
+		}
+	}
+}
+
+// Maintain a list of latest revision counters indexed by depotFile/rev
+func (g *GitP4Transfer) updateDepotFileTypes(gf *GitFile) {
+	k := fmt.Sprintf("%s#%d", gf.depotFile, gf.rev)
+	g.depotFileTypes[k] = gf.fileType
+}
+
+// Retrieve required filetype
+func (g *GitP4Transfer) getDepotFileTypes(depotFile string, rev int) journal.FileType {
+	k := fmt.Sprintf("%s#%d", depotFile, rev)
+	if _, ok := g.depotFileTypes[k]; !ok {
+		return 0
+	}
+	return g.depotFileTypes[k]
 }
 
 // GitParse - returns channel which contains commits with associated files.
@@ -435,8 +501,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify}
-				blobFiles[blob.Mark].setDepotPath(g.opts)
-				g.updateDepotRev(blobFiles[blob.Mark])
+				blobFiles[blob.Mark].setDepotPaths(g.opts)
+				g.updateDepotRevs(blobFiles[blob.Mark], 0, false)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v\n", reset)
@@ -460,34 +526,34 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				gf, ok := blobFiles[oid]
 				if ok {
 					gf.name = f.Path.String()
-					gf.setDepotPath(g.opts)
+					gf.setDepotPaths(g.opts)
 					gf.updateFileDetails()
-					g.updateDepotRev(gf)
+					g.updateDepotRevs(gf, currCommit.commit.Mark, false)
 					currCommit.files = append(currCommit.files, *gf)
 				}
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s\n", f.Path)
 				gf := &GitFile{name: f.Path.String(), action: delete}
-				gf.setDepotPath(g.opts)
+				gf.setDepotPaths(g.opts)
 				gf.updateFileDetails()
-				g.updateDepotRev(gf)
+				g.updateDepotRevs(gf, currCommit.commit.Mark, false)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
-				gf.setDepotPath(g.opts)
+				gf.setDepotPaths(g.opts)
 				gf.updateFileDetails()
-				g.updateDepotRev(gf)
+				g.updateDepotRevs(gf, currCommit.commit.Mark, false)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
-				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: rename}
-				gf.setDepotPath(g.opts)
+				gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename}
+				gf.setDepotPaths(g.opts)
 				gf.updateFileDetails()
-				g.updateDepotRev(gf)
+				g.updateDepotRevs(gf, currCommit.commit.Mark, true)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
