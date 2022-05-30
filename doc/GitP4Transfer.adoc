@@ -149,8 +149,7 @@ DESCRIPTION:
 
     This script transfers changes in one direction - from a source Git server to a 
     target p4 server.
-    It handles LFS files in the source server (assuming git LFS is suitably installed 
-    and enabled)
+    It handles LFS files in the source server (assuming git LFS is suitably installed and enabled)
 
     Requires Git version 2.7+ due to use of formatting flags
 
