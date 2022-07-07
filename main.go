@@ -36,13 +36,16 @@ func Humanize(b int) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
+const defaultBranch = "main"
+
 type GitParserOptions struct {
 	gitImportFile string
 	extractFiles  bool
 	archiveRoot   string
 	createJournal bool
 	importDepot   string
-	importPath    string // After depot
+	importPath    string // After depot and branch
+	defaultBranch string
 }
 
 type GitAction int
@@ -101,8 +104,15 @@ type GitFile struct {
 // GitCommit - A git commit
 type GitCommit struct {
 	commit     *libfastimport.CmdCommit
-	commitSize int // Size of all files in this commit - useful for memory sizing
+	branch     string // branch name
+	commitSize int    // Size of all files in this commit - useful for memory sizing
 	files      []GitFile
+}
+
+func newGitCommit(commit *libfastimport.CmdCommit, commitSize int) *GitCommit {
+	gc := &GitCommit{commit: commit, commitSize: commitSize, files: make([]GitFile, 0)}
+	gc.branch = strings.Replace(commit.Ref, "/refs/heads/", "", 1)
+	return gc
 }
 
 func (gc *GitCommit) writeCommit(j *journal.Journal) {
@@ -134,9 +144,9 @@ func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
 
 func (gf *GitFile) getDepotPath(opts GitParserOptions, name string) string {
 	if len(opts.importPath) == 0 {
-		return fmt.Sprintf("//%s/%s", opts.importDepot, name)
+		return fmt.Sprintf("//%s/%s/%s", opts.importDepot, opts.defaultBranch, name)
 	} else {
-		return fmt.Sprintf("//%s/%s/%s", opts.importDepot, opts.importPath, name)
+		return fmt.Sprintf("//%s/%s/%s/%s", opts.importDepot, opts.importPath, opts.defaultBranch, name)
 	}
 }
 
@@ -283,7 +293,7 @@ func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, File
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
 			g.logger.Debugf("Commit:  %+v\n", commit)
-			currCommit = &GitCommit{commit: &commit, files: make([]GitFile, 0)}
+			currCommit = newGitCommit(&commit, 0)
 			commits[commit.Mark] = currCommit
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
@@ -373,7 +383,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
 			g.logger.Infof("Commit:  %+v", commit)
-			currCommit = &GitCommit{commit: &commit, commitSize: commitSize, files: make([]GitFile, 0)}
+			currCommit = newGitCommit(&commit, commitSize)
 			commitSize = 0
 			commits[commit.Mark] = currCommit
 		case libfastimport.CmdCommitEnd:
@@ -420,11 +430,12 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 }
 
 // Maintain a list of latest revision counters indexed by depotFile
-func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int, isRename bool) {
+func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
 		g.depotFileRevs[gf.depotFile] = &RevChange{0, chgNo}
 	}
 	g.depotFileRevs[gf.depotFile].rev += 1
+	isRename := (gf.action == rename)
 	gf.rev = g.depotFileRevs[gf.depotFile].rev
 	if gf.rev == 1 && gf.action == modify {
 		gf.p4action = journal.Add
@@ -502,12 +513,17 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify}
 				blobFiles[blob.Mark].setDepotPaths(g.opts)
-				g.updateDepotRevs(blobFiles[blob.Mark], 0, false)
+				// g.updateDepotRevs(blobFiles[blob.Mark], 0)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v\n", reset)
 			case libfastimport.CmdCommit:
 				if currCommit != nil {
+					for i := range currCommit.files {
+						currCommit.files[i].setDepotPaths(g.opts)
+						currCommit.files[i].updateFileDetails()
+						g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
+					}
 					g.gitChan <- *currCommit
 				}
 				commit := cmd.(libfastimport.CmdCommit)
@@ -526,34 +542,22 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				gf, ok := blobFiles[oid]
 				if ok {
 					gf.name = f.Path.String()
-					gf.setDepotPaths(g.opts)
-					gf.updateFileDetails()
-					g.updateDepotRevs(gf, currCommit.commit.Mark, false)
 					currCommit.files = append(currCommit.files, *gf)
 				}
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s\n", f.Path)
 				gf := &GitFile{name: f.Path.String(), action: delete}
-				gf.setDepotPaths(g.opts)
-				gf.updateFileDetails()
-				g.updateDepotRevs(gf, currCommit.commit.Mark, false)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
-				gf.setDepotPaths(g.opts)
-				gf.updateFileDetails()
-				g.updateDepotRevs(gf, currCommit.commit.Mark, false)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
 				gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename}
-				gf.setDepotPaths(g.opts)
-				gf.updateFileDetails()
-				g.updateDepotRevs(gf, currCommit.commit.Mark, true)
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
@@ -564,6 +568,11 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			}
 		}
 		if currCommit != nil {
+			for i := range currCommit.files {
+				currCommit.files[i].setDepotPaths(g.opts)
+				currCommit.files[i].updateFileDetails()
+				g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
+			}
 			g.gitChan <- *currCommit
 		}
 

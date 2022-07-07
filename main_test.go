@@ -19,14 +19,17 @@ import (
 )
 
 var debug bool = false
+var logger *logrus.Logger
 
 func init() {
 	flag.BoolVar(&debug, "debug", false, "Set to have debug logging for tests.")
 }
 
 func runCmd(cmdLine string) (string, error) {
+	logger.Debugf("runCmd: %s", cmdLine)
 	cmd := exec.Command("/bin/bash", "-c", cmdLine)
 	stdout, err := cmd.CombinedOutput()
+	logger.Debugf("result: %s", string(stdout))
 	return string(stdout), err
 }
 
@@ -417,7 +420,10 @@ func zipBuf(data string) bytes.Buffer {
 }
 
 func createLogger() *logrus.Logger {
-	logger := logrus.New()
+	if logger != nil {
+		return logger
+	}
+	logger = logrus.New()
 	logger.Level = logrus.InfoLevel
 	if *&debug {
 		logger.Level = logrus.DebugLevel
@@ -432,11 +438,10 @@ func runTransfer(t *testing.T, logger *logrus.Logger) string {
 	if err != nil {
 		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
 	}
-	logger.Debugf("Export file:\n%s", output)
 
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
-	opts := GitParserOptions{importDepot: "import"}
+	opts := GitParserOptions{importDepot: "import", defaultBranch: "main"}
 	commitChan := g.GitParse(opts)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
@@ -489,7 +494,7 @@ func TestAdd(t *testing.T) {
 
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
-	opts := GitParserOptions{importDepot: "import"}
+	opts := GitParserOptions{importDepot: "import", defaultBranch: "main"}
 	commitChan := g.GitParse(opts)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
@@ -525,8 +530,8 @@ func TestAdd(t *testing.T) {
 @ 
 @pv@ 0 @db.change@ 2 2 @git-client@ @git-user@ %d 1 @initial
 @ 
-@pv@ 3 @db.rev@ @//import/src.txt@ 1 3 0 2 %d %d 00000000000000000000000000000000 @//import/src.txt@ @1.2@ 3 
-@pv@ 0 @db.revcx@ 2 @//import/src.txt@ @1.1@ 0 
+@pv@ 3 @db.rev@ @//import/main/src.txt@ 1 3 0 2 %d %d 00000000000000000000000000000000 @//import/main/src.txt@ @1.2@ 3 
+@pv@ 0 @db.revcx@ 2 @//import/main/src.txt@ @1.1@ 0 
 `, dt, dt, dt)
 	assert.Equal(t, expectedJournal, buf.String())
 
@@ -540,7 +545,7 @@ func TestAdd(t *testing.T) {
 	f.WriteFile(p4t.serverRoot, c.commit.Mark)
 	result, err := runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#1 - add change 2 (text+C)\n", result)
+	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
 	result, err = runCmd("p4 verify -qu //...")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "", result)
@@ -566,17 +571,17 @@ func TestAddEdit(t *testing.T) {
 
 	result, err := runCmd("p4 files //...@2")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#1 - add change 2 (text+C)\n", result)
+	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
 
-	result, err = runCmd("p4 print -q //import/src.txt#1")
+	result, err = runCmd("p4 print -q //import/main/src.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, srcContents1, result)
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#2 - edit change 4 (text+C)\n", result)
+	assert.Equal(t, "//import/main/src.txt#2 - edit change 4 (text+C)\n", result)
 
-	result, err = runCmd("p4 print -q //import/src.txt#2")
+	result, err = runCmd("p4 print -q //import/main/src.txt#2")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, srcContents2, result)
 
@@ -584,7 +589,7 @@ func TestAddEdit(t *testing.T) {
 	assert.Equal(t, "<nil>", fmt.Sprint(err))
 	assert.Equal(t, "", result)
 
-	result, err = runCmd("p4 fstat -Ob //import/src.txt#2")
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#2")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Regexp(t, `lbrType text\+C`, result)
@@ -609,13 +614,13 @@ func TestAddBinary(t *testing.T) {
 
 	result, err := runCmd("p4 files //...@2")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt.gz#1 - add change 2 (binary+F)\n", result)
+	assert.Equal(t, "//import/main/src.txt.gz#1 - add change 2 (binary+F)\n", result)
 
 	result, err = runCmd("p4 verify -qu //...")
 	assert.Equal(t, "<nil>", fmt.Sprint(err))
 	assert.Equal(t, "", result)
 
-	result, err = runCmd("p4 fstat -Ob //import/src.txt.gz#1")
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt.gz#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType binary\+F`, result)
 	assert.Regexp(t, `lbrType binary\+F`, result)
@@ -642,13 +647,13 @@ func TestDeleteFile(t *testing.T) {
 
 	result, err := runCmd("p4 files //...@2")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#1 - add change 2 (text+C)\n", result)
+	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
 
 	result, err = runCmd("p4 verify -qu //...")
 	assert.Equal(t, "<nil>", fmt.Sprint(err))
 	assert.Equal(t, "", result)
 
-	result, err = runCmd("p4 fstat -Ob //import/src.txt#1")
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Regexp(t, `lbrType text\+C`, result)
@@ -656,9 +661,9 @@ func TestDeleteFile(t *testing.T) {
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#2 - delete change 3 (text)\n", result)
+	assert.Equal(t, "//import/main/src.txt#2 - delete change 3 (text)\n", result)
 
-	result, err = runCmd("p4 fstat -Ob //import/src.txt#2")
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#2")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType text`, result)
 	assert.NotRegexp(t, `lbrType text`, result)
@@ -688,20 +693,20 @@ func TestRename(t *testing.T) {
 
 	result, err := runCmd("p4 files //...@2")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/src.txt#1 - add change 2 (text+C)\n", result)
+	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
 
-	result, err = runCmd("p4 fstat -Ob //import/src.txt#1")
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#1")
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Equal(t, nil, err)
 
 	result, err = runCmd("p4 files //...@3")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/src.txt#2 - delete change 3 (text+C)
-//import/targ.txt#1 - add change 3 (text+C)
+	assert.Equal(t, `//import/main/src.txt#2 - delete change 3 (text+C)
+//import/main/targ.txt#1 - add change 3 (text+C)
 `,
 		result)
 
-	result, err = runCmd("p4 fstat -Ob //import/targ.txt#1")
+	result, err = runCmd("p4 fstat -Ob //import/main/targ.txt#1")
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Equal(t, nil, err)
 
@@ -709,10 +714,54 @@ func TestRename(t *testing.T) {
 	assert.Equal(t, "", result)
 	assert.Equal(t, "<nil>", fmt.Sprint(err))
 
-	result, err = runCmd("p4 fstat -Ob //import/targ.txt#1")
+	result, err = runCmd("p4 fstat -Ob //import/main/targ.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Regexp(t, `lbrType text\+C`, result)
-	assert.Regexp(t, `lbrFile //import/src.txt`, result)
+	assert.Regexp(t, `lbrFile //import/main/src.txt`, result)
 	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
+}
+
+func TestBranch(t *testing.T) {
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.txt"
+	contents1 := "contents\n"
+	writeToFile(file1, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git switch -c dev")
+	contents2 := "contents\nchanged dev"
+	writeToFile(file1, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m 'changed on dev'")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/file1.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 files //...@3")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/file1.txt#1 - add change 2 (text+C)
+//import/dev/file1.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 fstat -Ob //import/dev/file1.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/dev/file1.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.3.gz$`, result)
 }
