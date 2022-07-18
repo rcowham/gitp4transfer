@@ -96,6 +96,7 @@ type GitFile struct {
 	action       GitAction
 	p4action     journal.FileAction
 	targ         string // For use with copy/move
+	isBranch     bool
 	fileType     journal.FileType
 	compressed   bool
 	blob         *libfastimport.CmdBlob
@@ -111,7 +112,7 @@ type GitCommit struct {
 
 func newGitCommit(commit *libfastimport.CmdCommit, commitSize int) *GitCommit {
 	gc := &GitCommit{commit: commit, commitSize: commitSize, files: make([]GitFile, 0)}
-	gc.branch = strings.Replace(commit.Ref, "/refs/heads/", "", 1)
+	gc.branch = strings.Replace(commit.Ref, "refs/heads/", "", 1)
 	return gc
 }
 
@@ -142,18 +143,22 @@ func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
 		depotFileTypes: make(map[string]journal.FileType)}
 }
 
-func (gf *GitFile) getDepotPath(opts GitParserOptions, name string) string {
+func (gf *GitFile) getDepotPath(opts GitParserOptions, branch string, name string) string {
 	if len(opts.importPath) == 0 {
-		return fmt.Sprintf("//%s/%s/%s", opts.importDepot, opts.defaultBranch, name)
+		return fmt.Sprintf("//%s/%s/%s", opts.importDepot, branch, name)
 	} else {
-		return fmt.Sprintf("//%s/%s/%s/%s", opts.importDepot, opts.importPath, opts.defaultBranch, name)
+		return fmt.Sprintf("//%s/%s/%s/%s", opts.importDepot, opts.importPath, branch, name)
 	}
 }
 
-func (gf *GitFile) setDepotPaths(opts GitParserOptions) {
-	gf.depotFile = gf.getDepotPath(opts, gf.name)
+func (gf *GitFile) setDepotPaths(opts GitParserOptions, branch string, prevBranch string) {
+	gf.depotFile = gf.getDepotPath(opts, branch, gf.name)
 	if gf.srcName != "" {
-		gf.srcDepotFile = gf.getDepotPath(opts, gf.srcName)
+		gf.srcDepotFile = gf.getDepotPath(opts, branch, gf.srcName)
+	} else if prevBranch != "" {
+		gf.srcName = gf.name
+		gf.isBranch = true
+		gf.srcDepotFile = gf.getDepotPath(opts, prevBranch, gf.srcName)
 	}
 }
 
@@ -243,7 +248,15 @@ func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
 func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	dt := int(c.commit.Author.Time.Unix())
 	chgNo := c.commit.Mark
-	if gf.action == modify || gf.action == delete {
+	if gf.action == modify {
+		if gf.isBranch {
+			// we write rev for newly branched depot file, with link to old version
+			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
+			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, c.commit.Mark)
+		} else {
+			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
+		}
+	} else if gf.action == delete {
 		j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
 	} else if gf.action == rename {
 		j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
@@ -494,6 +507,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	g.gitChan = make(chan GitCommit, 100)
 	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
+	commits := make(map[int]*GitCommit, 0) // Index by commit.mark
 	var currCommit *GitCommit
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
@@ -512,15 +526,22 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify}
-				blobFiles[blob.Mark].setDepotPaths(g.opts)
-				// g.updateDepotRevs(blobFiles[blob.Mark], 0)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v\n", reset)
 			case libfastimport.CmdCommit:
-				if currCommit != nil {
+				if currCommit != nil { // Process previous commit
+					prevBranch := ""
+					if currCommit.commit.From != "" {
+						if intVar, err := strconv.Atoi(currCommit.commit.From); err == nil {
+							parent := commits[intVar]
+							if currCommit.branch != parent.branch {
+								prevBranch = parent.branch
+							}
+						}
+					}
 					for i := range currCommit.files {
-						currCommit.files[i].setDepotPaths(g.opts)
+						currCommit.files[i].setDepotPaths(g.opts, currCommit.branch, prevBranch)
 						currCommit.files[i].updateFileDetails()
 						g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
 					}
@@ -528,7 +549,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				}
 				commit := cmd.(libfastimport.CmdCommit)
 				g.logger.Debugf("Commit:  %+v\n", commit)
-				currCommit = &GitCommit{commit: &commit, files: make([]GitFile, 0)}
+				currCommit = newGitCommit(&commit, 0)
+				commits[commit.Mark] = currCommit
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
 				g.logger.Debugf("CommitEnd:  %+v\n", commit)
@@ -568,8 +590,17 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			}
 		}
 		if currCommit != nil {
+			prevBranch := ""
+			if currCommit.commit.From != "" {
+				if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
+					parent := commits[intVar]
+					if currCommit.branch != parent.branch {
+						prevBranch = parent.branch
+					}
+				}
+			}
 			for i := range currCommit.files {
-				currCommit.files[i].setDepotPaths(g.opts)
+				currCommit.files[i].setDepotPaths(g.opts, currCommit.branch, prevBranch)
 				currCommit.files[i].updateFileDetails()
 				g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
 			}
