@@ -252,7 +252,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 		if gf.isBranch {
 			// we write rev for newly branched depot file, with link to old version
 			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
-			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, c.commit.Mark)
+			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
 		} else {
 			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
 		}
@@ -261,7 +261,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	} else if gf.action == rename {
 		j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
 		j.WriteRev(gf.depotFile, gf.srcRev-1, journal.Add, gf.fileType, chgNo, gf.srcDepotFile, gf.srcLbrRev, dt)
-		j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, c.commit.Mark)
+		j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 	}
 }
 

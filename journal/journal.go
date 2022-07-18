@@ -317,9 +317,7 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 // toRev	31
 
 func (j *Journal) WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
-	how IntegHow, chgNo int) {
-
-	reverseHow := how + 1
+	how IntegHow, reverseHow IntegHow, chgNo int) {
 
 	// @pv@ 0 @db.integed@ @//stream/dev/fred.txt@ @//stream/main/fred.txt@ 0 1 0 1 2 2
 	// @pv@ 0 @db.integed@ @//stream/main/fred.txt@ @//stream/dev/fred.txt@ 0 1 0 1 3 2
