@@ -469,6 +469,10 @@ func runTransfer(t *testing.T, logger *logrus.Logger) string {
 	writeToFile(jnl, buf.String())
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
+	runCmd("p4 storage -r")
+	runCmd("p4 storage -w")
+	// assert.Equal(t, nil, err)
+	// assert.Equal(t, "Phase 1 of the storage upgrade has finished.\n", result)
 
 	return p4t.serverRoot
 }
@@ -530,8 +534,9 @@ func TestAdd(t *testing.T) {
 @ 
 @pv@ 0 @db.change@ 2 2 @git-client@ @git-user@ %d 1 @initial
 @ 
+@rv@ 0 @db.counters@ @change@ 2 
 @pv@ 3 @db.rev@ @//import/main/src.txt@ 1 3 0 2 %d %d 00000000000000000000000000000000 @//import/main/src.txt@ @1.2@ 3 
-@pv@ 0 @db.revcx@ 2 @//import/main/src.txt@ @1.1@ 0 
+@pv@ 0 @db.revcx@ 2 @//import/main/src.txt@ 1 0 
 `, dt, dt, dt)
 	assert.Equal(t, expectedJournal, buf.String())
 
@@ -540,15 +545,24 @@ func TestAdd(t *testing.T) {
 	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
+	f.WriteFile(p4t.serverRoot, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
-	f.WriteFile(p4t.serverRoot, c.commit.Mark)
-	result, err := runCmd("p4 files //...")
+	result, err := runCmd("p4 storage -r")
+	// assert.Equal(t, nil, err)
+	// assert.Equal(t, "Phase 1 of the storage upgrade has finished.\n", result)
+	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
 	result, err = runCmd("p4 verify -qu //...")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "", result)
+	result, err = runCmd("p4 changes")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	result, err = runCmd("p4 changes //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
 }
 
 func TestAddEdit(t *testing.T) {
@@ -594,6 +608,20 @@ func TestAddEdit(t *testing.T) {
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Regexp(t, `lbrType text\+C`, result)
 	assert.Regexp(t, `lbrPath .*/1.4.gz`, result)
+
+	result, err = runCmd("p4 changes")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	result, err = runCmd("p4 changes //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	result, err = runCmd("p4 storage //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrRev 1.2`, result)
+	assert.Regexp(t, `lbrRev 1.4`, result)
 }
 
 func TestAddBinary(t *testing.T) {

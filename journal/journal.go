@@ -236,6 +236,11 @@ func (j *Journal) WriteChange(chgNo int, description string, chgTime int) {
 		panic(err)
 	}
 
+	_, err = fmt.Fprintf(j.w, "@rv@ 0 @db.counters@ @change@ %d \n", chgNo)
+	if err != nil {
+		panic(err)
+	}
+
 }
 
 // Rev - A revision record (db.rev, db.revpx)
@@ -283,7 +288,7 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 
 	// @pv@ 0 @db.revcx@ 1 @//import/trunk/src/file.txt@ 1 0
 	_, err = fmt.Fprintf(j.w,
-		"@pv@ 0 @db.revcx@ %d @%s@ @1.%d@ %d \n",
+		"@pv@ 0 @db.revcx@ %d @%s@ %d %d \n",
 		chgNo, depotFile, depotRev, action)
 	if err != nil {
 		panic(err)
