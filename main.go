@@ -110,9 +110,17 @@ type GitCommit struct {
 	files      []GitFile
 }
 
+// HasPrefix tests whether the string s begins with prefix.
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[0:len(prefix)] == prefix
+}
+
 func newGitCommit(commit *libfastimport.CmdCommit, commitSize int) *GitCommit {
 	gc := &GitCommit{commit: commit, commitSize: commitSize, files: make([]GitFile, 0)}
 	gc.branch = strings.Replace(commit.Ref, "refs/heads/", "", 1)
+	if hasPrefix(gc.branch, "refs/tags") || hasPrefix(gc.branch, "refs/remote") {
+		gc.branch = ""
+	}
 	return gc
 }
 
@@ -135,12 +143,15 @@ type GitP4Transfer struct {
 	opts           GitParserOptions
 	depotFileRevs  map[string]*RevChange       // Map depotFile to latest rev/chg
 	depotFileTypes map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
-	testInput      string                      // For testing only
+	commits        map[int]*GitCommit
+	testInput      string // For testing only
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
-	return &GitP4Transfer{logger: logger, depotFileRevs: make(map[string]*RevChange),
-		depotFileTypes: make(map[string]journal.FileType)}
+	return &GitP4Transfer{logger: logger,
+		depotFileRevs:  make(map[string]*RevChange),
+		depotFileTypes: make(map[string]journal.FileType),
+		commits:        make(map[int]*GitCommit)}
 }
 
 func (gf *GitFile) getDepotPath(opts GitParserOptions, branch string, name string) string {
@@ -489,6 +500,31 @@ func (g *GitP4Transfer) getDepotFileTypes(depotFile string, rev int) journal.Fil
 	return g.depotFileTypes[k]
 }
 
+func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
+	if currCommit != nil { // Process previous commit
+		prevBranch := ""
+		if currCommit.commit.From != "" {
+			if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
+				parent := g.commits[intVar]
+				if currCommit.branch == "" {
+					currCommit.branch = parent.branch
+				}
+				if currCommit.branch != parent.branch {
+					prevBranch = parent.branch
+				}
+			}
+		} else if currCommit.branch == "" {
+			currCommit.branch = g.opts.defaultBranch
+		}
+		for i := range currCommit.files {
+			currCommit.files[i].setDepotPaths(g.opts, currCommit.branch, prevBranch)
+			currCommit.files[i].updateFileDetails()
+			g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
+		}
+		g.gitChan <- *currCommit
+	}
+}
+
 // GitParse - returns channel which contains commits with associated files.
 func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	var buf io.Reader
@@ -498,7 +534,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	if g.testInput != "" {
 		buf = strings.NewReader(g.testInput)
 	} else {
-		file, err = os.Open(options.gitImportFile)
+		file, err = os.Open(options.gitImportFile) // Note deferred close in go routine below.
 		if err != nil {
 			fmt.Printf("ERROR: Failed to open file '%s': %v\n", options.gitImportFile, err)
 			os.Exit(1)
@@ -510,7 +546,6 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	g.gitChan = make(chan GitCommit, 100)
 	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
-	commits := make(map[int]*GitCommit, 0) // Index by commit.mark
 	var currCommit *GitCommit
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
@@ -534,27 +569,11 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v\n", reset)
 			case libfastimport.CmdCommit:
-				if currCommit != nil { // Process previous commit
-					prevBranch := ""
-					if currCommit.commit.From != "" {
-						if intVar, err := strconv.Atoi(currCommit.commit.From); err == nil {
-							parent := commits[intVar]
-							if currCommit.branch != parent.branch {
-								prevBranch = parent.branch
-							}
-						}
-					}
-					for i := range currCommit.files {
-						currCommit.files[i].setDepotPaths(g.opts, currCommit.branch, prevBranch)
-						currCommit.files[i].updateFileDetails()
-						g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
-					}
-					g.gitChan <- *currCommit
-				}
+				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
 				g.logger.Debugf("Commit:  %+v\n", commit)
 				currCommit = newGitCommit(&commit, 0)
-				commits[commit.Mark] = currCommit
+				g.commits[commit.Mark] = currCommit
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
 				g.logger.Debugf("CommitEnd:  %+v\n", commit)
@@ -593,24 +612,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Errorf("Cmd type %T\n", cmd)
 			}
 		}
-		if currCommit != nil {
-			prevBranch := ""
-			if currCommit.commit.From != "" {
-				if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
-					parent := commits[intVar]
-					if currCommit.branch != parent.branch {
-						prevBranch = parent.branch
-					}
-				}
-			}
-			for i := range currCommit.files {
-				currCommit.files[i].setDepotPaths(g.opts, currCommit.branch, prevBranch)
-				currCommit.files[i].updateFileDetails()
-				g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
-			}
-			g.gitChan <- *currCommit
-		}
-
+		g.processCommit(currCommit)
 	}()
 
 	return g.gitChan
@@ -635,14 +637,18 @@ func main() {
 			"gitimport",
 			"Git fast-export file to process.",
 		).String()
-		importDepot = kingpin.Arg(
+		importDepot = kingpin.Flag(
 			"import.depot",
 			"Git fast-export file to process.",
-		).Default("import").String()
+		).Default("import").Short('d').String()
+		defaultBranch = kingpin.Flag(
+			"default.branch",
+			"Name of default git branch.",
+		).Default("main").Short('b').String()
 		dump = kingpin.Flag(
 			"dump",
 			"Dump git file, saving the contained archive contents.",
-		).Short('d').Bool()
+		).Bool()
 		dumpArchives = kingpin.Flag(
 			"dump.archives",
 			"Saving the contained archive contents if --dump is specified.",
@@ -679,6 +685,7 @@ func main() {
 		gitImportFile: *gitimport,
 		importDepot:   *importDepot,
 		archiveRoot:   *archive,
+		defaultBranch: *defaultBranch,
 	}
 
 	if *dump {

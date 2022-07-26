@@ -773,3 +773,102 @@ func TestBranch(t *testing.T) {
 	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/file1.txt#1`, result)
 
 }
+
+// TestTag - ensure tags are ignored as branch names
+func TestTag(t *testing.T) {
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.txt"
+	contents1 := "contents\n"
+	writeToFile(file1, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git tag v1.0")
+	contents2 := "contents\nchanged"
+	writeToFile(file1, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m 'changed on main'")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/file1.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/file1.txt#2 - edit change 4 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 fstat -Ob //import/main/file1.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/main/file1.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.4.gz$`, result)
+
+}
+
+// func TestBranchMerge(t *testing.T) {
+// 	logger := createLogger()
+
+// 	d := createGitRepo(t)
+// 	os.Chdir(d)
+// 	logger.Debugf("Git repo: %s", d)
+
+// 	file1 := "file1.txt"
+// 	contents1 := "contents\n"
+// 	writeToFile(file1, contents1)
+// 	runCmd("git add .")
+// 	runCmd("git commit -m initial")
+// 	runCmd("git switch -c dev")
+// 	contents2 := "contents\nchanged dev"
+// 	writeToFile(file1, contents2)
+// 	runCmd("git add .")
+// 	runCmd("git commit -m 'changed on dev'")
+// 	runCmd("git switch main")
+// 	runCmd("git merge dev")
+
+// 	r := runTransfer(t, logger)
+// 	logger.Debugf("Server root: %s", r)
+
+// 	result, err := runCmd("p4 files //...@2")
+// 	assert.Equal(t, nil, err)
+// 	assert.Equal(t, "//import/main/file1.txt#1 - add change 2 (text+C)\n", result)
+
+// 	result, err = runCmd("p4 files //...")
+// 	assert.Equal(t, nil, err)
+// 	assert.Equal(t, `//import/dev/file1.txt#1 - add change 4 (text+C)
+// //import/main/file1.txt#1 - add change 2 (text+C)
+// `,
+// 		result)
+
+// 	result, err = runCmd("p4 verify -qu //...")
+// 	assert.Equal(t, "", result)
+// 	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+// 	result, err = runCmd("p4 fstat -Ob //import/dev/file1.txt#1")
+// 	assert.Equal(t, nil, err)
+// 	assert.Regexp(t, `headType text\+C`, result)
+// 	assert.Regexp(t, `lbrType text\+C`, result)
+// 	assert.Regexp(t, `lbrFile //import/dev/file1.txt`, result)
+// 	assert.Regexp(t, `(?m)lbrPath .*/1.4.gz$`, result)
+
+// 	result, err = runCmd("p4 filelog //import/dev/file1.txt#1")
+// 	assert.Equal(t, nil, err)
+// 	assert.Regexp(t, `//import/dev/file1.txt`, result)
+// 	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client`, result)
+// 	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client (text+C) 'changed on dev '`, result)
+// 	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/file1.txt#1`, result)
+
+// }
