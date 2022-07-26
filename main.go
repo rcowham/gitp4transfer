@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/h2non/filetype"
-	"github.com/rcowham/gitp4transfer/journal"
+	journal "github.com/rcowham/gitp4transfer/journal"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
 	"github.com/perforce/p4prometheus/version"
@@ -266,6 +266,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 }
 
 // RunGetCommits - for small files - returns list of all commits and files.
+// Mainly for testing.
 func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, FileMap) {
 	var buf io.Reader
 
@@ -491,18 +492,20 @@ func (g *GitP4Transfer) getDepotFileTypes(depotFile string, rev int) journal.Fil
 // GitParse - returns channel which contains commits with associated files.
 func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	var buf io.Reader
+	var file *os.File
+	var err error
 
 	if g.testInput != "" {
 		buf = strings.NewReader(g.testInput)
 	} else {
-		file, err := os.Open(options.gitImportFile)
+		file, err = os.Open(options.gitImportFile)
 		if err != nil {
 			fmt.Printf("ERROR: Failed to open file '%s': %v\n", options.gitImportFile, err)
 			os.Exit(1)
 		}
-		defer file.Close()
 		buf = bufio.NewReader(file)
 	}
+
 	g.opts = options
 
 	g.gitChan = make(chan GitCommit, 100)
@@ -512,6 +515,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
 	go func() {
+		defer file.Close()
 		defer close(g.gitChan)
 		for {
 			cmd, err := f.ReadCmd()
@@ -631,14 +635,26 @@ func main() {
 			"gitimport",
 			"Git fast-export file to process.",
 		).String()
+		importDepot = kingpin.Arg(
+			"import.depot",
+			"Git fast-export file to process.",
+		).Default("import").String()
 		dump = kingpin.Flag(
 			"dump",
 			"Dump git file, saving the contained archive contents.",
-		).Bool()
+		).Short('d').Bool()
+		dumpArchives = kingpin.Flag(
+			"dump.archives",
+			"Saving the contained archive contents if --dump is specified.",
+		).Short('a').Bool()
 		archive = kingpin.Flag(
 			"archive.root",
-			"Archive root dir under which to store extracted archives if --dump set.",
+			"Archive root dir under which to store extracted archives.",
 		).String()
+		outputJournal = kingpin.Flag(
+			"journal",
+			"P4D journal file to write (assuming --dump not specified).",
+		).Default("jnl.0").String()
 		debug = kingpin.Flag(
 			"debug",
 			"Enable debugging level.",
@@ -661,18 +677,33 @@ func main() {
 	g := NewGitP4Transfer(logger)
 	opts := GitParserOptions{
 		gitImportFile: *gitimport,
+		importDepot:   *importDepot,
 		archiveRoot:   *archive,
 	}
 
 	if *dump {
-		g.DumpGit(opts, true)
-	} else {
-		commits, files := g.RunGetCommits(opts)
-		for _, v := range commits {
-			g.logger.Infof("Found commit: id %d, files: %d", v.commit.Mark, len(v.files))
-		}
-		for _, v := range files {
-			g.logger.Infof("Found file: %s, %d", v.name, v.blob.Mark)
+		g.DumpGit(opts, *dumpArchives)
+		return
+	}
+
+	commitChan := g.GitParse(opts)
+
+	j := journal.Journal{}
+	f, err := os.Create(*outputJournal)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+
+	j.SetWriter(f)
+	j.WriteHeader()
+
+	for c := range commitChan {
+		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+		for _, f := range c.files {
+			f.WriteFile(opts.archiveRoot, c.commit.Mark)
+			f.WriteJournal(&j, &c)
 		}
 	}
+
 }
