@@ -57,6 +57,80 @@ const (
 	rename
 )
 
+// Node - tree structure to record directory contents for directory renames
+type Node struct {
+	name     string
+	path     string
+	isFile   bool
+	children []*Node
+}
+
+func (n *Node) addSubFile(fullPath string, subPath string) {
+	parts := strings.Split(subPath, "/")
+	if len(parts) == 1 {
+		for _, c := range n.children {
+			if c.name == parts[0] {
+				return // file already registered
+			}
+		}
+		n.children = append(n.children, &Node{name: parts[0], isFile: true, path: fullPath})
+	} else {
+		for _, c := range n.children {
+			if c.name == parts[0] {
+				c.addSubFile(fullPath, strings.Join(parts[1:], "/"))
+				return
+			}
+		}
+		n.children = append(n.children, &Node{name: parts[0]})
+		n.children[len(n.children)-1].addSubFile(fullPath, strings.Join(parts[1:], "/"))
+	}
+}
+
+func (n *Node) addFile(path string) {
+	n.addSubFile(path, path)
+}
+
+func (n *Node) getChildFiles() []string {
+	files := make([]string, 0)
+	for _, c := range n.children {
+		if c.isFile {
+			files = append(files, c.path)
+		} else {
+			files = append(files, c.getChildFiles()...)
+		}
+	}
+	return files
+}
+
+func (n *Node) getFiles(dirName string) []string {
+	parts := strings.Split(dirName, "/")
+	files := make([]string, 0)
+	if len(parts) == 1 {
+		if n.name == parts[0] {
+			files = append(files, n.getChildFiles()...)
+			return files
+		} else if n.name == "" {
+			for _, c := range n.children {
+				if c.name == parts[0] {
+					if c.isFile {
+						files = append(files, c.path)
+					} else {
+						files = append(files, c.getChildFiles()...)
+					}
+				}
+			}
+			return files
+		}
+	} else {
+		for _, c := range n.children {
+			if c.name == parts[0] {
+				return c.getFiles(strings.Join(parts[1:], "/"))
+			}
+		}
+	}
+	return files
+}
+
 // Performs simple hash
 func getBlobIDPath(rootDir string, blobID int) (dir string, name string) {
 	n := fmt.Sprintf("%08d", blobID)
@@ -211,7 +285,7 @@ func (gf *GitFile) updateFileDetails() {
 
 func getOID(dataref string) (int, error) {
 	if !strings.HasPrefix(dataref, ":") {
-		return 0, errors.New("Invalid dataref")
+		return 0, errors.New("invalid dataref")
 	}
 	return strconv.Atoi(dataref[1:])
 }
@@ -548,6 +622,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
 	var currCommit *GitCommit
 
+	node := &Node{name: ""}
+
 	f := libfastimport.NewFrontend(buf, nil, nil)
 	go func() {
 		defer file.Close()
@@ -588,6 +664,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				if ok {
 					gf.name = f.Path.String()
 					currCommit.files = append(currCommit.files, *gf)
+					node.addFile(gf.name)
 				}
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
@@ -602,8 +679,24 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
-				gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename}
-				currCommit.files = append(currCommit.files, *gf)
+				// Look for renames of dirs
+				files := node.getFiles(f.Src.String())
+				if len(files) == 1 && files[0] == string(f.Src) {
+					gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename}
+					currCommit.files = append(currCommit.files, *gf)
+				} else if len(files) > 0 {
+					g.logger.Debugf("DirRename: Src:%s Dst:%s\n", f.Src, f.Dst)
+					for _, rf := range files {
+						if !hasPrefix(rf, f.Src.String()) {
+							g.logger.Errorf("Unexpected src found: %s: %s\n", f.Src.String(), rf)
+							continue
+						}
+						dest := fmt.Sprintf("%s%s", f.Dst.String(), rf[len(f.Src.String()):])
+						g.logger.Debugf("DirFileRename: Src:%s Dst:%s\n", rf, dest)
+						gf := &GitFile{name: dest, srcName: rf, action: rename}
+						currCommit.files = append(currCommit.files, *gf)
+					}
+				}
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
 				g.logger.Debugf("CmdTag: %+v\n", t)

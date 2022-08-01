@@ -56,7 +56,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         (-h) usage -h  && exit 1;;
         # (-man) usage -man;;
-        (-m) P4Root=$2; shiftArgs=1;;
+        (-p) P4Root=$2; shiftArgs=1;;
         (-d) Debug=1;;
         (-*) usage -h "Unknown command line option ($1)." && exit 1;;
         (*) GitFile=$1;;

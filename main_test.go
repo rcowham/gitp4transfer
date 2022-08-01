@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/rcowham/gitp4transfer/journal"
@@ -431,14 +432,7 @@ func createLogger() *logrus.Logger {
 	return logger
 }
 
-func runTransfer(t *testing.T, logger *logrus.Logger) string {
-
-	// fast-export with rename detection implemented
-	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
-	if err != nil {
-		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
-	}
-
+func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) string {
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
 	opts := GitParserOptions{importDepot: "import", defaultBranch: "main"}
@@ -475,6 +469,15 @@ func runTransfer(t *testing.T, logger *logrus.Logger) string {
 	// assert.Equal(t, "Phase 1 of the storage upgrade has finished.\n", result)
 
 	return p4t.serverRoot
+}
+
+func runTransfer(t *testing.T, logger *logrus.Logger) string {
+	// fast-export with rename detection implemented
+	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	return runTransferWithDump(t, logger, output)
 }
 
 func TestAdd(t *testing.T) {
@@ -750,6 +753,78 @@ func TestRename(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
 }
 
+func TestRenameDir(t *testing.T) {
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src1 := filepath.Join("src", "file.txt")
+	src2 := filepath.Join("src", "file2.txt")
+	srcContents1 := "contents\n"
+	runCmd("mkdir src")
+	writeToFile(src1, srcContents1)
+	writeToFile(src2, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git mv src targ")
+	runCmd("git add .")
+	runCmd("git commit -m moved")
+
+	// fast-export with rename detection implemented - to tweak to directory rename
+	output, err := runCmd("git fast-export --all -M")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Output: %s", output)
+	lines := strings.Split(output, "\n")
+	logger.Debugf("Len: %d", len(lines))
+	newLines := lines[:len(lines)-4]
+	logger.Debugf("Len new: %d", len(newLines))
+	newLines = append(newLines, "R src targ")
+	newLines = append(newLines, "")
+	newOutput := strings.Join(newLines, "\n")
+	logger.Debugf("Changed output: %s", newOutput)
+
+	r := runTransferWithDump(t, logger, newOutput)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/file.txt#1 - add change 2 (text+C)
+//import/main/src/file2.txt#1 - add change 2 (text+C)
+`, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src/file.txt#1")
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Equal(t, nil, err)
+
+	result, err = runCmd("p4 files //...@3")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/file.txt#2 - delete change 3 (text+C)
+//import/main/src/file2.txt#2 - delete change 3 (text+C)
+//import/main/targ/file.txt#1 - add change 3 (text+C)
+//import/main/targ/file2.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/targ/file.txt#1")
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Equal(t, nil, err)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 fstat -Ob //import/main/targ/file.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/main/src/file.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
+}
+
 func TestBranch(t *testing.T) {
 	logger := createLogger()
 
@@ -844,6 +919,54 @@ func TestTag(t *testing.T) {
 	assert.Regexp(t, `lbrType text\+C`, result)
 	assert.Regexp(t, `lbrFile //import/main/file1.txt`, result)
 	assert.Regexp(t, `(?m)lbrPath .*/1.4.gz$`, result)
+
+}
+
+func TestNode(t *testing.T) {
+	// logger := createLogger()
+	n := &Node{name: ""}
+	n.addFile("file.txt")
+	assert.Equal(t, 1, len(n.children))
+	assert.Equal(t, "file.txt", n.children[0].name)
+	f := n.getFiles("")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "file.txt", f[0])
+
+	f = n.getFiles("file.txt")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "file.txt", f[0])
+
+	fname := "src/file2.txt"
+	n.addFile(fname)
+	assert.Equal(t, 2, len(n.children))
+	assert.Equal(t, "src", n.children[1].name)
+	assert.Equal(t, false, n.children[1].isFile)
+	assert.Equal(t, 1, len(n.children[1].children))
+	assert.Equal(t, fname, n.children[1].children[0].path)
+
+	f = n.getFiles("src")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "src/file2.txt", f[0])
+
+	n.addFile(fname) // IF adding pre-existing file then no change
+	assert.Equal(t, 2, len(n.children))
+	assert.Equal(t, "src", n.children[1].name)
+	assert.Equal(t, false, n.children[1].isFile)
+	assert.Equal(t, 1, len(n.children[1].children))
+
+	fname = "src/file3.txt"
+	n.addFile(fname)
+	assert.Equal(t, 2, len(n.children))
+	assert.Equal(t, "src", n.children[1].name)
+	assert.Equal(t, false, n.children[1].isFile)
+	assert.Equal(t, 2, len(n.children[1].children))
+	assert.Equal(t, "file2.txt", n.children[1].children[0].name)
+	assert.Equal(t, "file3.txt", n.children[1].children[1].name)
+
+	f = n.getFiles("src")
+	assert.Equal(t, 2, len(f))
+	assert.Equal(t, "src/file2.txt", f[0])
+	assert.Equal(t, "src/file3.txt", f[1])
 
 }
 
