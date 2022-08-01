@@ -658,6 +658,66 @@ func TestAddBinary(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.2$`, result)
 }
 
+func TestAddWildcard(t *testing.T) {
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	src := "src@wild.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	srcContents2 := "contents\nappended\n"
+	writeToFile(src, srcContents2)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/src%40wild.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 print -q //import/main/src%40wild.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents1, result)
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/src%40wild.txt#2 - edit change 4 (text+C)\n", result)
+
+	result, err = runCmd("p4 print -q //import/main/src%40wild.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents2, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src%40wild.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrPath .*/1.4.gz`, result)
+
+	result, err = runCmd("p4 changes")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	result, err = runCmd("p4 changes //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	result, err = runCmd("p4 storage //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrRev 1.2`, result)
+	assert.Regexp(t, `lbrRev 1.4`, result)
+}
+
 func TestDeleteFile(t *testing.T) {
 	logger := createLogger()
 

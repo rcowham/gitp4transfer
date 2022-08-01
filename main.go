@@ -295,7 +295,8 @@ func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
 	if gf.action == delete || gf.action == rename {
 		return nil
 	}
-	rootDir := fmt.Sprintf("%s/%s,d", depotRoot, gf.depotFile[2:])
+	depotFile := strings.ReplaceAll(gf.depotFile[2:], "@", "%40")
+	rootDir := fmt.Sprintf("%s/%s,d", depotRoot, depotFile)
 	err := os.MkdirAll(rootDir, 0755)
 	if err != nil {
 		panic(err)
