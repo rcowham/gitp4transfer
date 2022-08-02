@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 )
 
 // Example of journal records written for 2004.1
@@ -277,6 +278,9 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 
 	const md5 = "00000000000000000000000000000000"
 	lbrType := fileType
+
+	depotFile = strings.ReplaceAll(depotFile, "@", "%40")
+	lbrFile = strings.ReplaceAll(lbrFile, "@", "%40")
 
 	// @pv@ 3 @db.rev@ @//import/trunk/src/file.txt@ 1 1 0 1 1363872228 1363872228 00000000000000000000000000000000 @//import/trunk/src/file.txt@ @1.1@ 1
 	_, err := fmt.Fprintf(j.w,
