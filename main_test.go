@@ -1028,6 +1028,30 @@ func TestNode(t *testing.T) {
 	assert.Equal(t, "src/file2.txt", f[0])
 	assert.Equal(t, "src/file3.txt", f[1])
 
+	assert.True(t, n.findFile("src/file2.txt"))
+	assert.False(t, n.findFile("src/file99.txt"))
+	assert.False(t, n.findFile("file99.txt"))
+}
+
+func TestBigNode(t *testing.T) {
+	n := &Node{name: ""}
+	files := `Env/Assets/ArtEnv/Cookies/cookie.png
+Env/Assets/ArtEnv/Cookies/cookie.png/cookie.png.meta
+Env/Assets/Art/Structure/Universal.meta
+Env/Assets/Art/Structure/Universal/Bunker.meta`
+
+	for _, f := range strings.Split(files, "\n") {
+		n.addFile(f)
+	}
+	assert.True(t, n.findFile("Env/Assets/Art/Structure/Universal/Bunker.meta"))
+	assert.True(t, n.findFile("Env/Assets/Art/Structure/Universal.meta"))
+	assert.False(t, n.findFile("src/file99.txt"))
+	assert.False(t, n.findFile("file99.txt"))
+	f := n.getFiles("Env/Assets/Art/Structure")
+	assert.Equal(t, 2, len(f))
+	assert.Equal(t, "Env/Assets/Art/Structure/Universal.meta", f[0])
+	assert.Equal(t, "Env/Assets/Art/Structure/Universal/Bunker.meta", f[1])
+
 }
 
 // func TestBranchMerge(t *testing.T) {

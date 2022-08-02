@@ -43,6 +43,7 @@ type GitParserOptions struct {
 	extractFiles  bool
 	archiveRoot   string
 	createJournal bool
+	dryRun        bool
 	importDepot   string
 	importPath    string // After depot and branch
 	defaultBranch string
@@ -109,18 +110,17 @@ func (n *Node) getFiles(dirName string) []string {
 		if n.name == parts[0] {
 			files = append(files, n.getChildFiles()...)
 			return files
-		} else if n.name == "" {
-			for _, c := range n.children {
-				if c.name == parts[0] {
-					if c.isFile {
-						files = append(files, c.path)
-					} else {
-						files = append(files, c.getChildFiles()...)
-					}
+		}
+		for _, c := range n.children {
+			if c.name == parts[0] {
+				if c.isFile {
+					files = append(files, c.path)
+				} else {
+					files = append(files, c.getChildFiles()...)
 				}
 			}
-			return files
 		}
+		return files
 	} else {
 		for _, c := range n.children {
 			if c.name == parts[0] {
@@ -129,6 +129,21 @@ func (n *Node) getFiles(dirName string) []string {
 		}
 	}
 	return files
+}
+
+func (n *Node) findFile(fileName string) bool {
+	parts := strings.Split(fileName, "/")
+	dir := ""
+	if len(parts) > 1 {
+		dir = strings.Join(parts[:len(parts)-1], "/")
+	}
+	files := n.getFiles(dir)
+	for _, f := range files {
+		if f == fileName {
+			return true
+		}
+	}
+	return false
 }
 
 // Performs simple hash
@@ -623,6 +638,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
 	var currCommit *GitCommit
 
+	missingRenameLogged := false
 	node := &Node{name: ""}
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
@@ -633,30 +649,30 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			cmd, err := f.ReadCmd()
 			if err != nil {
 				if err != io.EOF {
-					g.logger.Errorf("ERROR: Failed to read cmd: %v\n", err)
+					g.logger.Errorf("ERROR: Failed to read cmd: %v", err)
 				}
 				break
 			}
 			switch cmd.(type) {
 			case libfastimport.CmdBlob:
 				blob := cmd.(libfastimport.CmdBlob)
-				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
+				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify}
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
-				g.logger.Debugf("Reset: - %+v\n", reset)
+				g.logger.Debugf("Reset: - %+v", reset)
 			case libfastimport.CmdCommit:
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
-				g.logger.Debugf("Commit:  %+v\n", commit)
+				g.logger.Debugf("Commit:  %+v", commit)
 				currCommit = newGitCommit(&commit, 0)
 				g.commits[commit.Mark] = currCommit
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
-				g.logger.Debugf("CommitEnd:  %+v\n", commit)
+				g.logger.Debugf("CommitEnd: %+v", commit)
 			case libfastimport.FileModify:
 				f := cmd.(libfastimport.FileModify)
-				g.logger.Debugf("FileModify:  %+v\n", f)
+				g.logger.Debugf("FileModify: %+v", f)
 				oid, err := getOID(f.DataRef)
 				if err != nil {
 					g.logger.Errorf("Failed to get oid: %+v", f)
@@ -666,44 +682,58 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 					gf.name = f.Path.String()
 					currCommit.files = append(currCommit.files, *gf)
 					node.addFile(gf.name)
+				} else {
+					g.logger.Errorf("Failed to find blob: %+v", f)
 				}
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
-				g.logger.Debugf("FileDelete: Path:%s\n", f.Path)
+				g.logger.Debugf("FileDelete: Path:%s", f.Path)
 				gf := &GitFile{name: f.Path.String(), action: delete}
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
-				g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
+				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
 				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
-				g.logger.Debugf("FileRename: Src:%s Dst:%s\n", f.Src, f.Dst)
-				// Look for renames of dirs
-				files := node.getFiles(f.Src.String())
-				if len(files) == 1 && files[0] == string(f.Src) {
+				g.logger.Debugf("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
+				// Look for renames of dirs vs files
+				if node.findFile(f.Src.String()) {
 					gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename}
 					currCommit.files = append(currCommit.files, *gf)
-				} else if len(files) > 0 {
-					g.logger.Debugf("DirRename: Src:%s Dst:%s\n", f.Src, f.Dst)
-					for _, rf := range files {
-						if !hasPrefix(rf, f.Src.String()) {
-							g.logger.Errorf("Unexpected src found: %s: %s\n", f.Src.String(), rf)
-							continue
+				} else {
+					files := node.getFiles(f.Src.String())
+					if len(files) > 0 {
+						g.logger.Debugf("DirRename: Src:%s Dst:%s", f.Src, f.Dst)
+						for _, rf := range files {
+							if !hasPrefix(rf, f.Src.String()) {
+								g.logger.Errorf("Unexpected src found: %s: %s", f.Src.String(), rf)
+								continue
+							}
+							dest := fmt.Sprintf("%s%s", f.Dst.String(), rf[len(f.Src.String()):])
+							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
+							gf := &GitFile{name: dest, srcName: rf, action: rename}
+							currCommit.files = append(currCommit.files, *gf)
 						}
-						dest := fmt.Sprintf("%s%s", f.Dst.String(), rf[len(f.Src.String()):])
-						g.logger.Debugf("DirFileRename: Src:%s Dst:%s\n", rf, dest)
-						gf := &GitFile{name: dest, srcName: rf, action: rename}
-						currCommit.files = append(currCommit.files, *gf)
+					} else {
+						g.logger.Errorf("FileRenameMissing: Src:%s Dst:%s", f.Src.String(), f.Dst.String())
+						if g.logger.IsLevelEnabled(logrus.DebugLevel) && !missingRenameLogged {
+							missingRenameLogged = true // only do it once
+							nodeFiles := node.getFiles("")
+							g.logger.Debugf("nodeFiles:")
+							for _, s := range nodeFiles {
+								g.logger.Debug(s)
+							}
+						}
 					}
 				}
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
-				g.logger.Debugf("CmdTag: %+v\n", t)
+				g.logger.Debugf("CmdTag: %+v", t)
 			default:
-				g.logger.Errorf("Not handled: Found cmd %+v\n", cmd)
-				g.logger.Errorf("Cmd type %T\n", cmd)
+				g.logger.Errorf("Not handled: Found cmd %+v", cmd)
+				g.logger.Errorf("Cmd type %T", cmd)
 			}
 		}
 		g.processCommit(currCommit)
@@ -747,6 +777,10 @@ func main() {
 			"dump.archives",
 			"Saving the contained archive contents if --dump is specified.",
 		).Short('a').Bool()
+		dryrun = kingpin.Flag(
+			"dryrun",
+			"Don't actually create archive files.",
+		).Bool()
 		archive = kingpin.Flag(
 			"archive.root",
 			"Archive root dir under which to store extracted archives.",
@@ -780,6 +814,7 @@ func main() {
 		importDepot:   *importDepot,
 		archiveRoot:   *archive,
 		defaultBranch: *defaultBranch,
+		dryRun:        *dryrun,
 	}
 
 	if *dump {
@@ -802,7 +837,9 @@ func main() {
 	for c := range commitChan {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.WriteFile(opts.archiveRoot, c.commit.Mark)
+			if !*dryrun {
+				f.WriteFile(opts.archiveRoot, c.commit.Mark)
+			}
 			f.WriteJournal(&j, &c)
 		}
 	}
