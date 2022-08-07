@@ -361,7 +361,8 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 		j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
 	} else if gf.action == rename {
 		j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.depotFile, chgNo, dt)
-		j.WriteRev(gf.depotFile, gf.srcRev-1, journal.Add, gf.fileType, chgNo, gf.srcDepotFile, gf.srcLbrRev, dt)
+		j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.srcDepotFile, gf.srcLbrRev, dt)
+		// TODO - don't use 0 for startfromRev, startToRev
 		j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 	}
 }
@@ -702,6 +703,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				if node.findFile(f.Src.String()) {
 					gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename}
 					currCommit.files = append(currCommit.files, *gf)
+					node.addFile(gf.name)
 				} else {
 					files := node.getFiles(f.Src.String())
 					if len(files) > 0 {
@@ -715,6 +717,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
 							gf := &GitFile{name: dest, srcName: rf, action: rename}
 							currCommit.files = append(currCommit.files, *gf)
+							node.addFile(gf.name)
 						}
 					} else {
 						g.logger.Errorf("FileRenameMissing: Src:%s Dst:%s", f.Src.String(), f.Dst.String())
