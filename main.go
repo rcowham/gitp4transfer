@@ -220,8 +220,9 @@ func (gc *GitCommit) writeCommit(j *journal.Journal) {
 type CommitMap map[int]*GitCommit
 type FileMap map[int]*GitFile
 type RevChange struct { // Struct to remember revs and changes per depotFile
-	rev   int
-	chgNo int
+	rev    int
+	chgNo  int
+	action GitAction
 }
 
 // GitP4Transfer - Transfer via git fast-export file
@@ -545,12 +546,24 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 	}
 }
 
+// Is current head rev a deleted rev?
+func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
+	if gf.srcDepotFile == "" {
+		return false
+	}
+	if f, ok := g.depotFileRevs[gf.srcDepotFile]; ok {
+		return f.action == delete
+	}
+	return false
+}
+
 // Maintain a list of latest revision counters indexed by depotFile
 func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
-		g.depotFileRevs[gf.depotFile] = &RevChange{0, chgNo}
+		g.depotFileRevs[gf.depotFile] = &RevChange{0, chgNo, gf.action}
 	}
 	g.depotFileRevs[gf.depotFile].rev += 1
+	g.depotFileRevs[gf.depotFile].action = gf.action
 	isRename := (gf.action == rename)
 	gf.rev = g.depotFileRevs[gf.depotFile].rev
 	if gf.rev == 1 && gf.action == modify {
@@ -565,6 +578,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		}
 		if isRename { // Rename means old file is being deleted
 			g.depotFileRevs[gf.srcDepotFile].rev += 1
+			g.depotFileRevs[gf.srcDepotFile].action = delete
 			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 			gf.srcLbrRev = g.depotFileRevs[gf.srcDepotFile].chgNo
 			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev-1)
@@ -591,22 +605,31 @@ func (g *GitP4Transfer) getDepotFileTypes(depotFile string, rev int) journal.Fil
 	return g.depotFileTypes[k]
 }
 
+func (g *GitP4Transfer) setBranch(currCommit *GitCommit) string {
+	// Sets the branch for the current commit, using its parent if not otherwise specified
+	prevBranch := ""
+	if currCommit == nil {
+		return prevBranch
+	}
+	if currCommit.commit.From != "" {
+		if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
+			parent := g.commits[intVar]
+			if currCommit.branch == "" {
+				currCommit.branch = parent.branch
+			}
+			if currCommit.branch != parent.branch {
+				prevBranch = parent.branch
+			}
+		}
+	} else if currCommit.branch == "" {
+		currCommit.branch = g.opts.defaultBranch
+	}
+	return prevBranch
+}
+
 func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
 	if currCommit != nil { // Process previous commit
-		prevBranch := ""
-		if currCommit.commit.From != "" {
-			if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
-				parent := g.commits[intVar]
-				if currCommit.branch == "" {
-					currCommit.branch = parent.branch
-				}
-				if currCommit.branch != parent.branch {
-					prevBranch = parent.branch
-				}
-			}
-		} else if currCommit.branch == "" {
-			currCommit.branch = g.opts.defaultBranch
-		}
+		prevBranch := g.setBranch(currCommit)
 		for i := range currCommit.files {
 			currCommit.files[i].setDepotPaths(g.opts, currCommit.branch, prevBranch)
 			currCommit.files[i].updateFileDetails()
@@ -716,8 +739,15 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							dest := fmt.Sprintf("%s%s", f.Dst.String(), rf[len(f.Src.String()):])
 							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
 							gf := &GitFile{name: dest, srcName: rf, action: rename}
-							currCommit.files = append(currCommit.files, *gf)
-							node.addFile(gf.name)
+							// Have to set up depot paths to be able to look up deleted files.
+							prevBranch := g.setBranch(currCommit)
+							gf.setDepotPaths(g.opts, currCommit.branch, prevBranch)
+							if g.isSrcDeletedFile(gf) {
+								g.logger.Debugf("DirFileRenameIgnoreDeleted: Src:%s", rf)
+							} else {
+								currCommit.files = append(currCommit.files, *gf)
+								node.addFile(gf.name)
+							}
 						}
 					} else {
 						g.logger.Errorf("FileRenameMissing: Src:%s Dst:%s", f.Src.String(), f.Dst.String())

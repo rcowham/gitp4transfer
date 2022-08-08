@@ -874,6 +874,7 @@ func TestRename2(t *testing.T) {
 }
 
 func TestRenameDir(t *testing.T) {
+	// Git rename of a dir consisting of multiple files - expand to constituent parts
 	logger := createLogger()
 
 	d := createGitRepo(t)
@@ -942,6 +943,73 @@ func TestRenameDir(t *testing.T) {
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Regexp(t, `lbrType text\+C`, result)
 	assert.Regexp(t, `lbrFile //import/main/src/file.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
+}
+
+func TestRenameDirWithDelete(t *testing.T) {
+	// Similar to TestRenameDir but with a deleted file that should not be renamed.
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src1 := filepath.Join("src", "file.txt")
+	src2 := filepath.Join("src", "file2.txt")
+	srcContents1 := "contents\n"
+	runCmd("mkdir src")
+	writeToFile(src1, srcContents1)
+	writeToFile(src2, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("rm " + src1)
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
+	runCmd("git mv src targ")
+	runCmd("git add .")
+	runCmd("git commit -m moved-dir")
+
+	// fast-export with rename detection implemented - to tweak to directory rename
+	output, err := runCmd("git fast-export --all -M")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Output: %s", output)
+	lines := strings.Split(output, "\n")
+	logger.Debugf("Len: %d", len(lines))
+	newLines := lines[:len(lines)-4]
+	logger.Debugf("Len new: %d", len(newLines))
+	newLines = append(newLines, "R src targ")
+	newLines = append(newLines, "")
+	newOutput := strings.Join(newLines, "\n")
+	logger.Debugf("Changed output: %s", newOutput)
+
+	r := runTransferWithDump(t, logger, newOutput)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/file.txt#1 - add change 2 (text+C)
+//import/main/src/file2.txt#1 - add change 2 (text+C)
+`, result)
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/file.txt#2 - delete change 3 (text)
+//import/main/src/file2.txt#2 - delete change 4 (text+C)
+//import/main/targ/file2.txt#1 - add change 4 (text+C)
+`,
+		result) // TODO - fix filetype
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 fstat -Ob //import/main/targ/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/main/src/file2.txt`, result)
 	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
 }
 
