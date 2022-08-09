@@ -752,7 +752,7 @@ func TestDeleteFile(t *testing.T) {
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, "//import/main/src.txt#2 - delete change 3 (text)\n", result)
+	assert.Equal(t, "//import/main/src.txt#2 - delete change 3 (text+C)\n", result)
 
 	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#2")
 	assert.Equal(t, nil, err)
@@ -995,7 +995,7 @@ func TestRenameDirWithDelete(t *testing.T) {
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/main/src/file.txt#2 - delete change 3 (text)
+	assert.Equal(t, `//import/main/src/file.txt#2 - delete change 3 (text+C)
 //import/main/src/file2.txt#2 - delete change 4 (text+C)
 //import/main/targ/file2.txt#1 - add change 4 (text+C)
 `,

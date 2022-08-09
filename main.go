@@ -562,6 +562,9 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
 		g.depotFileRevs[gf.depotFile] = &RevChange{0, chgNo, gf.action}
 	}
+	if gf.action == delete {
+		gf.fileType = g.getDepotFileTypes(gf.depotFile, g.depotFileRevs[gf.depotFile].rev)
+	}
 	g.depotFileRevs[gf.depotFile].rev += 1
 	g.depotFileRevs[gf.depotFile].action = gf.action
 	isRename := (gf.action == rename)
