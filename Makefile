@@ -21,7 +21,7 @@ build:
 dist:
 	GOOS=darwin GOARCH=amd64 go build -o bin/${BINARY}-darwin-amd64 ${LDFLAGS}
 	GOOS=linux GOARCH=amd64 go build -o bin/${BINARY}-linux-amd64 ${LDFLAGS}
-	GOOS=windows GOARCH=amd64 go build -o bin/${BINARY}-windows-amd64 ${LDFLAGS}
+	GOOS=windows GOARCH=amd64 go build -o bin/${BINARY}-windows-amd64.exe ${LDFLAGS}
 	rm -f bin/${BINARY}*amd64*.gz
 	-chmod +x bin/${BINARY}*amd64*
 	gzip bin/${BINARY}*amd64*
