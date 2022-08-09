@@ -762,6 +762,61 @@ func TestDeleteFile(t *testing.T) {
 
 }
 
+func TestDeleteAdd(t *testing.T) {
+	// Delete a file and add back again
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("rm " + src)
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
+	srcContents2 := "contents2\n"
+	writeToFile(src, srcContents2)
+	runCmd("git add .")
+	runCmd("git commit -m added-back")
+
+	runTransfer(t, logger)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/src.txt#3 - add change 5 (text+C)\n", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.NotRegexp(t, `lbrType text`, result)
+	assert.NotRegexp(t, `(?m)lbrPath `, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.5.gz$`, result)
+
+}
+
 func TestRename(t *testing.T) {
 	logger := createLogger()
 
@@ -999,7 +1054,7 @@ func TestRenameDirWithDelete(t *testing.T) {
 //import/main/src/file2.txt#2 - delete change 4 (text+C)
 //import/main/targ/file2.txt#1 - add change 4 (text+C)
 `,
-		result) // TODO - fix filetype
+		result)
 
 	result, err = runCmd("p4 verify -qu //...")
 	assert.Equal(t, "", result)

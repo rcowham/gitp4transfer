@@ -52,7 +52,8 @@ type GitParserOptions struct {
 type GitAction int
 
 const (
-	modify GitAction = iota
+	unknown GitAction = iota
+	modify
 	delete
 	copy
 	rename
@@ -559,6 +560,7 @@ func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
 
 // Maintain a list of latest revision counters indexed by depotFile
 func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
+	prevAction := unknown
 	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
 		g.depotFileRevs[gf.depotFile] = &RevChange{0, chgNo, gf.action}
 	}
@@ -566,11 +568,17 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		gf.fileType = g.getDepotFileTypes(gf.depotFile, g.depotFileRevs[gf.depotFile].rev)
 	}
 	g.depotFileRevs[gf.depotFile].rev += 1
+	if g.depotFileRevs[gf.depotFile].rev > 1 {
+		prevAction = g.depotFileRevs[gf.depotFile].action
+	}
 	g.depotFileRevs[gf.depotFile].action = gf.action
 	isRename := (gf.action == rename)
 	gf.rev = g.depotFileRevs[gf.depotFile].rev
-	if gf.rev == 1 && gf.action == modify {
-		gf.p4action = journal.Add
+	if gf.action == modify {
+		// modify defaults to edit, except when first rev or previously deleted
+		if gf.rev == 1 || prevAction == delete {
+			gf.p4action = journal.Add
+		}
 	}
 	if gf.srcName == "" {
 		g.updateDepotFileTypes(gf)
