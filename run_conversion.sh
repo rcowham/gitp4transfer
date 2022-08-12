@@ -76,7 +76,12 @@ if [[ -z $P4Root ]]; then
 fi
 mkdir -p "$P4Root/$ImportDepot" || die "Failed to mkdir $P4Root/$ImportDepot"
 
-./gitp4transfer --archive.root="$P4Root" --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+DebugFlag=""
+if [[ $Debug -ne 0 ]]; then
+    DebugFlag="--debug 1"
+fi
+
+./gitp4transfer --archive.root="$P4Root" $DebugFlag --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
 pushd "$P4Root"
 
