@@ -659,6 +659,40 @@ func TestAddBinary(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.2$`, result)
 }
 
+func TestAddEmpty(t *testing.T) {
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	writeToFile(src, "")
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	runTransfer(t, logger)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
+
+	result, err = runCmd("p4 fstat -Ol //import/main/src.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `fileSize 0`, result)
+}
+
 func TestAddWildcard(t *testing.T) {
 	logger := createLogger()
 
@@ -1366,3 +1400,65 @@ Env/Assets/Art/Structure/Universal/Bunker.meta`
 // 	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/file1.txt#1`, result)
 
 // }
+
+func TestBranch2(t *testing.T) {
+	// Multiple branches
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.txt"
+	file2 := "file2.txt"
+	contents1 := ""
+	writeToFile(file1, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git switch -c dev")
+	writeToFile(file2, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m 'changed on dev'")
+	runCmd("git switch -c dev2")
+	writeToFile(file2, ".")
+	runCmd("git add .")
+	runCmd("git commit -m 'changed on dev2'")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/file2.txt#1 - add change 3 (text+C)
+//import/dev2/file2.txt#1 - add change 5 (text+C)
+//import/main/file1.txt#1 - add change 2 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	// result, err = runCmd("p4 print -q //import/main/file1.txt#1")
+	// assert.Equal(t, nil, err)
+	// assert.Equal(t, contents1, result)
+
+	// result, err = runCmd("p4 print -q //import/dev/file1.txt#1")
+	// assert.Equal(t, nil, err)
+	// assert.Equal(t, contents2, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/dev/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/dev/file2.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.3.gz$`, result)
+
+	result, err = runCmd("p4 filelog //import/dev/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/dev/file2.txt`, result)
+	assert.Regexp(t, `\.\.\. #1 change 3 add on .* by git-user@git-client`, result)
+	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client (text+C) 'changed on dev '`, result)
+	assert.Regexp(t, `\.\.\. \.\.\. edit into //import/dev2/file2.txt#1`, result)
+
+}

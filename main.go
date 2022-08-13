@@ -593,7 +593,13 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	} else {
 		gf.p4action = journal.Add
 		if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
-			panic(fmt.Sprintf("Expected to find %s", gf.srcDepotFile))
+			// A copy or branch without a source file just becomes new file added on branch
+			g.logger.Debugf("Copy/branch becomes add: %s/%s", gf.depotFile, gf.srcDepotFile)
+			gf.srcDepotFile = ""
+			gf.srcName = ""
+			gf.isBranch = false
+			g.updateDepotFileTypes(gf)
+			return
 		}
 		if isRename { // Rename means old file is being deleted
 			g.depotFileRevs[gf.srcDepotFile].rev += 1
@@ -605,12 +611,15 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
 			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 			g.updateDepotFileTypes(gf)
-		} else { // Copy
+		} else { // Copy/branch
 			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
 			if len(gf.blob.Data) == 0 { // Copied but changed
 				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
 				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+			} else {
+				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 			}
 			g.updateDepotFileTypes(gf)
 		}
