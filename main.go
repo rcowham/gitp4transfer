@@ -614,7 +614,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		} else { // Copy/branch
 			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
-			if len(gf.blob.Data) == 0 { // Copied but changed
+			if gf.blob != nil && len(gf.blob.Data) == 0 { // Copied but changed
 				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
 				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
 			} else {
