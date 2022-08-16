@@ -104,6 +104,18 @@ func writeToFile(fname, contents string) {
 	}
 }
 
+func appendToFile(fname, contents string) {
+	f, err := os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	fmt.Fprint(f, contents)
+	if err != nil {
+		panic(err)
+	}
+}
+
 func writeToTempFile(contents string) string {
 	f, err := os.CreateTemp("", "*.txt")
 	if err != nil {
@@ -1460,5 +1472,67 @@ func TestBranch2(t *testing.T) {
 	assert.Regexp(t, `\.\.\. #1 change 3 add on .* by git-user@git-client`, result)
 	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client (text+C) 'changed on dev '`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. edit into //import/dev2/file2.txt#1`, result)
+
+}
+
+func TestBranchMerge(t *testing.T) {
+	// Merge branches
+	logger := createLogger()
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.txt"
+	file2 := "file2.txt"
+	contents1 := "Contents\n"
+	contents2 := "Test content2\n"
+	writeToFile(file1, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m \"1: first change\"")
+	runCmd("git checkout -b branch1")
+	runCmd("git add .")
+	bcontents1 := "branch change\n"
+	appendToFile(file1, bcontents1)
+	runCmd("git add .")
+	runCmd("git commit -m \"2: branch edit change\"")
+	runCmd("git checkout main")
+	writeToFile(file2, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m \"3: new file on main\"")
+	runCmd("git merge --no-edit branch1")
+	runCmd("git commit -m \"4: merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/branch1/file1.txt#2 - edit change 6 (text+C)
+//import/main/file1.txt#1 - add change 7 (text+C)
+//import/main/file2.txt#1 - add change 4 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 filelog //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `(?m)//import/branch1/file1.txt
+\.\.\. #2 change 6 edit on .* by git-user@git-client \(text\+C\).*
+\.\.\. #1 change 2 add on .* by git-user@git-client \(text\+C\)`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file1.txt
+\.\.\. #1 change 7 add on .* by git-user@git-client \(text\+C\).*`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file2.txt
+\.\.\. #1 change 4 add on .* by git-user@git-client \(text\+C\).*`, result)
+
+	result, err = runCmd("p4 print -q //import/main/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents2, result)
 
 }

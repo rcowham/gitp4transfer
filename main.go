@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/h2non/filetype"
@@ -174,23 +175,32 @@ func writeBlob(rootDir string, blobID int, data *string) {
 
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
-	name         string // Git filename (target for rename/copy)
-	size         int
-	depotFile    string // Full depot path
-	rev          int    // Depot rev
-	lbrRev       int    // Lbr rev - usually same as Depot rev
-	lbrFile      string // Lbr file - usually same as Depot file
-	srcName      string // Name of git source file for rename/copy
-	srcDepotFile string //   "
-	srcRev       int    //   "
-	archiveFile  string
-	action       GitAction
-	p4action     journal.FileAction
-	targ         string // For use with copy/move
-	isBranch     bool
-	fileType     journal.FileType
-	compressed   bool
-	blob         *libfastimport.CmdBlob
+	name            string // Git filename (target for rename/copy)
+	size            int
+	depotFile       string // Full depot path
+	rev             int    // Depot rev
+	lbrRev          int    // Lbr rev - usually same as Depot rev
+	lbrFile         string // Lbr file - usually same as Depot file
+	srcName         string // Name of git source file for rename/copy
+	srcDepotFile    string //   "
+	srcRev          int    //   "
+	archiveFile     string
+	action          GitAction
+	p4action        journal.FileAction
+	targ            string // For use with copy/move
+	isBranch        bool
+	fileType        journal.FileType
+	compressed      bool
+	blob            *libfastimport.CmdBlob
+	blobDataRemoved bool
+	mutex           sync.Mutex
+	logger          *logrus.Logger
+}
+
+type FileToWrite struct {
+	gf        *GitFile
+	depotRoot string
+	changeNo  int
 }
 
 // GitCommit - A git commit
@@ -317,6 +327,13 @@ func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
 	}
 	depotFile := strings.ReplaceAll(gf.depotFile[2:], "@", "%40")
 	rootDir := fmt.Sprintf("%s/%s,d", depotRoot, depotFile)
+	gf.logger.Debugf("WriteFile: %s/1.%d", rootDir, changeNo)
+	if gf.blob == nil || gf.blobDataRemoved {
+		gf.logger.Debugf("NoBlobFound")
+		return nil
+	}
+	// gf.mutex.Lock()
+	// defer gf.mutex.Unlock()
 	err := os.MkdirAll(rootDir, 0755)
 	if err != nil {
 		panic(err)
@@ -347,6 +364,8 @@ func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
 			panic(err)
 		}
 	}
+	gf.blob.Data = "" // Allow contents to be GC'ed
+	gf.blobDataRemoved = true
 	return nil
 }
 
@@ -407,7 +426,7 @@ func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, File
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
 			g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-			gitFiles[blob.Mark] = &GitFile{blob: &blob}
+			gitFiles[blob.Mark] = &GitFile{blob: &blob, logger: g.logger}
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Debugf("Reset: - %+v\n", reset)
@@ -497,7 +516,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 				writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
 			}
 			blob.Data = ""
-			files[blob.Mark] = &GitFile{blob: &blob, size: size}
+			files[blob.Mark] = &GitFile{blob: &blob, size: size, logger: g.logger}
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Infof("Reset: - %+v", reset)
@@ -717,7 +736,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.CmdBlob:
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify}
+				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify, logger: g.logger}
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
@@ -748,19 +767,19 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s", f.Path)
-				gf := &GitFile{name: f.Path.String(), action: delete}
+				gf := &GitFile{name: f.Path.String(), action: delete, logger: g.logger}
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
-				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy}
+				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy, logger: g.logger}
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
 				// Look for renames of dirs vs files
 				if node.findFile(f.Src.String()) {
-					gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename}
+					gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename, logger: g.logger}
 					currCommit.files = append(currCommit.files, *gf)
 					node.addFile(gf.name)
 				} else {
@@ -774,7 +793,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							}
 							dest := fmt.Sprintf("%s%s", f.Dst.String(), rf[len(f.Src.String()):])
 							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
-							gf := &GitFile{name: dest, srcName: rf, action: rename}
+							gf := &GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}
 							// Have to set up depot paths to be able to look up deleted files.
 							prevBranch := g.setBranch(currCommit)
 							gf.setDepotPaths(g.opts, currCommit.branch, prevBranch)
@@ -810,6 +829,13 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	return g.gitChan
 }
+
+// func fileWorker(files <-chan *FileToWrite) {
+// 	for f := range files {
+// 		gf := f.gf
+// 		gf.WriteFile(f.depotRoot, f.changeNo)
+// 	}
+// }
 
 func main() {
 	// Tracing code
@@ -903,14 +929,22 @@ func main() {
 	j.SetWriter(f)
 	j.WriteHeader()
 
+	// const numJobs = 5
+	// filesChan := make(chan *FileToWrite, numJobs)
+	// for w := 1; w <= 4; w++ {
+	// 	go fileWorker(filesChan)
+	// }
+
 	for c := range commitChan {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
 				f.WriteFile(opts.archiveRoot, c.commit.Mark)
+				// filesChan <- &FileToWrite{gf: &f, depotRoot: opts.archiveRoot, changeNo: c.commit.Mark}
 			}
 			f.WriteJournal(&j, &c)
 		}
 	}
+	// close(filesChan)
 
 }
