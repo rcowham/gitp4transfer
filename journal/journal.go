@@ -225,6 +225,8 @@ func (j *Journal) WriteHeader() {
 
 func (j *Journal) WriteChange(chgNo int, description string, chgTime int) {
 
+	description = strings.ReplaceAll(description, "@", "@@")
+
 	_, err := fmt.Fprintf(j.w, "@pv@ 0 @db.desc@ %d @%s@ \n", chgNo, description)
 	if err != nil {
 		panic(err)
@@ -327,6 +329,9 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 
 func (j *Journal) WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
 	how IntegHow, reverseHow IntegHow, chgNo int) {
+
+	toFile = strings.ReplaceAll(toFile, "@", "%40")
+	fromFile = strings.ReplaceAll(fromFile, "@", "%40")
 
 	// @pv@ 0 @db.integed@ @//stream/dev/fred.txt@ @//stream/main/fred.txt@ 0 1 0 1 2 2
 	// @pv@ 0 @db.integed@ @//stream/main/fred.txt@ @//stream/dev/fred.txt@ 0 1 0 1 3 2
