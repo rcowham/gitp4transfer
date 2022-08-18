@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/h2non/filetype"
@@ -189,11 +188,11 @@ type GitFile struct {
 	p4action        journal.FileAction
 	targ            string // For use with copy/move
 	isBranch        bool
+	isMerge         bool
 	fileType        journal.FileType
 	compressed      bool
 	blob            *libfastimport.CmdBlob
 	blobDataRemoved bool
-	mutex           sync.Mutex
 	logger          *logrus.Logger
 }
 
@@ -205,10 +204,12 @@ type FileToWrite struct {
 
 // GitCommit - A git commit
 type GitCommit struct {
-	commit     *libfastimport.CmdCommit
-	branch     string // branch name
-	commitSize int    // Size of all files in this commit - useful for memory sizing
-	files      []GitFile
+	commit      *libfastimport.CmdCommit
+	branch      string // branch name
+	prevBranch  string // set if first commit on new branch
+	mergeBranch string // set if commit is a merge - assumes only 1 merge candidate!
+	commitSize  int    // Size of all files in this commit - useful for memory sizing
+	files       []GitFile
 }
 
 // HasPrefix tests whether the string s begins with prefix.
@@ -266,14 +267,18 @@ func (gf *GitFile) getDepotPath(opts GitParserOptions, branch string, name strin
 	}
 }
 
-func (gf *GitFile) setDepotPaths(opts GitParserOptions, branch string, prevBranch string) {
-	gf.depotFile = gf.getDepotPath(opts, branch, gf.name)
+func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
+	gf.depotFile = gf.getDepotPath(opts, gc.branch, gf.name)
 	if gf.srcName != "" {
-		gf.srcDepotFile = gf.getDepotPath(opts, branch, gf.srcName)
-	} else if prevBranch != "" {
+		gf.srcDepotFile = gf.getDepotPath(opts, gc.branch, gf.srcName)
+	} else if gc.prevBranch != "" {
 		gf.srcName = gf.name
 		gf.isBranch = true
-		gf.srcDepotFile = gf.getDepotPath(opts, prevBranch, gf.srcName)
+		gf.srcDepotFile = gf.getDepotPath(opts, gc.prevBranch, gf.srcName)
+	} else if gc.mergeBranch != "" {
+		gf.srcName = gf.name
+		gf.isMerge = true
+		gf.srcDepotFile = gf.getDepotPath(opts, gc.mergeBranch, gf.srcName)
 	}
 }
 
@@ -374,7 +379,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	dt := int(c.commit.Author.Time.Unix())
 	chgNo := c.commit.Mark
 	if gf.action == modify {
-		if gf.isBranch {
+		if gf.isBranch || gf.isMerge {
 			// we write rev for newly branched depot file, with link to old version
 			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
 			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
@@ -613,7 +618,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		gf.p4action = journal.Add
 		if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
 			// A copy or branch without a source file just becomes new file added on branch
-			g.logger.Debugf("Copy/branch becomes add: %s/%s", gf.depotFile, gf.srcDepotFile)
+			g.logger.Debugf("Copy/branch becomes add: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
 			gf.srcDepotFile = ""
 			gf.srcName = ""
 			gf.isBranch = false
@@ -660,11 +665,10 @@ func (g *GitP4Transfer) getDepotFileTypes(depotFile string, rev int) journal.Fil
 	return g.depotFileTypes[k]
 }
 
-func (g *GitP4Transfer) setBranch(currCommit *GitCommit) string {
+func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 	// Sets the branch for the current commit, using its parent if not otherwise specified
-	prevBranch := ""
 	if currCommit == nil {
-		return prevBranch
+		return
 	}
 	if currCommit.commit.From != "" {
 		if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
@@ -673,20 +677,33 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) string {
 				currCommit.branch = parent.branch
 			}
 			if currCommit.branch != parent.branch {
-				prevBranch = parent.branch
+				currCommit.prevBranch = parent.branch
 			}
 		}
 	} else if currCommit.branch == "" {
 		currCommit.branch = g.opts.defaultBranch
 	}
-	return prevBranch
+	if len(currCommit.commit.Merge) == 1 {
+		firstMerge := currCommit.commit.Merge[0]
+		if intVar, err := strconv.Atoi(firstMerge[1:]); err == nil {
+			mergeFrom := g.commits[intVar]
+			if mergeFrom.branch != "" {
+				currCommit.mergeBranch = mergeFrom.branch
+			} else {
+				g.logger.Errorf("Merge Commit mark %d has no branch", intVar)
+			}
+		}
+	} else if len(currCommit.commit.Merge) > 1 {
+		// Potential for more than one merge, but we just log an error for now
+		g.logger.Errorf("Commit mark %d has %d merges", currCommit.commit.Mark, len(currCommit.commit.Merge))
+	}
 }
 
 func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
 	if currCommit != nil { // Process previous commit
-		prevBranch := g.setBranch(currCommit)
+		g.setBranch(currCommit)
 		for i := range currCommit.files {
-			currCommit.files[i].setDepotPaths(g.opts, currCommit.branch, prevBranch)
+			currCommit.files[i].setDepotPaths(g.opts, currCommit)
 			currCommit.files[i].updateFileDetails()
 			g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
 		}
@@ -795,8 +812,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
 							gf := &GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}
 							// Have to set up depot paths to be able to look up deleted files.
-							prevBranch := g.setBranch(currCommit)
-							gf.setDepotPaths(g.opts, currCommit.branch, prevBranch)
+							g.setBranch(currCommit)
+							gf.setDepotPaths(g.opts, currCommit)
 							if g.isSrcDeletedFile(gf) {
 								g.logger.Debugf("DirFileRenameIgnoreDeleted: Src:%s", rf)
 							} else {
