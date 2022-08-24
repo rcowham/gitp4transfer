@@ -381,7 +381,11 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	if gf.action == modify {
 		if gf.isBranch || gf.isMerge {
 			// we write rev for newly branched depot file, with link to old version
-			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			action := journal.Add
+			if gf.rev > 1 {
+				action = journal.Edit
+			}
+			j.WriteRev(gf.depotFile, gf.rev, action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
 			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
 		} else {
 			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
@@ -638,15 +642,23 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		} else { // Copy/branch
 			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
-			if gf.blob != nil && len(gf.blob.Data) == 0 { // Copied but changed
+			if (gf.blob != nil && len(gf.blob.Data) == 0) || gf.isMerge { // Copied but changed
 				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
 				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 			} else {
 				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
 				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 			}
 			g.updateDepotFileTypes(gf)
 		}
+		g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d",
+			gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
+			g.depotFileRevs[gf.depotFile].action,
+			g.depotFileRevs[gf.depotFile].lbrFile,
+			g.depotFileRevs[gf.depotFile].lbrRev)
+
 	}
 }
 
@@ -680,7 +692,7 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 				currCommit.prevBranch = parent.branch
 			}
 		}
-	} else if currCommit.branch == "" {
+	} else {
 		currCommit.branch = g.opts.defaultBranch
 	}
 	if len(currCommit.commit.Merge) == 1 {

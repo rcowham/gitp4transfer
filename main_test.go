@@ -1509,8 +1509,8 @@ func TestBranchMerge(t *testing.T) {
 
 	result, err := runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/branch1/file1.txt#2 - edit change 6 (text+C)
-//import/main/file1.txt#1 - add change 7 (text+C)
+	assert.Equal(t, `//import/branch1/file1.txt#1 - add change 6 (text+C)
+//import/main/file1.txt#2 - edit change 7 (text+C)
 //import/main/file2.txt#1 - add change 4 (text+C)
 `,
 		result)
@@ -1522,13 +1522,15 @@ func TestBranchMerge(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `(?m)//import/branch1/file1.txt
-\.\.\. #2 change 6 edit on .* by git-user@git-client \(text\+C\).*
-\.\.\. \.\.\. edit into //import/main/file1.txt#1
-\.\.\. #1 change 2 add on .* by git-user@git-client \(text\+C\)`, result)
+\.\.\. #1 change 6 add on .* by git-user@git-client \(text\+C\).*
+\.\.\. \.\.\. branch from //import/main/file1.txt#1
+\.\.\. \.\.\. edit into //import/main/file1.txt#1,#2`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file1.txt
-\.\.\. #1 change 7 add on .* by git-user@git-client \(text\+C\).*
-\.\.\. \.\.\. branch from //import/branch1/file1.txt#1,#2`, result)
+\.\.\. #2 change 7 edit on .* by git-user@git-client \(text\+C\).*
+\.\.\. \.\.\. branch from //import/branch1/file1.txt#1
+\.\.\. #1 change 2 add on .* by git-user@git-client \(text\+C\).*
+\.\.\. \.\.\. edit into //import/branch1/file1.txt#1`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file2.txt
 \.\.\. #1 change 4 add on .* by git-user@git-client \(text\+C\).*`, result)
@@ -1536,5 +1538,21 @@ func TestBranchMerge(t *testing.T) {
 	result, err = runCmd("p4 print -q //import/main/file2.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, contents2, result)
+
+	bcontents2 := fmt.Sprintf("%s%s", contents1, bcontents1)
+	result, err = runCmd("p4 print -q //import/branch1/file1.txt")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, bcontents2, result)
+
+	result, err = runCmd("p4 print -q //import/main/file1.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, bcontents2, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/file1.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/branch1/file1.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.6.gz$`, result)
 
 }
