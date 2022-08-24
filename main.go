@@ -386,12 +386,17 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 				action = journal.Edit
 			}
 			j.WriteRev(gf.depotFile, gf.rev, action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
+			j.WriteInteg(gf.depotFile, gf.srcDepotFile, gf.srcRev-1, gf.srcRev, gf.rev-1, gf.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
 		} else {
 			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
 		}
 	} else if gf.action == delete {
-		j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+		if gf.isMerge {
+			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteInteg(gf.depotFile, gf.srcDepotFile, gf.srcRev-1, gf.srcRev, gf.rev-1, gf.rev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+		} else {
+			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+		}
 	} else if gf.action == rename {
 		j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
 		j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
@@ -618,14 +623,30 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	}
 	if gf.srcName == "" {
 		g.updateDepotFileTypes(gf)
+	} else if gf.action == delete { // merge of delete
+		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+		gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+		gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 	} else {
-		gf.p4action = journal.Add
+		if gf.action != delete {
+			gf.p4action = journal.Add
+		}
 		if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
-			// A copy or branch without a source file just becomes new file added on branch
-			g.logger.Debugf("Copy/branch becomes add: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
-			gf.srcDepotFile = ""
-			gf.srcName = ""
-			gf.isBranch = false
+			if gf.action == delete {
+				// A delete without a source file just becomes delete
+				g.logger.Debugf("Integ of delete becomes delete: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
+				gf.srcDepotFile = ""
+				gf.srcName = ""
+				gf.isMerge = false
+			} else {
+				// A copy or branch without a source file just becomes new file added on branch
+				g.logger.Debugf("Copy/branch becomes add: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
+				gf.srcDepotFile = ""
+				gf.srcName = ""
+				gf.isBranch = false
+			}
 			g.updateDepotFileTypes(gf)
 			return
 		}
