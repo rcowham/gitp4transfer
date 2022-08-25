@@ -623,12 +623,6 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	}
 	if gf.srcName == "" {
 		g.updateDepotFileTypes(gf)
-	} else if gf.action == delete { // merge of delete
-		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-		gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-		gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 	} else {
 		if gf.action != delete {
 			gf.p4action = journal.Add
@@ -650,7 +644,13 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 			g.updateDepotFileTypes(gf)
 			return
 		}
-		if isRename { // Rename means old file is being deleted
+		if gf.action == delete { // merge of delete
+			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+		} else if isRename { // Rename means old file is being deleted
 			g.depotFileRevs[gf.srcDepotFile].rev += 1
 			g.depotFileRevs[gf.srcDepotFile].action = delete
 			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
