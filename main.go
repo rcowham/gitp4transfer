@@ -284,6 +284,8 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
 
 // Sets compression option and binary/text
 func (gf *GitFile) updateFileDetails() {
+	gf.fileType = journal.CText
+	gf.compressed = true
 	switch gf.action {
 	case delete:
 		gf.p4action = journal.Delete
@@ -302,6 +304,7 @@ func (gf *GitFile) updateFileDetails() {
 	head := []byte(gf.blob.Data[:l])
 	if filetype.IsImage(head) || filetype.IsVideo(head) || filetype.IsArchive(head) || filetype.IsAudio(head) {
 		gf.fileType = journal.UBinary
+		gf.compressed = false
 		return
 	}
 	if filetype.IsDocument(head) {
@@ -309,13 +312,10 @@ func (gf *GitFile) updateFileDetails() {
 		kind, _ := filetype.Match(head)
 		switch kind.Extension {
 		case "docx", "pptx", "xlsx":
+			gf.compressed = false
 			return // no compression
 		}
-		gf.compressed = true
-		return
 	}
-	gf.fileType = journal.CText
-	gf.compressed = true
 }
 
 func getOID(dataref string) (int, error) {
@@ -630,13 +630,13 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
 			if gf.action == delete {
 				// A delete without a source file just becomes delete
-				g.logger.Debugf("Integ of delete becomes delete: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
+				g.logger.Warnf("Integ of delete becomes delete: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
 				gf.srcDepotFile = ""
 				gf.srcName = ""
 				gf.isMerge = false
 			} else {
 				// A copy or branch without a source file just becomes new file added on branch
-				g.logger.Debugf("Copy/branch becomes add: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
+				g.logger.Warnf("Copy/branch becomes add: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
 				gf.srcDepotFile = ""
 				gf.srcName = ""
 				gf.isBranch = false
