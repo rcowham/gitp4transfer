@@ -494,6 +494,7 @@ func runTransfer(t *testing.T, logger *logrus.Logger) string {
 
 func TestAdd(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -582,6 +583,7 @@ func TestAdd(t *testing.T) {
 
 func TestAddEdit(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -642,6 +644,7 @@ func TestAddEdit(t *testing.T) {
 
 func TestAddBinary(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -673,6 +676,7 @@ func TestAddBinary(t *testing.T) {
 
 func TestAddEmpty(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -707,6 +711,7 @@ func TestAddEmpty(t *testing.T) {
 
 func TestAddWildcard(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -767,6 +772,7 @@ func TestAddWildcard(t *testing.T) {
 
 func TestDeleteFile(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -812,6 +818,7 @@ func TestDeleteFile(t *testing.T) {
 func TestDeleteAdd(t *testing.T) {
 	// Delete a file and add back again
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -866,6 +873,7 @@ func TestDeleteAdd(t *testing.T) {
 
 func TestRename(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -918,6 +926,7 @@ func TestRename(t *testing.T) {
 func TestRename2(t *testing.T) {
 	// Rename of a file with 2 revs
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -974,6 +983,7 @@ func TestRename2(t *testing.T) {
 func TestRenameRename(t *testing.T) {
 	// Rename of a file done twice
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -1045,6 +1055,7 @@ func TestRenameRename(t *testing.T) {
 func TestRenameDir(t *testing.T) {
 	// Git rename of a dir consisting of multiple files - expand to constituent parts
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -1118,6 +1129,7 @@ func TestRenameDir(t *testing.T) {
 func TestRenameDirWithDelete(t *testing.T) {
 	// Similar to TestRenameDir but with a deleted file that should not be renamed.
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -1184,6 +1196,7 @@ func TestRenameDirWithDelete(t *testing.T) {
 
 func TestBranch(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -1245,6 +1258,7 @@ func TestBranch(t *testing.T) {
 // TestTag - ensure tags are ignored as branch names
 func TestTag(t *testing.T) {
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -1416,6 +1430,7 @@ Env/Assets/Art/Structure/Universal/Bunker.meta`
 func TestBranch2(t *testing.T) {
 	// Multiple branches
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -1478,6 +1493,7 @@ func TestBranch2(t *testing.T) {
 func TestBranchMerge(t *testing.T) {
 	// Merge branches
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
@@ -1560,6 +1576,7 @@ func TestBranchMerge(t *testing.T) {
 func TestBranchDelete(t *testing.T) {
 	// Merge branches with deleted files
 	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
 	d := createGitRepo(t)
 	os.Chdir(d)
