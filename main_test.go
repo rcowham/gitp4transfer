@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/alitto/pond"
 	"github.com/rcowham/gitp4transfer/journal"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -463,13 +464,16 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) str
 	j := journal.Journal{}
 	j.SetWriter(buf)
 	j.WriteHeader()
+	pool := pond.New(2, 0, pond.MinWorkers(10))
+
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.WriteFile(p4t.serverRoot, c.commit.Mark)
+			f.WriteFile(pool, p4t.serverRoot, c.commit.Mark)
 			f.WriteJournal(&j, &c)
 		}
 	}
+	pool.StopAndWait()
 
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, buf.String())
@@ -561,7 +565,9 @@ func TestAdd(t *testing.T) {
 	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
-	f.WriteFile(p4t.serverRoot, c.commit.Mark)
+	pool := pond.New(2, 0, pond.MinWorkers(10))
+	f.WriteFile(pool, p4t.serverRoot, c.commit.Mark)
+	pool.StopAndWait()
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 	result, err := runCmd("p4 storage -r")

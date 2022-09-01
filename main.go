@@ -11,10 +11,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/alitto/pond"
 	"github.com/h2non/filetype"
 	"github.com/pkg/profile"
 	journal "github.com/rcowham/gitp4transfer/journal"
@@ -329,7 +331,8 @@ func getOID(dataref string) (int, error) {
 }
 
 // WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
-func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
+// Uses a provided pool to get concurrency
+func (gf *GitFile) WriteFile(pool *pond.WorkerPool, depotRoot string, changeNo int) error {
 	if gf.action == delete || gf.action == rename {
 		return nil
 	}
@@ -340,37 +343,48 @@ func (gf *GitFile) WriteFile(depotRoot string, changeNo int) error {
 		gf.logger.Debugf("NoBlobFound")
 		return nil
 	}
-	// gf.mutex.Lock()
-	// defer gf.mutex.Unlock()
-	err := os.MkdirAll(rootDir, 0755)
-	if err != nil {
-		panic(err)
-	}
+	// Do the work in pool worker threads for concurrency, especially with compression
 	if gf.compressed {
-		gf.compressed = true
 		fname := fmt.Sprintf("%s/1.%d.gz", rootDir, changeNo)
-		f, err := os.Create(fname)
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-		zw := gzip.NewWriter(f)
-		defer zw.Close()
-		_, err = zw.Write([]byte(gf.blob.Data))
-		if err != nil {
-			panic(err)
-		}
+		pool.Submit(func(rootDir string, fname string, data string) func() {
+			return func() {
+				err := os.MkdirAll(rootDir, 0755)
+				if err != nil {
+					panic(err)
+				}
+				f, err := os.Create(fname)
+				if err != nil {
+					panic(err)
+				}
+				defer f.Close()
+				zw := gzip.NewWriter(f)
+				defer zw.Close()
+				_, err = zw.Write([]byte(data))
+				if err != nil {
+					panic(err)
+				}
+			}
+		}(rootDir, fname, gf.blob.Data))
 	} else {
 		fname := fmt.Sprintf("%s/1.%d", rootDir, changeNo)
-		f, err := os.Create(fname)
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-		fmt.Fprint(f, gf.blob.Data)
-		if err != nil {
-			panic(err)
-		}
+		pool.Submit(func(rootDir string, fname string, data string) func() {
+			return func() {
+				err := os.MkdirAll(rootDir, 0755)
+				if err != nil {
+					panic(err)
+				}
+				f, err := os.Create(fname)
+				if err != nil {
+					panic(err)
+				}
+				defer f.Close()
+				fmt.Fprint(f, data)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}(rootDir, fname, gf.blob.Data))
+
 	}
 	gf.blob.Data = "" // Allow contents to be GC'ed
 	gf.blobDataRemoved = true
@@ -539,7 +553,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			g.logger.Infof("Reset: - %+v", reset)
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
-			g.logger.Infof("Commit:  %+v", commit)
+			g.logger.Infof("Commit:  %+v, size: %d", commit, commitSize)
 			currCommit = newGitCommit(&commit, commitSize)
 			commitSize = 0
 			commits[commit.Mark] = currCommit
@@ -767,9 +781,10 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	g.opts = options
 
-	g.gitChan = make(chan GitCommit, 100)
+	g.gitChan = make(chan GitCommit, 50)
 	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
 	var currCommit *GitCommit
+	var commitSize = 0
 
 	missingRenameLogged := false
 	node := &Node{name: ""}
@@ -791,6 +806,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify, logger: g.logger}
+				commitSize += len(blob.Data)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
@@ -798,7 +814,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
 				g.logger.Debugf("Commit:  %+v", commit)
-				currCommit = newGitCommit(&commit, 0)
+				currCommit = newGitCommit(&commit, commitSize)
+				commitSize = 0
 				g.commits[commit.Mark] = currCommit
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
@@ -883,13 +900,6 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	return g.gitChan
 }
-
-// func fileWorker(files <-chan *FileToWrite) {
-// 	for f := range files {
-// 		gf := f.gf
-// 		gf.WriteFile(f.depotRoot, f.changeNo)
-// 	}
-// }
 
 func main() {
 	// Tracing code
@@ -996,16 +1006,25 @@ func main() {
 	// 	go fileWorker(filesChan)
 	// }
 
+	// Create an unbuffered (blocking) pool with a fixed
+	// number of workers
+	pondSize := runtime.NumCPU() / 2
+	if pondSize < 1 {
+		pondSize = 1
+	}
+	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
+
 	for c := range commitChan {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
-				f.WriteFile(opts.archiveRoot, c.commit.Mark)
-				// filesChan <- &FileToWrite{gf: &f, depotRoot: opts.archiveRoot, changeNo: c.commit.Mark}
+				f.WriteFile(pool, opts.archiveRoot, c.commit.Mark)
 			}
 			f.WriteJournal(&j, &c)
 		}
 	}
+
+	pool.StopAndWait()
 	// close(filesChan)
 
 }
