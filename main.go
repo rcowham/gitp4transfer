@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"         // profiling only
+	_ "net/http/pprof" // profiling only
 	"os"
 	"path"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 	"time"
 
 	"github.com/h2non/filetype"
+	"github.com/pkg/profile"
 	journal "github.com/rcowham/gitp4transfer/journal"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
@@ -640,6 +643,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 				gf.srcDepotFile = ""
 				gf.srcName = ""
 				gf.isBranch = false
+				gf.isMerge = false
 			}
 			g.updateDepotFileTypes(gf)
 			return
@@ -901,6 +905,13 @@ func main() {
 	// defer trace.Stop()
 	// End of trace code
 	// var err error
+
+	// Turn on profiling
+	defer profile.Start(profile.MemProfile).Stop()
+	go func() {
+		http.ListenAndServe(":8080", nil)
+	}()
+
 	var (
 		gitimport = kingpin.Arg(
 			"gitimport",
