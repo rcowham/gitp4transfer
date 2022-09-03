@@ -469,6 +469,8 @@ func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, File
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
 			g.logger.Debugf("CommitEnd:  %+v\n", commit)
+			g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
+				currCommit.commit.Mark, len(currCommit.files), currCommit.commitSize, Humanize(currCommit.commitSize))
 		case libfastimport.FileModify:
 			f := cmd.(libfastimport.FileModify)
 			g.logger.Debugf("FileModify:  %+v\n", f)
@@ -546,20 +548,22 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			if saveFiles {
 				writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
 			}
-			blob.Data = ""
+			blob.Data = "" // Allow GC to avoid holding on to memory
 			files[blob.Mark] = &GitFile{blob: &blob, size: size, logger: g.logger}
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Infof("Reset: - %+v", reset)
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
-			g.logger.Infof("Commit:  %+v, size: %d", commit, commitSize)
+			g.logger.Infof("Commit:  %+v, size: %d/%s", commit, commitSize, Humanize(commitSize))
 			currCommit = newGitCommit(&commit, commitSize)
 			commitSize = 0
 			commits[commit.Mark] = currCommit
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
 			g.logger.Infof("CommitEnd:  %+v", commit)
+			g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
+				currCommit.commit.Mark, len(currCommit.files), currCommit.commitSize, Humanize(currCommit.commitSize))
 			for _, f := range currCommit.files {
 				extSizes[filepath.Ext(f.name)] += f.size
 			}
@@ -753,6 +757,8 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
 	if currCommit != nil { // Process previous commit
 		g.setBranch(currCommit)
+		g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
+			currCommit.commit.Mark, len(currCommit.files), currCommit.commitSize, Humanize(currCommit.commitSize))
 		for i := range currCommit.files {
 			currCommit.files[i].setDepotPaths(g.opts, currCommit)
 			currCommit.files[i].updateFileDetails()
@@ -1008,10 +1014,10 @@ func main() {
 
 	// Create an unbuffered (blocking) pool with a fixed
 	// number of workers
-	pondSize := runtime.NumCPU() / 2
-	if pondSize < 1 {
-		pondSize = 1
-	}
+	pondSize := runtime.NumCPU()
+	// if pondSize < 1 {
+	// 	pondSize = 1
+	// }
 	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
 
 	for c := range commitChan {
@@ -1019,6 +1025,9 @@ func main() {
 		for _, f := range c.files {
 			if !*dryrun {
 				f.WriteFile(pool, opts.archiveRoot, c.commit.Mark)
+			} else if f.blob != nil && !f.blobDataRemoved {
+				f.blob.Data = "" // Allow contents to be GC'ed
+				f.blobDataRemoved = true
 			}
 			f.WriteJournal(&j, &c)
 		}
