@@ -14,7 +14,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/alitto/pond"
 	"github.com/rcowham/gitp4transfer/journal"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -448,7 +447,8 @@ func createLogger() *logrus.Logger {
 func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) string {
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
-	opts := GitParserOptions{importDepot: "import", defaultBranch: "main"}
+	p4t := MakeP4Test(t.TempDir())
+	opts := GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
 	commitChan := g.GitParse(opts)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
@@ -457,23 +457,22 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) str
 	}
 
 	buf := new(bytes.Buffer)
-	p4t := MakeP4Test(t.TempDir())
 	os.Chdir(p4t.serverRoot)
 	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
 
 	j := journal.Journal{}
 	j.SetWriter(buf)
 	j.WriteHeader()
-	pool := pond.New(2, 0, pond.MinWorkers(10))
+
+	blobArchiveMap := make(BlobArchiveMap, 0)
 
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.WriteFile(pool, p4t.serverRoot, c.commit.Mark)
+			f.CreateArchiveFile(p4t.serverRoot, &blobArchiveMap, c.commit.Mark)
 			f.WriteJournal(&j, &c)
 		}
 	}
-	pool.StopAndWait()
 
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, buf.String())
@@ -516,9 +515,13 @@ func TestAdd(t *testing.T) {
 	}
 	logger.Debugf("Export file:\n%s", output)
 
+	p4t := MakeP4Test(t.TempDir())
+	os.Chdir(p4t.serverRoot)
+	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
+
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
-	opts := GitParserOptions{importDepot: "import", defaultBranch: "main"}
+	opts := GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
 	commitChan := g.GitParse(opts)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
@@ -533,7 +536,6 @@ func TestAdd(t *testing.T) {
 	f := c.files[0]
 	assert.Equal(t, modify, f.action)
 	assert.Equal(t, src, f.name)
-	assert.Equal(t, srcContents1, f.blob.Data)
 
 	buf := new(bytes.Buffer)
 	j := journal.Journal{}
@@ -560,14 +562,10 @@ func TestAdd(t *testing.T) {
 `, dt, dt, dt)
 	assert.Equal(t, expectedJournal, buf.String())
 
-	p4t := MakeP4Test(t.TempDir())
-	os.Chdir(p4t.serverRoot)
-	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
-	pool := pond.New(2, 0, pond.MinWorkers(10))
-	f.WriteFile(pool, p4t.serverRoot, c.commit.Mark)
-	pool.StopAndWait()
+	blobArchiveMap := make(BlobArchiveMap, 0)
+	f.CreateArchiveFile(p4t.serverRoot, &blobArchiveMap, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 	result, err := runCmd("p4 storage -r")
@@ -585,6 +583,9 @@ func TestAdd(t *testing.T) {
 	result, err = runCmd("p4 changes //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	contents, err := runCmd("p4 print -q //import/main/src.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents1, contents)
 }
 
 func TestAddEdit(t *testing.T) {

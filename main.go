@@ -41,6 +41,21 @@ func Humanize(b int) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
+func copyFile(in, out string) error {
+	i, err := os.Open(in)
+	if err != nil {
+		return err
+	}
+	defer i.Close()
+	o, err := os.Create(out)
+	if err != nil {
+		return err
+	}
+	defer o.Close()
+	_, err = o.ReadFrom(i)
+	return err
+}
+
 const defaultBranch = "main"
 
 type GitParserOptions struct {
@@ -196,15 +211,22 @@ type GitFile struct {
 	isMerge         bool
 	fileType        journal.FileType
 	compressed      bool
+	hasBlobData     bool
 	blob            *libfastimport.CmdBlob
 	blobDataRemoved bool
+	blobDirPath     string
+	blobFileName    string // Temporary storage location once read
 	logger          *logrus.Logger
 }
 
-type FileToWrite struct {
-	gf        *GitFile
-	depotRoot string
-	changeNo  int
+func newGitFile(gf *GitFile) *GitFile {
+	if gf.blob != nil && gf.hasBlobData { // Construct a suitable filename
+		filename := fmt.Sprintf("%07d", gf.blob.Mark)
+		gf.blobFileName = filename
+		gf.blobDirPath = path.Join(filename[:1], filename[1:4])
+		gf.updateFileDetails()
+	}
+	return gf
 }
 
 // GitCommit - A git commit
@@ -237,7 +259,8 @@ func (gc *GitCommit) writeCommit(j *journal.Journal) {
 
 type CommitMap map[int]*GitCommit
 type FileMap map[int]*GitFile
-type RevChange struct { // Struct to remember revs and changes per depotFile
+type BlobArchiveMap map[string]string // Updated for every blob when it is renamed - required for copies of blobs
+type RevChange struct {               // Struct to remember revs and changes per depotFile
 	rev     int
 	chgNo   int
 	lbrRev  int    // Normally same as chgNo but not for renames/copies
@@ -288,20 +311,9 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
 }
 
 // Sets compression option and binary/text
-func (gf *GitFile) updateFileDetails() {
+func (gf *GitFile) setCompressionDetails() {
 	gf.fileType = journal.CText
 	gf.compressed = true
-	switch gf.action {
-	case delete:
-		gf.p4action = journal.Delete
-		return
-	case rename:
-		gf.p4action = journal.Rename
-		return
-	case modify:
-		gf.p4action = journal.Edit
-	}
-	// Compression defaults to false
 	l := len(gf.blob.Data)
 	if l > 261 {
 		l = 261
@@ -316,10 +328,23 @@ func (gf *GitFile) updateFileDetails() {
 		gf.fileType = journal.Binary
 		kind, _ := filetype.Match(head)
 		switch kind.Extension {
-		case "docx", "pptx", "xlsx":
+		case "docx", "dotx", "potx", "ppsx", "pptx", "vsdx", "vstx", "xlsx", "xltx":
 			gf.compressed = false
-			return // no compression
 		}
+	}
+}
+
+// Sets compression option and binary/text
+func (gf *GitFile) updateFileDetails() {
+	switch gf.action {
+	case delete:
+		gf.p4action = journal.Delete
+		return
+	case rename:
+		gf.p4action = journal.Rename
+		return
+	case modify:
+		gf.p4action = journal.Edit
 	}
 }
 
@@ -330,68 +355,110 @@ func getOID(dataref string) (int, error) {
 	return strconv.Atoi(dataref[1:])
 }
 
-// WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
+// SaveBlob will save it to a temp dir, e.g. 1234567 -> 1/234/567/1234567[.gz]
+// Later the file will be moved to the required depot location
 // Uses a provided pool to get concurrency
-func (gf *GitFile) WriteFile(pool *pond.WorkerPool, depotRoot string, changeNo int) error {
+func (gf *GitFile) SaveBlob(pool *pond.WorkerPool, archiveRoot string) error {
+	if gf.blob == nil || !gf.hasBlobData {
+		gf.logger.Debugf("NoBlobToSave")
+		return nil
+	}
 	if gf.action == delete || gf.action == rename {
+		gf.logger.Debugf("Ignoring delete/rename")
 		return nil
 	}
-	depotFile := strings.ReplaceAll(gf.depotFile[2:], "@", "%40")
-	rootDir := fmt.Sprintf("%s/%s,d", depotRoot, depotFile)
-	gf.logger.Debugf("WriteFile: %s/1.%d", rootDir, changeNo)
-	if gf.blob == nil || gf.blobDataRemoved {
-		gf.logger.Debugf("NoBlobFound")
-		return nil
-	}
+	gf.setCompressionDetails()
 	// Do the work in pool worker threads for concurrency, especially with compression
+	rootDir := path.Join(archiveRoot, gf.blobDirPath)
 	if gf.compressed {
-		fname := fmt.Sprintf("%s/1.%d.gz", rootDir, changeNo)
-		pool.Submit(func(rootDir string, fname string, data string) func() {
-			return func() {
-				err := os.MkdirAll(rootDir, 0755)
-				if err != nil {
-					panic(err)
-				}
-				f, err := os.Create(fname)
-				if err != nil {
-					panic(err)
-				}
-				defer f.Close()
-				zw := gzip.NewWriter(f)
-				defer zw.Close()
-				_, err = zw.Write([]byte(data))
-				if err != nil {
-					panic(err)
-				}
-			}
-		}(rootDir, fname, gf.blob.Data))
+		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", gf.blobFileName))
+		gf.logger.Debugf("SavingBlob: %s", fname)
+		data := gf.blob.Data
+		// pool.Submit(func(rootDir string, fname string, data string) func() {
+		// 	return func() {
+		err := os.MkdirAll(rootDir, 0755)
+		if err != nil {
+			panic(err)
+		}
+		f, err := os.Create(fname)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		zw := gzip.NewWriter(f)
+		defer zw.Close()
+		_, err = zw.Write([]byte(data))
+		if err != nil {
+			panic(err)
+		}
+		// 	}
+		// }(rootDir, fname, gf.blob.Data))
 	} else {
-		fname := fmt.Sprintf("%s/1.%d", rootDir, changeNo)
-		pool.Submit(func(rootDir string, fname string, data string) func() {
-			return func() {
-				err := os.MkdirAll(rootDir, 0755)
-				if err != nil {
-					panic(err)
-				}
-				f, err := os.Create(fname)
-				if err != nil {
-					panic(err)
-				}
-				defer f.Close()
-				fmt.Fprint(f, data)
-				if err != nil {
-					panic(err)
-				}
-			}
-		}(rootDir, fname, gf.blob.Data))
-
+		fname := path.Join(rootDir, gf.blobFileName)
+		gf.logger.Debugf("SavingBlob: %s", fname)
+		data := gf.blob.Data
+		// pool.Submit(func(rootDir string, fname string, data string) func() {
+		// 	return func() {
+		err := os.MkdirAll(rootDir, 0755)
+		if err != nil {
+			panic(err)
+		}
+		f, err := os.Create(fname)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+		fmt.Fprint(f, data)
+		if err != nil {
+			panic(err)
+		}
+		// 	}
+		// }(rootDir, fname, gf.blob.Data))
 	}
 	gf.blob.Data = "" // Allow contents to be GC'ed
 	gf.blobDataRemoved = true
 	return nil
 }
 
-// WriteFile will write a data file using standard path: <depotRoot>/<path>,d/1.<changeNo>[.gz]
+func (gf *GitFile) CreateArchiveFile(depotRoot string, blobArchiveMap *BlobArchiveMap, changeNo int) {
+	if gf.action == delete || gf.action == rename || !gf.hasBlobData {
+		return
+	}
+	depotFile := strings.ReplaceAll(gf.depotFile[2:], "@", "%40")
+	rootDir := path.Join(depotRoot, fmt.Sprintf("%s,d", depotFile))
+	if gf.blobFileName == "" {
+		gf.logger.Debugf(fmt.Sprintf("NoBlobFound: %s", depotFile))
+		return
+	}
+	bname := path.Join(depotRoot, gf.blobDirPath, gf.blobFileName)
+	fname := path.Join(rootDir, fmt.Sprintf("1.%d", changeNo))
+	if gf.compressed {
+		bname = path.Join(depotRoot, gf.blobDirPath, fmt.Sprintf("%s.gz", gf.blobFileName))
+		fname = path.Join(rootDir, fmt.Sprintf("1.%d.gz", changeNo))
+	}
+	gf.logger.Debugf("CreateArchiveFile: %s -> %s", bname, fname)
+	err := os.MkdirAll(rootDir, 0755)
+	if err != nil {
+		gf.logger.Errorf("Failed to Mkdir: %s - %v", rootDir, err)
+		return
+	}
+	copiedBlob, ok := (*blobArchiveMap)[bname]
+	if ok {
+		gf.logger.Debugf("CopyArchiveFile: %s -> %s", copiedBlob, fname)
+		err = copyFile(copiedBlob, fname)
+		if err != nil {
+			gf.logger.Errorf("Failed to Copy blob: %v", err)
+		}
+	} else {
+		err = os.Rename(bname, fname)
+		if err != nil {
+			gf.logger.Errorf("Failed to Rename: %v", err)
+		}
+		(*blobArchiveMap)[bname] = fname
+	}
+}
+
+// WriteJournal writes journal record for a GitFile
 func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	dt := int(c.commit.Author.Time.Unix())
 	chgNo := c.commit.Mark
@@ -457,7 +524,7 @@ func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, File
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
 			g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s\n", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-			gitFiles[blob.Mark] = &GitFile{blob: &blob, logger: g.logger}
+			gitFiles[blob.Mark] = newGitFile(&GitFile{blob: &blob, hasBlobData: true, logger: g.logger})
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Debugf("Reset: - %+v\n", reset)
@@ -486,7 +553,7 @@ func (g *GitP4Transfer) RunGetCommits(options GitParserOptions) (CommitMap, File
 			}
 		case libfastimport.FileDelete:
 			f := cmd.(libfastimport.FileDelete)
-			g.logger.Debugf("FileModify: Path:%s\n", f.Path)
+			g.logger.Debugf("FileDelete: Path:%s\n", f.Path)
 		case libfastimport.FileCopy:
 			f := cmd.(libfastimport.FileCopy)
 			g.logger.Debugf("FileCopy: Src:%s Dst:%s\n", f.Src, f.Dst)
@@ -549,7 +616,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 				writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
 			}
 			blob.Data = "" // Allow GC to avoid holding on to memory
-			files[blob.Mark] = &GitFile{blob: &blob, size: size, logger: g.logger}
+			files[blob.Mark] = newGitFile(&GitFile{blob: &blob, hasBlobData: true, size: size, logger: g.logger})
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Infof("Reset: - %+v", reset)
@@ -685,7 +752,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		} else { // Copy/branch
 			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
-			if (gf.blob != nil && len(gf.blob.Data) == 0) || gf.isMerge { // Copied but changed
+			if !gf.hasBlobData || gf.isMerge { // Copied but changed
 				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
 				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
 				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
@@ -795,6 +862,11 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	missingRenameLogged := false
 	node := &Node{name: ""}
 
+	// Create an unbuffered (blocking) pool with a fixed
+	// number of workers
+	pondSize := runtime.NumCPU()
+	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
+
 	f := libfastimport.NewFrontend(buf, nil, nil)
 	go func() {
 		defer file.Close()
@@ -811,8 +883,9 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.CmdBlob:
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-				blobFiles[blob.Mark] = &GitFile{blob: &blob, action: modify, logger: g.logger}
+				blobFiles[blob.Mark] = newGitFile(&GitFile{blob: &blob, hasBlobData: true, action: modify, logger: g.logger})
 				commitSize += len(blob.Data)
+				blobFiles[blob.Mark].SaveBlob(pool, g.opts.archiveRoot)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
@@ -844,19 +917,19 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s", f.Path)
-				gf := &GitFile{name: f.Path.String(), action: delete, logger: g.logger}
+				gf := newGitFile(&GitFile{name: f.Path.String(), action: delete, logger: g.logger})
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
-				gf := &GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy, logger: g.logger}
+				gf := newGitFile(&GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy, logger: g.logger})
 				currCommit.files = append(currCommit.files, *gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
 				// Look for renames of dirs vs files
 				if node.findFile(f.Src.String()) {
-					gf := &GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename, logger: g.logger}
+					gf := newGitFile(&GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename, logger: g.logger})
 					currCommit.files = append(currCommit.files, *gf)
 					node.addFile(gf.name)
 				} else {
@@ -870,7 +943,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							}
 							dest := fmt.Sprintf("%s%s", f.Dst.String(), rf[len(f.Src.String()):])
 							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
-							gf := &GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}
+							gf := newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger})
 							// Have to set up depot paths to be able to look up deleted files.
 							g.setBranch(currCommit)
 							gf.setDepotPaths(g.opts, currCommit)
@@ -902,6 +975,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			}
 		}
 		g.processCommit(currCommit)
+		pool.StopAndWait()
 	}()
 
 	return g.gitChan
@@ -1006,26 +1080,13 @@ func main() {
 	j.SetWriter(f)
 	j.WriteHeader()
 
-	// const numJobs = 5
-	// filesChan := make(chan *FileToWrite, numJobs)
-	// for w := 1; w <= 4; w++ {
-	// 	go fileWorker(filesChan)
-	// }
-
-	// Create an unbuffered (blocking) pool with a fixed
-	// number of workers
-	pondSize := runtime.NumCPU()
-	// if pondSize < 1 {
-	// 	pondSize = 1
-	// }
-	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
-
+	blobArchiveMap := make(BlobArchiveMap, 0)
 	for c := range commitChan {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
-				f.WriteFile(pool, opts.archiveRoot, c.commit.Mark)
-			} else if f.blob != nil && !f.blobDataRemoved {
+				f.CreateArchiveFile(opts.archiveRoot, &blobArchiveMap, c.commit.Mark)
+			} else if f.blob != nil && f.hasBlobData && !f.blobDataRemoved {
 				f.blob.Data = "" // Allow contents to be GC'ed
 				f.blobDataRemoved = true
 			}
@@ -1033,7 +1094,6 @@ func main() {
 		}
 	}
 
-	pool.StopAndWait()
 	// close(filesChan)
 
 }
