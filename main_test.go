@@ -173,12 +173,10 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) str
 	j.SetWriter(buf)
 	j.WriteHeader()
 
-	blobArchiveMap := make(BlobArchiveMap, 0)
-
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.CreateArchiveFile(p4t.serverRoot, &blobArchiveMap, c.commit.Mark)
+			f.CreateArchiveFile(p4t.serverRoot, &g.blobArchiveMap, &g.gitFileMap, c.commit.Mark)
 			f.WriteJournal(&j, &c)
 		}
 	}
@@ -187,6 +185,7 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) str
 	writeToFile(jnl, buf.String())
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
+	runCmd("p4 storage -R")
 	runCmd("p4 storage -r")
 	runCmd("p4 storage -w")
 	// assert.Equal(t, nil, err)
@@ -273,8 +272,7 @@ func TestAdd(t *testing.T) {
 
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
-	blobArchiveMap := make(BlobArchiveMap, 0)
-	f.CreateArchiveFile(p4t.serverRoot, &blobArchiveMap, c.commit.Mark)
+	f.CreateArchiveFile(p4t.serverRoot, &g.blobArchiveMap, &g.gitFileMap, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 	result, err := runCmd("p4 storage -r")
@@ -356,6 +354,52 @@ func TestAddEdit(t *testing.T) {
 	assert.Regexp(t, `lbrType text\+C`, result)
 	assert.Regexp(t, `lbrRev 1.2`, result)
 	assert.Regexp(t, `lbrRev 1.4`, result)
+}
+
+func TestAddSameFile(t *testing.T) {
+	// Ensure single archive in git
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	file1 := "file1.txt"
+	file2 := "file2.txt"
+	contents1 := "contents\n"
+	writeToFile(file1, contents1)
+	writeToFile(file2, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/file1.txt#1 - add change 2 (text+C)
+//import/main/file2.txt#1 - add change 2 (text+C)
+`, result)
+
+	result, err = runCmd("p4 print -q //import/main/file1.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents1, result)
+
+	result, err = runCmd("p4 print -q //import/main/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents1, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/file1.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrPath .*file1.txt,d/1.2.gz`, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrPath .*file1.txt,d/1.2.gz`, result)
 }
 
 func TestAddBinary(t *testing.T) {
@@ -906,7 +950,7 @@ func TestRenameDirWithDelete(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Regexp(t, `lbrType text\+C`, result)
-	assert.Regexp(t, `lbrFile //import/main/src/file2.txt`, result)
+	assert.Regexp(t, `lbrFile //import/main/src/file.txt`, result)
 	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
 }
 
@@ -1182,20 +1226,20 @@ func TestBranch2(t *testing.T) {
 	assert.Equal(t, "", result)
 	assert.Equal(t, "<nil>", fmt.Sprint(err))
 
-	// result, err = runCmd("p4 print -q //import/main/file1.txt#1")
-	// assert.Equal(t, nil, err)
-	// assert.Equal(t, contents1, result)
+	result, err = runCmd("p4 print -q //import/main/file1.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents1, result)
 
-	// result, err = runCmd("p4 print -q //import/dev/file1.txt#1")
-	// assert.Equal(t, nil, err)
-	// assert.Equal(t, contents2, result)
+	result, err = runCmd("p4 print -q //import/dev/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents1, result)
 
 	result, err = runCmd("p4 fstat -Ob //import/dev/file2.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `headType text\+C`, result)
 	assert.Regexp(t, `lbrType text\+C`, result)
-	assert.Regexp(t, `lbrFile //import/dev/file2.txt`, result)
-	assert.Regexp(t, `(?m)lbrPath .*/1.3.gz$`, result)
+	assert.Regexp(t, `lbrFile //import/main/file1.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
 
 	result, err = runCmd("p4 filelog //import/dev/file2.txt#1")
 	assert.Equal(t, nil, err)

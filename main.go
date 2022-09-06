@@ -192,34 +192,40 @@ func writeBlob(rootDir string, blobID int, data *string) {
 	}
 }
 
+var gitFileID = 0 // Unique ID - set by newGitFile
+
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
-	name            string // Git filename (target for rename/copy)
-	size            int
-	depotFile       string // Full depot path
-	rev             int    // Depot rev
-	lbrRev          int    // Lbr rev - usually same as Depot rev
-	lbrFile         string // Lbr file - usually same as Depot file
-	srcName         string // Name of git source file for rename/copy
-	srcDepotFile    string //   "
-	srcRev          int    //   "
-	archiveFile     string
-	action          GitAction
-	p4action        journal.FileAction
-	targ            string // For use with copy/move
-	isBranch        bool
-	isMerge         bool
-	fileType        journal.FileType
-	compressed      bool
-	hasBlobData     bool
-	blob            *libfastimport.CmdBlob
-	blobDataRemoved bool
-	blobDirPath     string
-	blobFileName    string // Temporary storage location once read
-	logger          *logrus.Logger
+	name             string // Git filename (target for rename/copy)
+	ID               int
+	size             int
+	depotFile        string // Full depot path
+	rev              int    // Depot rev
+	lbrRev           int    // Lbr rev - usually same as Depot rev
+	lbrFile          string // Lbr file - usually same as Depot file
+	srcName          string // Name of git source file for rename/copy
+	srcDepotFile     string //   "
+	srcRev           int    //   "
+	archiveFile      string
+	duplicateArchive bool
+	action           GitAction
+	p4action         journal.FileAction
+	targ             string // For use with copy/move
+	isBranch         bool
+	isMerge          bool
+	fileType         journal.FileType
+	compressed       bool
+	hasBlobData      bool
+	blob             *libfastimport.CmdBlob
+	blobDataRemoved  bool
+	blobDirPath      string
+	blobFileName     string // Temporary storage location once read
+	logger           *logrus.Logger
 }
 
 func newGitFile(gf *GitFile) *GitFile {
+	gitFileID += 1
+	gf.ID = gitFileID
 	if gf.blob != nil && gf.hasBlobData { // Construct a suitable filename
 		filename := fmt.Sprintf("%07d", gf.blob.Mark)
 		gf.blobFileName = filename
@@ -258,9 +264,10 @@ func (gc *GitCommit) writeCommit(j *journal.Journal) {
 }
 
 type CommitMap map[int]*GitCommit
-type FileMap map[int]*GitFile
-type BlobArchiveMap map[string]string // Updated for every blob when it is renamed - required for copies of blobs
-type RevChange struct {               // Struct to remember revs and changes per depotFile
+type BlobArchiveMap map[int][]int // Updated for every blob when it is renamed - required for copies of blobs
+type GitFileMap map[int]*GitFile  // Maps Gitfile ID to *GF
+
+type RevChange struct { // Struct to remember revs and changes per depotFile
 	rev     int
 	chgNo   int
 	lbrRev  int    // Normally same as chgNo but not for renames/copies
@@ -276,6 +283,8 @@ type GitP4Transfer struct {
 	opts           GitParserOptions
 	depotFileRevs  map[string]*RevChange       // Map depotFile to latest rev/chg
 	depotFileTypes map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
+	blobArchiveMap BlobArchiveMap              // Used where there are duplicate archives shared by multiple depot files
+	gitFileMap     GitFileMap                  // Map between gitfile ID and record
 	commits        map[int]*GitCommit
 	testInput      string // For testing only
 }
@@ -283,7 +292,9 @@ type GitP4Transfer struct {
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
 	return &GitP4Transfer{logger: logger,
 		depotFileRevs:  make(map[string]*RevChange),
+		blobArchiveMap: make(BlobArchiveMap, 0),
 		depotFileTypes: make(map[string]journal.FileType),
+		gitFileMap:     make(GitFileMap, 0),
 		commits:        make(map[int]*GitCommit)}
 }
 
@@ -358,7 +369,7 @@ func getOID(dataref string) (int, error) {
 // SaveBlob will save it to a temp dir, e.g. 1234567 -> 1/234/567/1234567[.gz]
 // Later the file will be moved to the required depot location
 // Uses a provided pool to get concurrency
-func (gf *GitFile) SaveBlob(pool *pond.WorkerPool, archiveRoot string) error {
+func (gf *GitFile) SaveBlob(pool *pond.WorkerPool, archiveRoot string, blobArchiveMap *BlobArchiveMap) error {
 	if gf.blob == nil || !gf.hasBlobData {
 		gf.logger.Debugf("NoBlobToSave")
 		return nil
@@ -415,12 +426,19 @@ func (gf *GitFile) SaveBlob(pool *pond.WorkerPool, archiveRoot string) error {
 		// 	}
 		// }(rootDir, fname, gf.blob.Data))
 	}
+	_, ok := (*blobArchiveMap)[gf.blob.Mark]
+	if ok {
+		(*blobArchiveMap)[gf.blob.Mark] = append((*blobArchiveMap)[gf.blob.Mark], gf.ID)
+		gf.duplicateArchive = true
+	} else {
+		(*blobArchiveMap)[gf.blob.Mark] = []int{gf.ID}
+	}
 	gf.blob.Data = "" // Allow contents to be GC'ed
 	gf.blobDataRemoved = true
 	return nil
 }
 
-func (gf *GitFile) CreateArchiveFile(depotRoot string, blobArchiveMap *BlobArchiveMap, changeNo int) {
+func (gf *GitFile) CreateArchiveFile(depotRoot string, blobArchiveMap *BlobArchiveMap, gitFileMap *GitFileMap, changeNo int) {
 	if gf.action == delete || gf.action == rename || !gf.hasBlobData {
 		return
 	}
@@ -442,19 +460,28 @@ func (gf *GitFile) CreateArchiveFile(depotRoot string, blobArchiveMap *BlobArchi
 		gf.logger.Errorf("Failed to Mkdir: %s - %v", rootDir, err)
 		return
 	}
-	copiedBlob, ok := (*blobArchiveMap)[bname]
-	if ok {
-		gf.logger.Debugf("CopyArchiveFile: %s -> %s", copiedBlob, fname)
-		err = copyFile(copiedBlob, fname)
-		if err != nil {
-			gf.logger.Errorf("Failed to Copy blob: %v", err)
-		}
-	} else {
+	// Rename the archive file for first copy, expect a duplicate otherwise and save references to it
+	if !gf.duplicateArchive {
 		err = os.Rename(bname, fname)
 		if err != nil {
 			gf.logger.Errorf("Failed to Rename: %v", err)
 		}
-		(*blobArchiveMap)[bname] = fname
+		return
+	}
+	// We expect a duplicate
+	origIDs, ok := (*blobArchiveMap)[gf.blob.Mark]
+	if ok {
+		if len(origIDs) > 0 {
+			if origGF, ok := (*gitFileMap)[origIDs[0]]; ok {
+				gf.lbrFile = origGF.lbrFile
+				gf.lbrRev = origGF.lbrRev
+				gf.logger.Debugf("Duplicate of: %s %d", gf.lbrFile, gf.lbrRev)
+			} else {
+				gf.logger.Errorf("Failed to find GitFile ID: %d %s", origIDs[0], gf.depotFile)
+			}
+		} else {
+			gf.logger.Errorf("Failed to find GitFile ID2: %d %s", origIDs[0], gf.depotFile)
+		}
 	}
 }
 
@@ -563,7 +590,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 				gf.name = f.Path.String()
 				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.Mark)
 				gf.archiveFile = archName
-				g.logger.Infof("Path:%s Size:%s Archive:%s", gf.name, Humanize(gf.size), gf.archiveFile)
+				g.logger.Infof("Path:%s Size:%d/%s Archive:%s", gf.name, gf.size, Humanize(gf.size), gf.archiveFile)
 				currCommit.files = append(currCommit.files, *gf)
 			}
 		case libfastimport.FileDelete:
@@ -599,7 +626,7 @@ func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
 	return false
 }
 
-// Maintain a list of latest revision counters indexed by depotFile
+// Maintain a list of latest revision counters indexed by depotFile and set lbrArchive/Rev
 func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	prevAction := unknown
 	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
@@ -626,71 +653,89 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 			gf.p4action = journal.Add
 		}
 	}
-	if gf.srcName == "" {
-		g.updateDepotFileTypes(gf)
-	} else {
-		if gf.action != delete {
-			gf.p4action = journal.Add
-		}
-		if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
-			if gf.action == delete {
-				// A delete without a source file just becomes delete
-				g.logger.Warnf("Integ of delete becomes delete: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
-				gf.srcDepotFile = ""
-				gf.srcName = ""
-				gf.isMerge = false
+	if gf.duplicateArchive { // Update to point to original archive
+		if origIDs, ok := g.blobArchiveMap[gf.blob.Mark]; ok {
+			if len(origIDs) > 0 {
+				if origGF, ok := g.gitFileMap[origIDs[0]]; ok {
+					gf.lbrFile = origGF.lbrFile
+					gf.lbrRev = origGF.lbrRev
+					g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+					g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+				} else {
+					g.logger.Errorf("Failed to find duplicate archive1: %d %s", origIDs[0], gf.depotFile)
+				}
 			} else {
-				// A copy or branch without a source file just becomes new file added on branch
-				g.logger.Warnf("Copy/branch becomes add: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
-				gf.srcDepotFile = ""
-				gf.srcName = ""
-				gf.isBranch = false
-				gf.isMerge = false
+				g.logger.Errorf("Failed to find duplicate archive2: %d %s", gf.blob.Mark, gf.depotFile)
 			}
-			g.updateDepotFileTypes(gf)
-			return
+		} else {
+			g.logger.Errorf("Failed to find duplicate archive3: %d %s", gf.blob.Mark, gf.depotFile)
 		}
-		if gf.action == delete { // merge of delete
-			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
-		} else if isRename { // Rename means old file is being deleted
-			g.depotFileRevs[gf.srcDepotFile].rev += 1
-			g.depotFileRevs[gf.srcDepotFile].action = delete
-			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev-1)
-			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
-			g.updateDepotFileTypes(gf)
-		} else { // Copy/branch
-			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
-			if !gf.hasBlobData || gf.isMerge { // Copied but changed
-				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
-			} else {
-				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
-			}
-			g.updateDepotFileTypes(gf)
-		}
-		g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d",
-			gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
-			g.depotFileRevs[gf.depotFile].action,
-			g.depotFileRevs[gf.depotFile].lbrFile,
-			g.depotFileRevs[gf.depotFile].lbrRev)
-
 	}
+	if gf.srcName == "" { // Simple modify
+		g.recordDepotFileType(gf)
+		g.gitFileMap[gf.ID] = gf
+		return
+	}
+	if gf.action != delete {
+		gf.p4action = journal.Add
+	}
+	if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
+		if gf.action == delete {
+			// A delete without a source file just becomes delete
+			g.logger.Warnf("Integ of delete becomes delete: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
+			gf.srcDepotFile = ""
+			gf.srcName = ""
+			gf.isMerge = false
+		} else {
+			// A copy or branch without a source file just becomes new file added on branch
+			g.logger.Warnf("Copy/branch becomes add: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
+			gf.srcDepotFile = ""
+			gf.srcName = ""
+			gf.isBranch = false
+			gf.isMerge = false
+		}
+		g.recordDepotFileType(gf)
+		return
+	}
+	if gf.action == delete { // merge of delete
+		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+		gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+		gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+	} else if isRename { // Rename means old file is being deleted
+		g.depotFileRevs[gf.srcDepotFile].rev += 1
+		g.depotFileRevs[gf.srcDepotFile].action = delete
+		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+		gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+		gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+		gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev-1)
+		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+		g.recordDepotFileType(gf)
+	} else { // Copy/branch
+		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+		gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
+		if !gf.hasBlobData || gf.isMerge { // Copied but changed
+			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+		} else {
+			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+		}
+		g.recordDepotFileType(gf)
+	}
+	g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d",
+		gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
+		g.depotFileRevs[gf.depotFile].action,
+		g.depotFileRevs[gf.depotFile].lbrFile,
+		g.depotFileRevs[gf.depotFile].lbrRev)
 }
 
 // Maintain a list of latest revision counters indexed by depotFile/rev
-func (g *GitP4Transfer) updateDepotFileTypes(gf *GitFile) {
+func (g *GitP4Transfer) recordDepotFileType(gf *GitFile) {
 	k := fmt.Sprintf("%s#%d", gf.depotFile, gf.rev)
 	g.depotFileTypes[k] = gf.fileType
 }
@@ -738,6 +783,15 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 	}
 }
 
+// Record what
+func (g *GitP4Transfer) recordBlobGitFileEntry() {
+
+}
+
+func (g *GitP4Transfer) recordBlobEntry() {
+
+}
+
 func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
 	if currCommit != nil { // Process previous commit
 		g.setBranch(currCommit)
@@ -773,6 +827,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	g.gitChan = make(chan GitCommit, 50)
 	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
+	blobRefCount := make(map[int]int, 0)   // Index by blob ID (mark) - detect duplicate blob refs
 	var currCommit *GitCommit
 	var commitSize = 0
 
@@ -802,7 +857,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 				blobFiles[blob.Mark] = newGitFile(&GitFile{blob: &blob, hasBlobData: true, action: modify, logger: g.logger})
 				commitSize += len(blob.Data)
-				blobFiles[blob.Mark].SaveBlob(pool, g.opts.archiveRoot)
+				blobFiles[blob.Mark].SaveBlob(pool, g.opts.archiveRoot, &g.blobArchiveMap)
+				blobRefCount[blob.Mark] = 0
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
@@ -823,9 +879,24 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				if err != nil {
 					g.logger.Errorf("Failed to get oid: %+v", f)
 				}
-				gf, ok := blobFiles[oid]
-				if ok {
-					gf.name = f.Path.String()
+				if gf, ok := blobFiles[oid]; ok {
+					blobRefCount[oid] += 1
+					if origIDs, ok := g.blobArchiveMap[oid]; !ok {
+						gf.name = f.Path.String()
+					} else if len(origIDs) == 0 {
+						g.logger.Errorf("Failed to find blob: %d", oid)
+					} else { // Duplicate
+						if gf.ID == origIDs[0] && blobRefCount[oid] == 1 {
+							gf.name = f.Path.String()
+						} else {
+							gfOrig := gf
+							gf = newGitFile(&GitFile{name: f.Path.String(), action: modify,
+								duplicateArchive: true, fileType: gfOrig.fileType, compressed: gfOrig.compressed,
+								logger: g.logger})
+							gf.blob = &libfastimport.CmdBlob{Mark: gfOrig.blob.Mark}
+							g.blobArchiveMap[oid] = append(g.blobArchiveMap[oid], gf.ID)
+						}
+					}
 					currCommit.files = append(currCommit.files, *gf)
 					node.addFile(gf.name)
 				} else {
@@ -997,12 +1068,11 @@ func main() {
 	j.SetWriter(f)
 	j.WriteHeader()
 
-	blobArchiveMap := make(BlobArchiveMap, 0)
 	for c := range commitChan {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
-				f.CreateArchiveFile(opts.archiveRoot, &blobArchiveMap, c.commit.Mark)
+				f.CreateArchiveFile(opts.archiveRoot, &g.blobArchiveMap, &g.gitFileMap, c.commit.Mark)
 			} else if f.blob != nil && f.hasBlobData && !f.blobDataRemoved {
 				f.blob.Data = "" // Allow contents to be GC'ed
 				f.blobDataRemoved = true
