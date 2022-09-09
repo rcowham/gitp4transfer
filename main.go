@@ -196,6 +196,101 @@ func writeBlob(rootDir string, blobID int, data *string) error {
 
 var gitFileID = 0 // Unique ID - set by newGitFile
 
+// GitBlob - wrapper around CmdBlob
+type GitBlob struct {
+	blob         *libfastimport.CmdBlob
+	compressed   bool
+	fileType     journal.FileType
+	hasData      bool
+	dataRemoved  bool
+	saved        bool
+	blobDirPath  string
+	blobFileName string // Temporary storage location once read
+	gitFileIDs   []int  // list of gitfiles referring to this blob
+}
+
+func newGitBlob(blob *libfastimport.CmdBlob) *GitBlob {
+	b := &GitBlob{blob: blob, hasData: true, gitFileIDs: make([]int, 0)}
+	if blob != nil { // Construct a suitable filename
+		filename := fmt.Sprintf("%07d", b.blob.Mark)
+		b.blobFileName = filename
+		b.blobDirPath = path.Join(filename[:1], filename[1:4])
+	}
+	return b
+}
+
+type GitFileMap map[int]*GitFile // Maps Gitfile ID to *GF
+type BlobMap map[int]*GitBlob    // Maps Blob ID to *blob
+
+// BlobFileMatcher - maps blobs to files and vice versa
+type BlobFileMatcher struct {
+	logger     *logrus.Logger
+	gitFileMap GitFileMap
+	blobMap    BlobMap
+}
+
+func newBlobFileMatcher(logger *logrus.Logger) *BlobFileMatcher {
+	return &BlobFileMatcher{logger: logger, gitFileMap: GitFileMap{}, blobMap: BlobMap{}}
+}
+
+func (m *BlobFileMatcher) addBlob(b *GitBlob) {
+	if _, ok := m.blobMap[b.blob.Mark]; !ok {
+		m.blobMap[b.blob.Mark] = b
+	} else {
+		m.logger.Errorf("Found duplicate blob: %d", b.blob.Mark)
+	}
+}
+
+func (m *BlobFileMatcher) addGitFile(gf *GitFile) {
+	if _, ok := m.gitFileMap[gf.ID]; !ok {
+		m.gitFileMap[gf.ID] = gf
+	} else {
+		m.logger.Errorf("Found duplicate gitfile: %d", gf.ID)
+	}
+	gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, gf.ID)
+}
+
+func (m *BlobFileMatcher) getBlob(blobID int) *GitBlob {
+	if b, ok := m.blobMap[blobID]; ok {
+		return b
+	} else {
+		m.logger.Errorf("Failed to find blob: %d", blobID)
+		return nil
+	}
+}
+
+// Marks blob as saved - if not first call, then will set duplicate flag
+func (m *BlobFileMatcher) markBlobSaved(gf *GitFile) {
+	if b, ok := m.blobMap[gf.blob.blob.Mark]; ok {
+		b.gitFileIDs = append(b.gitFileIDs, gf.ID)
+		if len(b.gitFileIDs) > 1 {
+			gf.duplicateArchive = true
+		}
+	} else {
+		m.logger.Errorf("Failed to find blob: %d", gf.blob.blob.Mark)
+	}
+}
+
+func (m *BlobFileMatcher) updateDuplicateGitFile(gf *GitFile) {
+	b, ok := m.blobMap[gf.blob.blob.Mark]
+	if !ok {
+		gf.logger.Errorf("Failed to find GitFile ID1: %d %s", gf.blob.blob.Mark, gf.depotFile)
+		return
+	}
+	if len(b.gitFileIDs) == 0 {
+		gf.logger.Errorf("Failed to find GitFile ID2: %d %s", gf.blob.blob.Mark, gf.depotFile)
+		return
+	}
+	origGF, ok := m.gitFileMap[b.gitFileIDs[0]]
+	if !ok {
+		gf.logger.Errorf("Failed to find GitFile ID: %d %s", b.gitFileIDs[0], gf.depotFile)
+		return
+	}
+	gf.lbrFile = origGF.lbrFile
+	gf.lbrRev = origGF.lbrRev
+	gf.logger.Debugf("Duplicate of: %s %d", gf.lbrFile, gf.lbrRev)
+}
+
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
 	name             string // Git filename (target for rename/copy)
@@ -217,23 +312,14 @@ type GitFile struct {
 	isMerge          bool
 	fileType         journal.FileType
 	compressed       bool
-	hasBlobData      bool
-	blob             *libfastimport.CmdBlob
-	blobDataRemoved  bool
-	blobDirPath      string
-	blobFileName     string // Temporary storage location once read
+	blob             *GitBlob
 	logger           *logrus.Logger
 }
 
 func newGitFile(gf *GitFile) *GitFile {
 	gitFileID += 1
 	gf.ID = gitFileID
-	if gf.blob != nil && gf.hasBlobData { // Construct a suitable filename
-		filename := fmt.Sprintf("%07d", gf.blob.Mark)
-		gf.blobFileName = filename
-		gf.blobDirPath = path.Join(filename[:1], filename[1:4])
-		gf.updateFileDetails()
-	}
+	gf.updateFileDetails()
 	return gf
 }
 
@@ -244,7 +330,7 @@ type GitCommit struct {
 	prevBranch  string // set if first commit on new branch
 	mergeBranch string // set if commit is a merge - assumes only 1 merge candidate!
 	commitSize  int    // Size of all files in this commit - useful for memory sizing
-	files       []GitFile
+	files       []*GitFile
 }
 
 // HasPrefix tests whether the string s begins with prefix.
@@ -253,7 +339,7 @@ func hasPrefix(s, prefix string) bool {
 }
 
 func newGitCommit(commit *libfastimport.CmdCommit, commitSize int) *GitCommit {
-	gc := &GitCommit{commit: commit, commitSize: commitSize, files: make([]GitFile, 0)}
+	gc := &GitCommit{commit: commit, commitSize: commitSize, files: make([]*GitFile, 0)}
 	gc.branch = strings.Replace(commit.Ref, "refs/heads/", "", 1)
 	if hasPrefix(gc.branch, "refs/tags") || hasPrefix(gc.branch, "refs/remote") {
 		gc.branch = ""
@@ -266,8 +352,6 @@ func (gc *GitCommit) writeCommit(j *journal.Journal) {
 }
 
 type CommitMap map[int]*GitCommit
-type BlobArchiveMap map[int][]int // Updated for every blob when it is renamed - required for copies of blobs
-type GitFileMap map[int]*GitFile  // Maps Gitfile ID to *GF
 
 type RevChange struct { // Struct to remember revs and changes per depotFile
 	rev     int
@@ -279,25 +363,23 @@ type RevChange struct { // Struct to remember revs and changes per depotFile
 
 // GitP4Transfer - Transfer via git fast-export file
 type GitP4Transfer struct {
-	exportFile     string
-	logger         *logrus.Logger
-	gitChan        chan GitCommit
-	opts           GitParserOptions
-	depotFileRevs  map[string]*RevChange       // Map depotFile to latest rev/chg
-	depotFileTypes map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
-	blobArchiveMap BlobArchiveMap              // Used where there are duplicate archives shared by multiple depot files
-	gitFileMap     GitFileMap                  // Map between gitfile ID and record
-	commits        map[int]*GitCommit
-	testInput      string // For testing only
+	exportFile      string
+	logger          *logrus.Logger
+	gitChan         chan GitCommit
+	opts            GitParserOptions
+	depotFileRevs   map[string]*RevChange       // Map depotFile to latest rev/chg
+	depotFileTypes  map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
+	blobFileMatcher *BlobFileMatcher            // Map between gitfile ID and record
+	commits         map[int]*GitCommit
+	testInput       string // For testing only
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
 	return &GitP4Transfer{logger: logger,
-		depotFileRevs:  make(map[string]*RevChange),
-		blobArchiveMap: make(BlobArchiveMap, 0),
-		depotFileTypes: make(map[string]journal.FileType),
-		gitFileMap:     make(GitFileMap, 0),
-		commits:        make(map[int]*GitCommit)}
+		depotFileRevs:   make(map[string]*RevChange),
+		blobFileMatcher: newBlobFileMatcher(logger),
+		depotFileTypes:  make(map[string]journal.FileType),
+		commits:         make(map[int]*GitCommit)}
 }
 
 func (gf *GitFile) getDepotPath(opts GitParserOptions, branch string, name string) string {
@@ -324,25 +406,25 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
 }
 
 // Sets compression option and binary/text
-func (gf *GitFile) setCompressionDetails() {
-	gf.fileType = journal.CText
-	gf.compressed = true
-	l := len(gf.blob.Data)
+func (b *GitBlob) setCompressionDetails() {
+	b.fileType = journal.CText
+	b.compressed = true
+	l := len(b.blob.Data)
 	if l > 261 {
 		l = 261
 	}
-	head := []byte(gf.blob.Data[:l])
+	head := []byte(b.blob.Data[:l])
 	if filetype.IsImage(head) || filetype.IsVideo(head) || filetype.IsArchive(head) || filetype.IsAudio(head) {
-		gf.fileType = journal.UBinary
-		gf.compressed = false
+		b.fileType = journal.UBinary
+		b.compressed = false
 		return
 	}
 	if filetype.IsDocument(head) {
-		gf.fileType = journal.Binary
+		b.fileType = journal.Binary
 		kind, _ := filetype.Match(head)
 		switch kind.Extension {
 		case "docx", "dotx", "potx", "ppsx", "pptx", "vsdx", "vstx", "xlsx", "xltx":
-			gf.compressed = false
+			b.compressed = false
 		}
 	}
 }
@@ -368,25 +450,21 @@ func getOID(dataref string) (int, error) {
 	return strconv.Atoi(dataref[1:])
 }
 
-// SaveBlob will save it to a temp dir, e.g. 1234567 -> 1/234/567/1234567[.gz]
+// SaveBlob will save it to a temp dir, e.g. 1234567 -> 1/234/1234567[.gz]
 // Later the file will be moved to the required depot location
 // Uses a provided pool to get concurrency
-func (gf *GitFile) SaveBlob(pool *pond.WorkerPool, archiveRoot string, blobArchiveMap *BlobArchiveMap) error {
-	if gf.blob == nil || !gf.hasBlobData {
-		gf.logger.Debugf("NoBlobToSave")
+func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, matcher *BlobFileMatcher) error {
+	if b.blob == nil || !b.hasData {
+		matcher.logger.Debugf("NoBlobToSave")
 		return nil
 	}
-	if gf.action == delete || gf.action == rename {
-		gf.logger.Debugf("Ignoring delete/rename")
-		return nil
-	}
-	gf.setCompressionDetails()
+	b.setCompressionDetails()
 	// Do the work in pool worker threads for concurrency, especially with compression
-	rootDir := path.Join(archiveRoot, gf.blobDirPath)
-	if gf.compressed {
-		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", gf.blobFileName))
-		gf.logger.Debugf("SavingBlob: %s", fname)
-		data := gf.blob.Data
+	rootDir := path.Join(archiveRoot, b.blobDirPath)
+	if b.compressed {
+		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", b.blobFileName))
+		matcher.logger.Debugf("SavingBlob: %s", fname)
+		data := b.blob.Data
 		// pool.Submit(func(rootDir string, fname string, data string) func() {
 		// 	return func() {
 		err := os.MkdirAll(rootDir, 0755)
@@ -407,9 +485,9 @@ func (gf *GitFile) SaveBlob(pool *pond.WorkerPool, archiveRoot string, blobArchi
 		// 	}
 		// }(rootDir, fname, gf.blob.Data))
 	} else {
-		fname := path.Join(rootDir, gf.blobFileName)
-		gf.logger.Debugf("SavingBlob: %s", fname)
-		data := gf.blob.Data
+		fname := path.Join(rootDir, b.blobFileName)
+		matcher.logger.Debugf("SavingBlob: %s", fname)
+		data := b.blob.Data
 		// pool.Submit(func(rootDir string, fname string, data string) func() {
 		// 	return func() {
 		err := os.MkdirAll(rootDir, 0755)
@@ -428,32 +506,26 @@ func (gf *GitFile) SaveBlob(pool *pond.WorkerPool, archiveRoot string, blobArchi
 		// 	}
 		// }(rootDir, fname, gf.blob.Data))
 	}
-	_, ok := (*blobArchiveMap)[gf.blob.Mark]
-	if ok {
-		(*blobArchiveMap)[gf.blob.Mark] = append((*blobArchiveMap)[gf.blob.Mark], gf.ID)
-		gf.duplicateArchive = true
-	} else {
-		(*blobArchiveMap)[gf.blob.Mark] = []int{gf.ID}
-	}
-	gf.blob.Data = "" // Allow contents to be GC'ed
-	gf.blobDataRemoved = true
+	b.saved = true
+	b.blob.Data = "" // Allow contents to be GC'ed
+	b.dataRemoved = true
 	return nil
 }
 
-func (gf *GitFile) CreateArchiveFile(depotRoot string, blobArchiveMap *BlobArchiveMap, gitFileMap *GitFileMap, changeNo int) {
-	if gf.action == delete || gf.action == rename || !gf.hasBlobData {
+func (gf *GitFile) CreateArchiveFile(depotRoot string, matcher *BlobFileMatcher, changeNo int) {
+	if gf.action == delete || gf.action == rename || !gf.blob.hasData {
 		return
 	}
 	depotFile := strings.ReplaceAll(gf.depotFile[2:], "@", "%40")
 	rootDir := path.Join(depotRoot, fmt.Sprintf("%s,d", depotFile))
-	if gf.blobFileName == "" {
+	if gf.blob.blobFileName == "" {
 		gf.logger.Debugf(fmt.Sprintf("NoBlobFound: %s", depotFile))
 		return
 	}
-	bname := path.Join(depotRoot, gf.blobDirPath, gf.blobFileName)
+	bname := path.Join(depotRoot, gf.blob.blobDirPath, gf.blob.blobFileName)
 	fname := path.Join(rootDir, fmt.Sprintf("1.%d", changeNo))
 	if gf.compressed {
-		bname = path.Join(depotRoot, gf.blobDirPath, fmt.Sprintf("%s.gz", gf.blobFileName))
+		bname = path.Join(depotRoot, gf.blob.blobDirPath, fmt.Sprintf("%s.gz", gf.blob.blobFileName))
 		fname = path.Join(rootDir, fmt.Sprintf("1.%d.gz", changeNo))
 	}
 	gf.logger.Debugf("CreateArchiveFile: %s -> %s", bname, fname)
@@ -469,21 +541,6 @@ func (gf *GitFile) CreateArchiveFile(depotRoot string, blobArchiveMap *BlobArchi
 			gf.logger.Errorf("Failed to Rename: %v", err)
 		}
 		return
-	}
-	// We expect a duplicate
-	origIDs, ok := (*blobArchiveMap)[gf.blob.Mark]
-	if ok {
-		if len(origIDs) > 0 {
-			if origGF, ok := (*gitFileMap)[origIDs[0]]; ok {
-				gf.lbrFile = origGF.lbrFile
-				gf.lbrRev = origGF.lbrRev
-				gf.logger.Debugf("Duplicate of: %s %d", gf.lbrFile, gf.lbrRev)
-			} else {
-				gf.logger.Errorf("Failed to find GitFile ID: %d %s", origIDs[0], gf.depotFile)
-			}
-		} else {
-			gf.logger.Errorf("Failed to find GitFile ID2: %d %s", origIDs[0], gf.depotFile)
-		}
 	}
 }
 
@@ -557,6 +614,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			g.logger.Infof("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
 			size := len(blob.Data)
 			commitSize += size
+			gb := newGitBlob(&blob)
 			// We write the blobs as we go to avoid using up too much memory
 			if saveFiles {
 				err = writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
@@ -565,7 +623,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 				}
 			}
 			blob.Data = "" // Allow GC to avoid holding on to memory
-			files[blob.Mark] = newGitFile(&GitFile{blob: &blob, hasBlobData: true, size: size, logger: g.logger})
+			files[blob.Mark] = newGitFile(&GitFile{blob: gb, size: size, logger: g.logger})
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Infof("Reset: - %+v", reset)
@@ -593,10 +651,10 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			gf, ok := files[oid]
 			if ok {
 				gf.name = f.Path.String()
-				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.Mark)
+				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.blob.Mark)
 				gf.archiveFile = archName
 				g.logger.Infof("Path:%s Size:%d/%s Archive:%s", gf.name, gf.size, Humanize(gf.size), gf.archiveFile)
-				currCommit.files = append(currCommit.files, *gf)
+				currCommit.files = append(currCommit.files, gf)
 			}
 		case libfastimport.FileDelete:
 			f := cmd.(libfastimport.FileDelete)
@@ -658,27 +716,13 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 			gf.p4action = journal.Add
 		}
 	}
-	if gf.duplicateArchive { // Update to point to original archive
-		if origIDs, ok := g.blobArchiveMap[gf.blob.Mark]; ok {
-			if len(origIDs) > 0 {
-				if origGF, ok := g.gitFileMap[origIDs[0]]; ok {
-					gf.lbrFile = origGF.lbrFile
-					gf.lbrRev = origGF.lbrRev
-					g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-					g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
-				} else {
-					g.logger.Errorf("Failed to find duplicate archive1: %d %s", origIDs[0], gf.depotFile)
-				}
-			} else {
-				g.logger.Errorf("Failed to find duplicate archive2: %d %s", gf.blob.Mark, gf.depotFile)
-			}
-		} else {
-			g.logger.Errorf("Failed to find duplicate archive3: %d %s", gf.blob.Mark, gf.depotFile)
-		}
+	if gf.duplicateArchive {
+		g.blobFileMatcher.updateDuplicateGitFile(gf)
+		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 	}
 	if gf.srcName == "" { // Simple modify
 		g.recordDepotFileType(gf)
-		g.gitFileMap[gf.ID] = gf
 		return
 	}
 	if gf.action != delete {
@@ -721,7 +765,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 	} else { // Copy/branch
 		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 		gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
-		if !gf.hasBlobData || gf.isMerge { // Copied but changed
+		if !gf.blob.hasData || gf.isMerge { // Copied but changed
 			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
 			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
 			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
@@ -805,7 +849,7 @@ func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
 		for i := range currCommit.files {
 			currCommit.files[i].setDepotPaths(g.opts, currCommit)
 			currCommit.files[i].updateFileDetails()
-			g.updateDepotRevs(&currCommit.files[i], currCommit.commit.Mark)
+			g.updateDepotRevs(currCommit.files[i], currCommit.commit.Mark)
 		}
 		g.gitChan <- *currCommit
 	}
@@ -831,8 +875,6 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	g.opts = options
 
 	g.gitChan = make(chan GitCommit, 50)
-	blobFiles := make(map[int]*GitFile, 0) // Index by blob ID (mark)
-	blobRefCount := make(map[int]int, 0)   // Index by blob ID (mark) - detect duplicate blob refs
 	var currCommit *GitCommit
 	var commitSize = 0
 
@@ -860,10 +902,10 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.CmdBlob:
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-				blobFiles[blob.Mark] = newGitFile(&GitFile{blob: &blob, hasBlobData: true, action: modify, logger: g.logger})
+				b := newGitBlob(&blob)
+				g.blobFileMatcher.addBlob(b)
 				commitSize += len(blob.Data)
-				blobFiles[blob.Mark].SaveBlob(pool, g.opts.archiveRoot, &g.blobArchiveMap)
-				blobRefCount[blob.Mark] = 0
+				b.SaveBlob(pool, g.opts.archiveRoot, g.blobFileMatcher)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
@@ -884,46 +926,41 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				if err != nil {
 					g.logger.Errorf("Failed to get oid: %+v", f)
 				}
-				if gf, ok := blobFiles[oid]; ok {
-					blobRefCount[oid] += 1
-					if origIDs, ok := g.blobArchiveMap[oid]; !ok {
-						gf.name = f.Path.String()
-					} else if len(origIDs) == 0 {
-						g.logger.Errorf("Failed to find blob: %d", oid)
-					} else { // Duplicate
-						if gf.ID == origIDs[0] && blobRefCount[oid] == 1 {
-							gf.name = f.Path.String()
-						} else {
-							gfOrig := gf
-							gf = newGitFile(&GitFile{name: f.Path.String(), action: modify,
-								duplicateArchive: true, fileType: gfOrig.fileType, compressed: gfOrig.compressed,
-								logger: g.logger})
-							gf.blob = &libfastimport.CmdBlob{Mark: gfOrig.blob.Mark}
-							g.blobArchiveMap[oid] = append(g.blobArchiveMap[oid], gf.ID)
-						}
+				var gf *GitFile
+				b := g.blobFileMatcher.getBlob(oid)
+				if b != nil {
+					if len(b.gitFileIDs) == 0 {
+						gf = newGitFile(&GitFile{name: f.Path.String(), action: modify,
+							blob: b, fileType: b.fileType, compressed: b.compressed,
+							logger: g.logger})
+					} else {
+						gf = newGitFile(&GitFile{name: f.Path.String(), action: modify,
+							blob: b, fileType: b.fileType, compressed: b.compressed,
+							duplicateArchive: true, logger: g.logger})
 					}
-					currCommit.files = append(currCommit.files, *gf)
-					node.addFile(gf.name)
+					g.blobFileMatcher.addGitFile(gf)
 				} else {
-					g.logger.Errorf("Failed to find blob: %+v", f)
+					g.logger.Errorf("Failed to find blob: %d", oid)
 				}
+				currCommit.files = append(currCommit.files, gf)
+				node.addFile(gf.name)
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s", f.Path)
 				gf := newGitFile(&GitFile{name: f.Path.String(), action: delete, logger: g.logger})
-				currCommit.files = append(currCommit.files, *gf)
+				currCommit.files = append(currCommit.files, gf)
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
 				gf := newGitFile(&GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy, logger: g.logger})
-				currCommit.files = append(currCommit.files, *gf)
+				currCommit.files = append(currCommit.files, gf)
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
 				// Look for renames of dirs vs files
 				if node.findFile(f.Src.String()) {
 					gf := newGitFile(&GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename, logger: g.logger})
-					currCommit.files = append(currCommit.files, *gf)
+					currCommit.files = append(currCommit.files, gf)
 					node.addFile(gf.name)
 				} else {
 					files := node.getFiles(f.Src.String())
@@ -943,7 +980,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							if g.isSrcDeletedFile(gf) {
 								g.logger.Debugf("DirFileRenameIgnoreDeleted: Src:%s", rf)
 							} else {
-								currCommit.files = append(currCommit.files, *gf)
+								currCommit.files = append(currCommit.files, gf)
 								node.addFile(gf.name)
 							}
 						}
@@ -1077,10 +1114,10 @@ func main() {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
-				f.CreateArchiveFile(opts.archiveRoot, &g.blobArchiveMap, &g.gitFileMap, c.commit.Mark)
-			} else if f.blob != nil && f.hasBlobData && !f.blobDataRemoved {
-				f.blob.Data = "" // Allow contents to be GC'ed
-				f.blobDataRemoved = true
+				f.CreateArchiveFile(opts.archiveRoot, g.blobFileMatcher, c.commit.Mark)
+			} else if f.blob != nil && f.blob.hasData && !f.blob.dataRemoved {
+				f.blob.blob.Data = "" // Allow contents to be GC'ed
+				f.blob.dataRemoved = true
 			}
 			f.WriteJournal(&j, &c)
 		}

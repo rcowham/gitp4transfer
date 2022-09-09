@@ -176,7 +176,7 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) str
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.CreateArchiveFile(p4t.serverRoot, &g.blobArchiveMap, &g.gitFileMap, c.commit.Mark)
+			f.CreateArchiveFile(p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 			f.WriteJournal(&j, &c)
 		}
 	}
@@ -272,7 +272,7 @@ func TestAdd(t *testing.T) {
 
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
-	f.CreateArchiveFile(p4t.serverRoot, &g.blobArchiveMap, &g.gitFileMap, c.commit.Mark)
+	f.CreateArchiveFile(p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 	result, err := runCmd("p4 storage -r")
