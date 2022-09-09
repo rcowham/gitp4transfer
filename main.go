@@ -465,46 +465,46 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, matcher *B
 		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", b.blobFileName))
 		matcher.logger.Debugf("SavingBlob: %s", fname)
 		data := b.blob.Data
-		// pool.Submit(func(rootDir string, fname string, data string) func() {
-		// 	return func() {
-		err := os.MkdirAll(rootDir, 0755)
-		if err != nil {
-			panic(err)
-		}
-		f, err := os.Create(fname)
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-		zw := gzip.NewWriter(f)
-		defer zw.Close()
-		_, err = zw.Write([]byte(data))
-		if err != nil {
-			panic(err)
-		}
-		// 	}
-		// }(rootDir, fname, gf.blob.Data))
+		pool.Submit(func(rootDir string, fname string, data string) func() {
+			return func() {
+				err := os.MkdirAll(rootDir, 0755)
+				if err != nil {
+					panic(err)
+				}
+				f, err := os.Create(fname)
+				if err != nil {
+					panic(err)
+				}
+				defer f.Close()
+				zw := gzip.NewWriter(f)
+				defer zw.Close()
+				_, err = zw.Write([]byte(data))
+				if err != nil {
+					panic(err)
+				}
+			}
+		}(rootDir, fname, data))
 	} else {
 		fname := path.Join(rootDir, b.blobFileName)
 		matcher.logger.Debugf("SavingBlob: %s", fname)
 		data := b.blob.Data
-		// pool.Submit(func(rootDir string, fname string, data string) func() {
-		// 	return func() {
-		err := os.MkdirAll(rootDir, 0755)
-		if err != nil {
-			panic(err)
-		}
-		f, err := os.Create(fname)
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-		fmt.Fprint(f, data)
-		if err != nil {
-			panic(err)
-		}
-		// 	}
-		// }(rootDir, fname, gf.blob.Data))
+		pool.Submit(func(rootDir string, fname string, data string) func() {
+			return func() {
+				err := os.MkdirAll(rootDir, 0755)
+				if err != nil {
+					panic(err)
+				}
+				f, err := os.Create(fname)
+				if err != nil {
+					panic(err)
+				}
+				defer f.Close()
+				fmt.Fprint(f, data)
+				if err != nil {
+					panic(err)
+				}
+			}
+		}(rootDir, fname, data))
 	}
 	b.saved = true
 	b.blob.Data = "" // Allow contents to be GC'ed
@@ -830,15 +830,6 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 		// Potential for more than one merge, but we just log an error for now
 		g.logger.Errorf("Commit mark %d has %d merges", currCommit.commit.Mark, len(currCommit.commit.Merge))
 	}
-}
-
-// Record what
-func (g *GitP4Transfer) recordBlobGitFileEntry() {
-
-}
-
-func (g *GitP4Transfer) recordBlobEntry() {
-
 }
 
 func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
