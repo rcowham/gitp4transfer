@@ -175,21 +175,23 @@ func getBlobIDPath(rootDir string, blobID int) (dir string, name string) {
 	return d, n
 }
 
-func writeBlob(rootDir string, blobID int, data *string) {
+func writeBlob(rootDir string, blobID int, data *string) error {
 	dir, name := getBlobIDPath(rootDir, blobID)
 	err := os.MkdirAll(dir, 0777)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to create %s: %v", dir, err)
+		return err
 	}
 	f, err := os.Create(name)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer f.Close()
 	fmt.Fprint(f, *data)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 var gitFileID = 0 // Unique ID - set by newGitFile
@@ -557,7 +559,10 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			commitSize += size
 			// We write the blobs as we go to avoid using up too much memory
 			if saveFiles {
-				writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
+				err = writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
+				if err != nil {
+					g.logger.Errorf("writeBlob: %+v", err)
+				}
 			}
 			blob.Data = "" // Allow GC to avoid holding on to memory
 			files[blob.Mark] = newGitFile(&GitFile{blob: &blob, hasBlobData: true, size: size, logger: g.logger})
