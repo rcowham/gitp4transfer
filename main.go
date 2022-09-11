@@ -41,28 +41,9 @@ func Humanize(b int) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
-func copyFile(in, out string) error {
-	i, err := os.Open(in)
-	if err != nil {
-		return err
-	}
-	defer i.Close()
-	o, err := os.Create(out)
-	if err != nil {
-		return err
-	}
-	defer o.Close()
-	_, err = o.ReadFrom(i)
-	return err
-}
-
-const defaultBranch = "main"
-
 type GitParserOptions struct {
 	gitImportFile string
-	extractFiles  bool
 	archiveRoot   string
-	createJournal bool
 	dryRun        bool
 	importDepot   string
 	importPath    string // After depot and branch
@@ -210,7 +191,7 @@ type GitBlob struct {
 }
 
 func newGitBlob(blob *libfastimport.CmdBlob) *GitBlob {
-	b := &GitBlob{blob: blob, hasData: true, gitFileIDs: make([]int, 0)}
+	b := &GitBlob{blob: blob, hasData: true, gitFileIDs: make([]int, 0), fileType: journal.CText}
 	if blob != nil { // Construct a suitable filename
 		filename := fmt.Sprintf("%07d", b.blob.Mark)
 		b.blobFileName = filename
@@ -256,18 +237,6 @@ func (m *BlobFileMatcher) getBlob(blobID int) *GitBlob {
 	} else {
 		m.logger.Errorf("Failed to find blob: %d", blobID)
 		return nil
-	}
-}
-
-// Marks blob as saved - if not first call, then will set duplicate flag
-func (m *BlobFileMatcher) markBlobSaved(gf *GitFile) {
-	if b, ok := m.blobMap[gf.blob.blob.Mark]; ok {
-		b.gitFileIDs = append(b.gitFileIDs, gf.ID)
-		if len(b.gitFileIDs) > 1 {
-			gf.duplicateArchive = true
-		}
-	} else {
-		m.logger.Errorf("Failed to find blob: %d", gf.blob.blob.Mark)
 	}
 }
 
@@ -319,6 +288,9 @@ type GitFile struct {
 func newGitFile(gf *GitFile) *GitFile {
 	gitFileID += 1
 	gf.ID = gitFileID
+	if gf.fileType == 0 {
+		gf.fileType = journal.CText // Default - may be overwritten later
+	}
 	gf.updateFileDetails()
 	return gf
 }
@@ -347,10 +319,6 @@ func newGitCommit(commit *libfastimport.CmdCommit, commitSize int) *GitCommit {
 	return gc
 }
 
-func (gc *GitCommit) writeCommit(j *journal.Journal) {
-	j.WriteChange(gc.commit.Mark, gc.commit.Msg, int(gc.commit.Author.Time.Unix()))
-}
-
 type CommitMap map[int]*GitCommit
 
 type RevChange struct { // Struct to remember revs and changes per depotFile
@@ -363,7 +331,6 @@ type RevChange struct { // Struct to remember revs and changes per depotFile
 
 // GitP4Transfer - Transfer via git fast-export file
 type GitP4Transfer struct {
-	exportFile      string
 	logger          *logrus.Logger
 	gitChan         chan GitCommit
 	opts            GitParserOptions
@@ -548,11 +515,14 @@ func (gf *GitFile) CreateArchiveFile(depotRoot string, matcher *BlobFileMatcher,
 func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	dt := int(c.commit.Author.Time.Unix())
 	chgNo := c.commit.Mark
+	if gf.fileType == 0 {
+		gf.logger.Errorf("Unexpected filetype text: %s#%d", gf.depotFile, gf.rev)
+	}
 	if gf.action == modify {
 		if gf.isBranch || gf.isMerge {
 			// we write rev for newly branched depot file, with link to old version
 			action := journal.Add
-			if gf.rev > 1 {
+			if gf.rev > 1 { // TODO
 				action = journal.Edit
 			}
 			j.WriteRev(gf.depotFile, gf.rev, action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)

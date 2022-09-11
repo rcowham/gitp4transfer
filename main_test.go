@@ -4,10 +4,8 @@ package main
 
 import (
 	"bytes"
-	"compress/gzip"
 	"flag"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,12 +36,6 @@ func createGitRepo(t *testing.T) string {
 	d := t.TempDir()
 	os.Chdir(d)
 	runCmd("git init -b main")
-	return d
-}
-
-func createP4DRepo(t *testing.T) string {
-	d := t.TempDir()
-	os.Chdir(d)
 	return d
 }
 
@@ -129,25 +121,13 @@ func writeToTempFile(contents string) string {
 	return f.Name()
 }
 
-func zipBuf(data string) bytes.Buffer {
-	var b bytes.Buffer
-	gz := gzip.NewWriter(&b)
-	if _, err := gz.Write([]byte(data)); err != nil {
-		log.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		log.Fatal(err)
-	}
-	return b
-}
-
 func createLogger() *logrus.Logger {
 	if logger != nil {
 		return logger
 	}
 	logger = logrus.New()
 	logger.Level = logrus.InfoLevel
-	if *&debug {
+	if debug {
 		logger.Level = logrus.DebugLevel
 	}
 	return logger
@@ -196,7 +176,7 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) str
 
 func runTransfer(t *testing.T, logger *logrus.Logger) string {
 	// fast-export with rename detection implemented
-	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
+	output, err := runCmd("git fast-export --all -M")
 	if err != nil {
 		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
 	}
@@ -217,7 +197,7 @@ func TestAdd(t *testing.T) {
 	runCmd("git commit -m initial")
 
 	// fast-export with rename detection implemented
-	output, err := runCmd(fmt.Sprintf("git fast-export --all -M"))
+	output, err := runCmd("git fast-export --all -M")
 	if err != nil {
 		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
 	}
@@ -275,10 +255,10 @@ func TestAdd(t *testing.T) {
 	f.CreateArchiveFile(p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
-	result, err := runCmd("p4 storage -r")
+	runCmd("p4 storage -r")
 	// assert.Equal(t, nil, err)
 	// assert.Equal(t, "Phase 1 of the storage upgrade has finished.\n", result)
-	result, err = runCmd("p4 files //...")
+	result, err := runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
 	result, err = runCmd("p4 verify -qu //...")
