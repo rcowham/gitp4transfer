@@ -279,6 +279,9 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 	chgNo int, lbrFile string, lbrRev int, chgTime int) {
 
 	const md5 = "00000000000000000000000000000000"
+	if fileType == 0 {
+		fileType = CText
+	}
 	lbrType := fileType
 
 	depotFile = strings.ReplaceAll(depotFile, "@", "%40")
