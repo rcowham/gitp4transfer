@@ -666,6 +666,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		g.depotFileRevs[gf.depotFile] = &RevChange{rev: 0, chgNo: chgNo, lbrRev: chgNo,
 			lbrFile: gf.depotFile, action: gf.action}
 	}
+	// if gf.action == delete && g.depotFileRevs[gf.depotFile].rev != 0 { // Get filetype of previous rev before we increment it
 	if gf.action == delete {
 		gf.fileType = g.getDepotFileTypes(gf.depotFile, g.depotFileRevs[gf.depotFile].rev)
 	}
@@ -691,7 +692,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
 		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 	}
-	if gf.srcName == "" { // Simple modify
+	if gf.srcName == "" { // Simple modify or delete
 		g.recordDepotFileType(gf)
 		return
 	}
@@ -746,11 +747,12 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		}
 		g.recordDepotFileType(gf)
 	}
-	g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d",
+	g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
 		gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
 		g.depotFileRevs[gf.depotFile].action,
 		g.depotFileRevs[gf.depotFile].lbrFile,
-		g.depotFileRevs[gf.depotFile].lbrRev)
+		g.depotFileRevs[gf.depotFile].lbrRev,
+		gf.fileType)
 }
 
 // Maintain a list of latest revision counters indexed by depotFile/rev
@@ -763,6 +765,7 @@ func (g *GitP4Transfer) recordDepotFileType(gf *GitFile) {
 func (g *GitP4Transfer) getDepotFileTypes(depotFile string, rev int) journal.FileType {
 	k := fmt.Sprintf("%s#%d", depotFile, rev)
 	if _, ok := g.depotFileTypes[k]; !ok {
+		g.logger.Errorf("Failed to find filetype: %s#%d", depotFile, rev)
 		return 0
 	}
 	return g.depotFileTypes[k]
@@ -840,6 +843,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	var commitSize = 0
 
 	missingRenameLogged := false
+	missingDeleteLogged := false
 	node := &Node{name: ""}
 
 	// Create an unbuffered (blocking) pool with a fixed
@@ -908,8 +912,45 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s", f.Path)
-				gf := newGitFile(&GitFile{name: f.Path.String(), action: delete, logger: g.logger})
-				currCommit.files = append(currCommit.files, gf)
+				// Look for delete of dirs vs files
+				if node.findFile(f.Path.String()) {
+					gf := newGitFile(&GitFile{name: f.Path.String(), action: delete, logger: g.logger})
+					currCommit.files = append(currCommit.files, gf)
+					node.addFile(gf.name)
+				} else {
+					files := node.getFiles(f.Path.String())
+					if len(files) > 0 {
+						g.logger.Debugf("DirDelete: Path:%s", f.Path)
+						for _, df := range files {
+							if !hasPrefix(df, f.Path.String()) {
+								g.logger.Errorf("Unexpected path found: %s: %s", f.Path.String(), df)
+								continue
+							}
+							g.logger.Debugf("DirFileDelete: Path:%s", df)
+							gf := newGitFile(&GitFile{name: df, action: delete, logger: g.logger})
+							// Have to set up depot paths to be able to look up deleted files.
+							g.setBranch(currCommit)
+							gf.setDepotPaths(g.opts, currCommit)
+							if g.isSrcDeletedFile(gf) {
+								g.logger.Debugf("DirFileDeleteIgnoreDeleted: Path:%s", df)
+							} else {
+								currCommit.files = append(currCommit.files, gf)
+								node.addFile(gf.name)
+							}
+						}
+					} else {
+						g.logger.Errorf("FileDeleteMissing: Path:%s", f.Path.String())
+						if g.logger.IsLevelEnabled(logrus.DebugLevel) && !missingDeleteLogged {
+							missingDeleteLogged = true // only do it once
+							nodeFiles := node.getFiles("")
+							g.logger.Debugf("nodeFiles:")
+							for _, s := range nodeFiles {
+								g.logger.Debug(s)
+							}
+						}
+					}
+				}
+
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)

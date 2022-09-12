@@ -4,8 +4,11 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"flag"
 	"fmt"
+	"io/ioutil"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -37,6 +40,21 @@ func createGitRepo(t *testing.T) string {
 	os.Chdir(d)
 	runCmd("git init -b main")
 	return d
+}
+
+func unzipBuf(data string) string {
+	gz, err := gzip.NewReader(bytes.NewReader([]byte(data)))
+	if err != nil {
+		log.Fatal(err)
+	}
+	buf, err := ioutil.ReadAll(gz)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		log.Fatal(err)
+	}
+	return string(buf)
 }
 
 type P4Test struct {
@@ -934,6 +952,74 @@ func TestRenameDirWithDelete(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
 }
 
+func TestDeleteDir(t *testing.T) {
+	// Git rename of a dir consisting of multiple files - expand to constituent parts
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src1 := filepath.Join("src", "file.txt")
+	src2 := filepath.Join("src", "file2.txt")
+	srcContents1 := "contents\n"
+	runCmd("mkdir src")
+	writeToFile(src1, srcContents1)
+	writeToFile(src2, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git rm -r src")
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
+
+	// fast-export with rename detection implemented - to tweak to directory rename
+	output, err := runCmd("git fast-export --all -M")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Output: %s", output)
+	lines := strings.Split(output, "\n")
+	logger.Debugf("Len: %d", len(lines))
+	newLines := lines[:len(lines)-4]
+	logger.Debugf("Len new: %d", len(newLines))
+	newLines = append(newLines, "D src")
+	newLines = append(newLines, "")
+	newOutput := strings.Join(newLines, "\n")
+	logger.Debugf("Changed output: %s", newOutput)
+
+	r := runTransferWithDump(t, logger, newOutput)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/file.txt#1 - add change 2 (text+C)
+//import/main/src/file2.txt#1 - add change 2 (text+C)
+`, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src/file.txt#1")
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Equal(t, nil, err)
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/file.txt#2 - delete change 3 (text+C)
+//import/main/src/file2.txt#2 - delete change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src/file.txt#2")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.NotRegexp(t, `lbrType`, result)
+	assert.NotRegexp(t, `lbrFile`, result)
+	assert.NotRegexp(t, `(?m)lbrPath`, result)
+}
+
 func TestBranch(t *testing.T) {
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
@@ -1395,5 +1481,103 @@ func TestBranchDelete(t *testing.T) {
 	// assert.Regexp(t, `lbrType text\+C`, result)
 	// assert.Regexp(t, `lbrFile //import/branch1/file1.txt`, result)
 	// assert.Regexp(t, `(?m)lbrPath .*/1.6.gz$`, result)
+
+}
+
+func TestBranchMergeCompressed(t *testing.T) {
+	// Merge branches with a file already compressed
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.png"
+	file2 := "file2.png"
+	file3 := "file3.png"
+	contents1 := "Contents\n"
+	contents2 := "Test content2\n"
+	contents3 := "Test content3\n"
+	writeToFile(file1, contents1)
+	runCmd(fmt.Sprintf("gzip %s", file1))
+	runCmd(fmt.Sprintf("mv %s.gz %s", file1, file1))
+	runCmd("git add .")
+	runCmd("git commit -m \"1: first change\"")
+	runCmd("git checkout -b branch1")
+	runCmd("git add .")
+	bcontents1 := "branch change\n"
+	writeToFile(file1, contents1+bcontents1)
+	runCmd(fmt.Sprintf("gzip %s", file1))
+	runCmd(fmt.Sprintf("mv %s.gz %s", file1, file1))
+	runCmd("git add .")
+	runCmd("git commit -m \"2: branch edit change\"")
+	writeToFile(file3, contents3)
+	runCmd(fmt.Sprintf("gzip %s", file3))
+	runCmd(fmt.Sprintf("mv %s.gz %s", file3, file3))
+	runCmd("git add .")
+	runCmd("git commit -m \"3: branch add file\"")
+	runCmd("git checkout main")
+	writeToFile(file2, contents2)
+	runCmd(fmt.Sprintf("gzip %s", file2))
+	runCmd(fmt.Sprintf("mv %s.gz %s", file2, file2))
+	runCmd("git add .")
+	runCmd("git commit -m \"4: new file on main\"")
+	runCmd("git merge --no-edit branch1")
+	runCmd("git commit -m \"5: merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/branch1/file1.png#1 - add change 6 (binary+F)
+//import/branch1/file3.png#1 - add change 8 (binary+F)
+//import/main/file1.png#2 - edit change 9 (binary+F)
+//import/main/file2.png#1 - add change 4 (binary+F)
+//import/main/file3.png#1 - add change 9 (binary+F)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 filelog //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `(?m)//import/branch1/file1.png
+\.\.\. #1 change 6 add on .* by git-user@git-client \(binary\+F\).*
+\.\.\. \.\.\. edit into //import/main/file1.png#2
+\.\.\. \.\.\. branch from //import/main/file1.png#1`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file1.png
+\.\.\. #2 change 9 edit on .* by git-user@git-client \(binary\+F\).*
+\.\.\. \.\.\. branch from //import/branch1/file1.png#1
+\.\.\. #1 change 2 add on .* by git-user@git-client \(binary\+F\).*
+\.\.\. \.\.\. edit into //import/branch1/file1.png#1`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file2.png
+\.\.\. #1 change 4 add on .* by git-user@git-client \(binary\+F\).*`, result)
+
+	result, err = runCmd("p4 print -q //import/main/file2.png#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents2, unzipBuf(result))
+
+	bcontents2 := fmt.Sprintf("%s%s", contents1, bcontents1)
+	result, err = runCmd("p4 print -q //import/branch1/file1.png")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, bcontents2, unzipBuf(result))
+
+	result, err = runCmd("p4 print -q //import/main/file1.png#2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, bcontents2, unzipBuf(result))
+
+	result, err = runCmd("p4 fstat -Ob //import/main/file1.png#2")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType binary\+F`, result)
+	assert.Regexp(t, `lbrType binary\+F`, result)
+	assert.Regexp(t, `lbrFile //import/branch1/file1.png`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.6$`, result)
 
 }
