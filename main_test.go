@@ -1484,6 +1484,63 @@ func TestBranchDelete(t *testing.T) {
 
 }
 
+func TestBranchDelete2(t *testing.T) {
+	// Merge branches with deleted files
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.txt"
+	file2 := "file2.txt"
+	contents1 := "Contents\n"
+	contents2 := "Test content2\n"
+	writeToFile(file1, contents1)
+	writeToFile(file2, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m \"1: first change\"")
+	runCmd("git checkout -b branch1")
+	runCmd("git rm " + file1)
+	runCmd("git add .")
+	runCmd("git commit -m \"2: branch delete change\"")
+	runCmd("git checkout main")
+	runCmd("git merge --no-ff branch1")
+	runCmd("git commit -m \"4: merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/branch1/file1.txt#1 - delete change 4 (text+C)
+//import/main/file1.txt#2 - delete change 5 (text+C)
+//import/main/file2.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 filelog //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `(?m)//import/branch1/file1.txt
+\.\.\. #1 change 4 delete on .* by git-user@git-client \(text\+C\).*
+\.\.\. \.\.\. delete into //import/main/file1.txt#2`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file1.txt
+\.\.\. #2 change 5 delete on .* by git-user@git-client \(text\+C\).*
+\.\.\. \.\.\. delete from //import/branch1/file1.txt#1
+\.\.\. #1 change 3 add on .* by git-user@git-client \(text\+C\).*`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file2.txt
+\.\.\. #1 change 3 add on .* by git-user@git-client \(text\+C\).*`, result)
+
+}
+
 func TestBranchMergeCompressed(t *testing.T) {
 	// Merge branches with a file already compressed
 	logger := createLogger()

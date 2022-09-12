@@ -666,8 +666,7 @@ func (g *GitP4Transfer) updateDepotRevs(gf *GitFile, chgNo int) {
 		g.depotFileRevs[gf.depotFile] = &RevChange{rev: 0, chgNo: chgNo, lbrRev: chgNo,
 			lbrFile: gf.depotFile, action: gf.action}
 	}
-	// if gf.action == delete && g.depotFileRevs[gf.depotFile].rev != 0 { // Get filetype of previous rev before we increment it
-	if gf.action == delete {
+	if gf.action == delete && gf.srcName == "" {
 		gf.fileType = g.getDepotFileTypes(gf.depotFile, g.depotFileRevs[gf.depotFile].rev)
 	}
 	g.depotFileRevs[gf.depotFile].rev += 1
