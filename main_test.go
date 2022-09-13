@@ -1375,6 +1375,74 @@ func TestBranch2(t *testing.T) {
 
 }
 
+func TestBranchRename(t *testing.T) {
+	// Branch and add new file which is then renamed
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.txt"
+	file2 := "file2.txt"
+	file3 := "file3.txt"
+	contents1 := ""
+	contents2 := "new"
+	writeToFile(file1, contents1)
+	writeToFile(file2, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git switch -c dev")
+	runCmd(fmt.Sprintf("mv %s %s", file2, file3))
+	runCmd("git add .")
+	runCmd("git commit -m 'renamed on dev'")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/file2.txt#1 - delete change 4 (text+C)
+//import/dev/file3.txt#1 - add change 4 (text+C)
+//import/main/file1.txt#1 - add change 3 (text+C)
+//import/main/file2.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 print -q //import/main/file1.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents1, result)
+
+	result, err = runCmd("p4 print -q //import/dev/file3.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents2, result)
+
+	result, err = runCmd("p4 fstat -Ob //import/dev/file3.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrFile //import/main/file2.txt`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.3.gz$`, result)
+
+	result, err = runCmd("p4 filelog //import/dev/file2.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/dev/file2.txt`, result)
+	assert.Regexp(t, `\.\.\. #1 change 4 delete on .* by git-user@git-client.*
+\.\.\. \.\.\. branch into //import/dev/file3.txt#1`, result)
+
+	result, err = runCmd("p4 filelog //import/dev/file3.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/dev/file3.txt`, result)
+	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client.*
+\.\.\. \.\.\. branch from //import/dev/file2.txt#1`, result)
+
+}
+
 func TestBranchMerge(t *testing.T) {
 	// Merge branches
 	logger := createLogger()

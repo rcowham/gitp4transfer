@@ -158,6 +158,21 @@ const (
 	Binary  FileType = 0x00000103 // binary
 )
 
+func (f FileType) String() string {
+	switch f {
+	case UText:
+		return "UText"
+	case CText:
+		return "CText"
+	case UBinary:
+		return "UBinary"
+	case Binary:
+		return "Binary"
+	default:
+		return "Unknown"
+	}
+}
+
 type FileAction int
 
 const (
