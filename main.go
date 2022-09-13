@@ -822,7 +822,10 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 			if currCommit.branch != parent.branch {
 				currCommit.prevBranch = parent.branch
 			}
-			currCommit.parentBranch = parent.branch
+			currCommit.parentBranch = parent.parentBranch
+			if currCommit.parentBranch == "" {
+				currCommit.parentBranch = parent.branch
+			}
 		}
 	} else {
 		currCommit.branch = g.opts.defaultBranch

@@ -1387,13 +1387,16 @@ func TestBranchRename(t *testing.T) {
 	file1 := "file1.txt"
 	file2 := "file2.txt"
 	file3 := "file3.txt"
-	contents1 := ""
+	contents1 := "1"
 	contents2 := "new"
 	writeToFile(file1, contents1)
 	writeToFile(file2, contents2)
 	runCmd("git add .")
 	runCmd("git commit -m initial")
 	runCmd("git switch -c dev")
+	appendToFile(file1, contents1)
+	runCmd("git add .")
+	runCmd("git commit -m 'first on dev'")
 	runCmd(fmt.Sprintf("mv %s %s", file2, file3))
 	runCmd("git add .")
 	runCmd("git commit -m 'renamed on dev'")
@@ -1403,8 +1406,9 @@ func TestBranchRename(t *testing.T) {
 
 	result, err := runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/dev/file2.txt#1 - delete change 4 (text+C)
-//import/dev/file3.txt#1 - add change 4 (text+C)
+	assert.Equal(t, `//import/dev/file1.txt#1 - add change 5 (text+C)
+//import/dev/file2.txt#1 - delete change 6 (text+C)
+//import/dev/file3.txt#1 - add change 6 (text+C)
 //import/main/file1.txt#1 - add change 3 (text+C)
 //import/main/file2.txt#1 - add change 3 (text+C)
 `,
@@ -1432,13 +1436,13 @@ func TestBranchRename(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/dev/file2.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file2.txt`, result)
-	assert.Regexp(t, `\.\.\. #1 change 4 delete on .* by git-user@git-client.*
+	assert.Regexp(t, `\.\.\. #1 change 6 delete on .* by git-user@git-client.*
 \.\.\. \.\.\. branch into //import/dev/file3.txt#1`, result)
 
 	result, err = runCmd("p4 filelog //import/dev/file3.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file3.txt`, result)
-	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client.*
+	assert.Regexp(t, `\.\.\. #1 change 6 add on .* by git-user@git-client.*
 \.\.\. \.\.\. branch from //import/dev/file2.txt#1`, result)
 
 }
