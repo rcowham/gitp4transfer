@@ -303,12 +303,13 @@ func newGitFile(gf *GitFile) *GitFile {
 
 // GitCommit - A git commit
 type GitCommit struct {
-	commit      *libfastimport.CmdCommit
-	branch      string // branch name
-	prevBranch  string // set if first commit on new branch
-	mergeBranch string // set if commit is a merge - assumes only 1 merge candidate!
-	commitSize  int    // Size of all files in this commit - useful for memory sizing
-	files       []*GitFile
+	commit       *libfastimport.CmdCommit
+	branch       string // branch name
+	prevBranch   string // set if first commit on new branch
+	parentBranch string // set to ancestor of current branch
+	mergeBranch  string // set if commit is a merge - assumes only 1 merge candidate!
+	commitSize   int    // Size of all files in this commit - useful for memory sizing
+	files        []*GitFile
 }
 
 // HasPrefix tests whether the string s begins with prefix.
@@ -720,7 +721,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		} else if gf.action == rename {
 			g.logger.Debugf("Rename of branched file: '%s' <- '%s'", gf.depotFile, gf.srcDepotFile)
 			// Create a record for the source of the rename referring to its branched source
-			depotPathOrig := gf.getDepotPath(opts, gf.commit.prevBranch, gf.srcName)
+			depotPathOrig := gf.getDepotPath(opts, gf.commit.parentBranch, gf.srcName)
 			if _, ok := g.depotFileRevs[depotPathOrig]; !ok {
 				g.logger.Errorf("Failed to find original file: '%s'", depotPathOrig)
 			} else {
@@ -821,6 +822,7 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 			if currCommit.branch != parent.branch {
 				currCommit.prevBranch = parent.branch
 			}
+			currCommit.parentBranch = parent.branch
 		}
 	} else {
 		currCommit.branch = g.opts.defaultBranch
