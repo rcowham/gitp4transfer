@@ -151,12 +151,18 @@ func createLogger() *logrus.Logger {
 	return logger
 }
 
-func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string) string {
+func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opts *GitParserOptions) string {
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
 	p4t := MakeP4Test(t.TempDir())
-	opts := GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
-	commitChan := g.GitParse(opts)
+	if opts != nil {
+		opts.archiveRoot = p4t.serverRoot
+		opts.importDepot = "import"
+		opts.defaultBranch = "main"
+	} else {
+		opts = &GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
+	}
+	commitChan := g.GitParse(*opts)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
 	for c := range commitChan {
@@ -198,7 +204,16 @@ func runTransfer(t *testing.T, logger *logrus.Logger) string {
 	if err != nil {
 		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
 	}
-	return runTransferWithDump(t, logger, output)
+	return runTransferWithDump(t, logger, output, nil)
+}
+
+func runTransferOpts(t *testing.T, logger *logrus.Logger, opts *GitParserOptions) string {
+	// fast-export with rename detection implemented
+	output, err := runCmd("git fast-export --all -M")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	return runTransferWithDump(t, logger, output, opts)
 }
 
 func TestAdd(t *testing.T) {
@@ -352,6 +367,50 @@ func TestAddEdit(t *testing.T) {
 	assert.Regexp(t, `lbrType text\+C`, result)
 	assert.Regexp(t, `lbrRev 1.2`, result)
 	assert.Regexp(t, `lbrRev 1.4`, result)
+}
+
+func TestMaxCommits(t *testing.T) {
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	src := "src.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	srcContents2 := "contents\nappended\n"
+	writeToFile(src, srcContents2)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	r := runTransferOpts(t, logger, &GitParserOptions{maxCommits: 1})
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/src.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 print -q //import/main/src.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents1, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrPath .*/1.2.gz`, result)
+
+	result, err = runCmd("p4 changes")
+	assert.Equal(t, nil, err)
+	assert.NotRegexp(t, `Change 4 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
 }
 
 func TestAddSameFile(t *testing.T) {
@@ -846,7 +905,7 @@ func TestRenameDir(t *testing.T) {
 	newOutput := strings.Join(newLines, "\n")
 	logger.Debugf("Changed output: %s", newOutput)
 
-	r := runTransferWithDump(t, logger, newOutput)
+	r := runTransferWithDump(t, logger, newOutput, nil)
 	logger.Debugf("Server root: %s", r)
 
 	result, err := runCmd("p4 files //...@2")
@@ -923,7 +982,7 @@ func TestRenameDirWithDelete(t *testing.T) {
 	newOutput := strings.Join(newLines, "\n")
 	logger.Debugf("Changed output: %s", newOutput)
 
-	r := runTransferWithDump(t, logger, newOutput)
+	r := runTransferWithDump(t, logger, newOutput, nil)
 	logger.Debugf("Server root: %s", r)
 
 	result, err := runCmd("p4 files //...@2")
@@ -988,7 +1047,7 @@ func TestDeleteDir(t *testing.T) {
 	newOutput := strings.Join(newLines, "\n")
 	logger.Debugf("Changed output: %s", newOutput)
 
-	r := runTransferWithDump(t, logger, newOutput)
+	r := runTransferWithDump(t, logger, newOutput, nil)
 	logger.Debugf("Server root: %s", r)
 
 	result, err := runCmd("p4 files //...@2")

@@ -48,6 +48,7 @@ type GitParserOptions struct {
 	importDepot   string
 	importPath    string // After depot and branch
 	defaultBranch string
+	maxCommits    int
 }
 
 type GitAction int
@@ -840,6 +841,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	g.gitChan = make(chan GitCommit, 50)
 	var currCommit *GitCommit
 	var commitSize = 0
+	commitCount := 0
 
 	missingRenameLogged := false
 	missingDeleteLogged := false
@@ -854,6 +856,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	go func() {
 		defer file.Close()
 		defer close(g.gitChan)
+		defer pool.StopAndWait()
 		for {
 			cmd, err := f.ReadCmd()
 			if err != nil {
@@ -883,6 +886,12 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
 				g.logger.Debugf("CommitEnd: %+v", commit)
+				commitCount += 1
+				if g.opts.maxCommits > 0 && commitCount >= g.opts.maxCommits {
+					g.logger.Infof("Processed %d commits", commitCount)
+					g.processCommit(currCommit)
+					return
+				}
 			case libfastimport.FileModify:
 				f := cmd.(libfastimport.FileModify)
 				g.logger.Debugf("FileModify: %+v", f)
@@ -1006,7 +1015,6 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			}
 		}
 		g.processCommit(currCommit)
-		pool.StopAndWait()
 	}()
 
 	return g.gitChan
@@ -1054,6 +1062,10 @@ func main() {
 			"dump.archives",
 			"Saving the contained archive contents if --dump is specified.",
 		).Short('a').Bool()
+		maxCommits = kingpin.Flag(
+			"max.commits",
+			"Max no of commits to process.",
+		).Short('m').Int()
 		dryrun = kingpin.Flag(
 			"dryrun",
 			"Don't actually create archive files.",
@@ -1092,6 +1104,7 @@ func main() {
 		archiveRoot:   *archive,
 		defaultBranch: *defaultBranch,
 		dryRun:        *dryrun,
+		maxCommits:    *maxCommits,
 	}
 
 	if *dump {
