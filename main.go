@@ -434,6 +434,7 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, matcher *B
 		return nil
 	}
 	b.setCompressionDetails()
+	matcher.logger.Debugf("BlobFileType: %d: %s", b.blob.Mark, b.fileType)
 	// Do the work in pool worker threads for concurrency, especially with compression
 	rootDir := path.Join(archiveRoot, b.blobDirPath)
 	if b.compressed {
@@ -674,7 +675,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		g.depotFileRevs[gf.depotFile] = &RevChange{rev: 0, chgNo: chgNo, lbrRev: chgNo,
 			lbrFile: gf.depotFile, action: gf.action}
 	}
-	if gf.action == delete && gf.srcName == "" {
+	if gf.action == delete && gf.srcName == "" && g.depotFileRevs[gf.depotFile].rev != 0 {
 		gf.fileType = g.getDepotFileTypes(gf.depotFile, g.depotFileRevs[gf.depotFile].rev)
 	}
 	g.depotFileRevs[gf.depotFile].rev += 1
@@ -953,6 +954,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							duplicateArchive: true, logger: g.logger})
 					}
 					g.blobFileMatcher.addGitFile(gf)
+					g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 				} else {
 					g.logger.Errorf("Failed to find blob: %d", oid)
 				}
