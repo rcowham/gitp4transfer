@@ -2,20 +2,22 @@
 
 This is experimental. This doc is notes for ToDo list etc.
 
+## Debugging
+
+For a single test (with debug output):
+
+    go test -run TestBranch -debug
+
 ## Todo
 
 * Report on everything
-* Write checkpoint (2004.1 format)
-  * What will happen with .gz for all files including text? Maybe just use filetypes and fix after upgrades?
 * Option to extract all
 * Need to rename branches, or remap them
-* When extracting file contents, consider multiple refs to same file
 ** Duplicate - or auto-write branch values?
+* Rename of file on a branch (not previously changed)
 
 Concerns:
 
-* Converts to string - should we leave as bytes?
-* Gzip in threads?
 * UTF encoding issues?
 
 ## Test Scenarios
