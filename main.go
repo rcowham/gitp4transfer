@@ -45,6 +45,7 @@ type GitParserOptions struct {
 	gitImportFile string
 	archiveRoot   string
 	dryRun        bool
+	dummyArchives bool
 	importDepot   string
 	importPath    string // After depot and branch
 	defaultBranch string
@@ -428,7 +429,8 @@ func getOID(dataref string) (int, error) {
 // SaveBlob will save it to a temp dir, e.g. 1234567 -> 1/234/1234567[.gz]
 // Later the file will be moved to the required depot location
 // Uses a provided pool to get concurrency
-func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, matcher *BlobFileMatcher) error {
+// Allow for dummy data to be saved (used to speed up large conversions to check structure)
+func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag bool, matcher *BlobFileMatcher) error {
 	if b.blob == nil || !b.hasData {
 		matcher.logger.Debugf("NoBlobToSave")
 		return nil
@@ -441,6 +443,9 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, matcher *B
 		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", b.blobFileName))
 		matcher.logger.Debugf("SavingBlob: %s", fname)
 		data := b.blob.Data
+		if dummyFlag {
+			data = fmt.Sprintf("%d", b.blob.Mark)
+		}
 		pool.Submit(func(rootDir string, fname string, data string) func() {
 			return func() {
 				err := os.MkdirAll(rootDir, 0755)
@@ -464,6 +469,9 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, matcher *B
 		fname := path.Join(rootDir, b.blobFileName)
 		matcher.logger.Debugf("SavingBlob: %s", fname)
 		data := b.blob.Data
+		if dummyFlag {
+			data = fmt.Sprintf("%d", b.blob.Mark)
+		}
 		pool.Submit(func(rootDir string, fname string, data string) func() {
 			return func() {
 				err := os.MkdirAll(rootDir, 0755)
@@ -914,7 +922,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				b := newGitBlob(&blob)
 				g.blobFileMatcher.addBlob(b)
 				commitSize += len(blob.Data)
-				b.SaveBlob(pool, g.opts.archiveRoot, g.blobFileMatcher)
+				b.SaveBlob(pool, g.opts.archiveRoot, g.opts.dummyArchives, g.blobFileMatcher)
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
@@ -1097,6 +1105,10 @@ func main() {
 			"default.branch",
 			"Name of default git branch.",
 		).Default("main").Short('b').String()
+		dummyArchives = kingpin.Flag(
+			"dummy",
+			"Create dummy (small) archive files - for quick analysis of large repos.",
+		).Bool()
 		dump = kingpin.Flag(
 			"dump",
 			"Dump git file, saving the contained archive contents.",
@@ -1147,6 +1159,7 @@ func main() {
 		archiveRoot:   *archive,
 		defaultBranch: *defaultBranch,
 		dryRun:        *dryrun,
+		dummyArchives: *dummyArchives,
 		maxCommits:    *maxCommits,
 	}
 
