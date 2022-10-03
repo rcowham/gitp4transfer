@@ -25,7 +25,7 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy]
+run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-graph <graphFile.dot>]
  
    or
 
@@ -33,6 +33,7 @@ run_conversion.sh -h
 
     -d          Debug
     -dummy      Create dummy archives as placeholders (no real content) - much faster
+    -graph      Create Graphviz output showing commit structure
     <P4Root>    Directory to use as resulting P4Root - will default to a tmp dir
     <git_fast_export> The (input) git fast-export format file (required)
 
@@ -51,6 +52,7 @@ declare -i Debug=0
 declare -i Dummy=0
 declare P4Root=""
 declare GitFile=""
+declare GraphFile=""
 declare ImportDepot="import"
 
 set +u
@@ -61,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         (-p) P4Root=$2; shiftArgs=1;;
         (-d) Debug=1;;
         (-dummy) Dummy=1;;
+        (-graph) GraphFile=$2; shiftArgs=1;;
         (-*) usage -h "Unknown command line option ($1)." && exit 1;;
         (*) GitFile=$1;;
     esac
@@ -87,8 +90,13 @@ DummyFlag=""
 if [[ $Dummy -ne 0 ]]; then
     DummyFlag="--dummy"
 fi
+GraphFlag=""
+if [[ ! -z $GraphFile ]]; then
+    GraphFlag="--graphfile=$GraphFile"
+fi
 
-./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $GraphFlag --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $GraphFlag --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
 pushd "$P4Root"
 
@@ -103,6 +111,7 @@ export P4CONFIG=.p4config
 
 rm -f dirs.txt
 p4 dirs "//import/*" | while read -e f; do echo "$f/..." >> dirs.txt; done
+echo "Verifying with -qu ..."
 parallel -a dirs.txt p4 verify -qu {} > verify.out 2>&1
 echo "Verify errors: $(wc -l verify.out)"
 

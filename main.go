@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"         // profiling only
 	_ "net/http/pprof" // profiling only
 	"os"
@@ -17,6 +18,8 @@ import (
 	"time"
 
 	"github.com/alitto/pond"
+	"github.com/goccy/go-graphviz"
+	"github.com/goccy/go-graphviz/cgraph"
 	"github.com/h2non/filetype"
 	"github.com/pkg/profile"
 	journal "github.com/rcowham/gitp4transfer/journal"
@@ -49,6 +52,7 @@ type GitParserOptions struct {
 	importDepot   string
 	importPath    string // After depot and branch
 	defaultBranch string
+	graphFile     string
 	maxCommits    int
 }
 
@@ -305,11 +309,12 @@ func newGitFile(gf *GitFile) *GitFile {
 // GitCommit - A git commit
 type GitCommit struct {
 	commit       *libfastimport.CmdCommit
-	branch       string // branch name
-	prevBranch   string // set if first commit on new branch
-	parentBranch string // set to ancestor of current branch
-	mergeBranch  string // set if commit is a merge - assumes only 1 merge candidate!
-	commitSize   int    // Size of all files in this commit - useful for memory sizing
+	branch       string       // branch name
+	prevBranch   string       // set if first commit on new branch
+	parentBranch string       // set to ancestor of current branch
+	mergeBranch  string       // set if commit is a merge - assumes only 1 merge candidate!
+	commitSize   int          // Size of all files in this commit - useful for memory sizing
+	gNode        *cgraph.Node // Optional link to GraphizNode
 	files        []*GitFile
 }
 
@@ -346,7 +351,8 @@ type GitP4Transfer struct {
 	depotFileTypes  map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
 	blobFileMatcher *BlobFileMatcher            // Map between gitfile ID and record
 	commits         map[int]*GitCommit
-	testInput       string // For testing only
+	testInput       string        // For testing only
+	graph           *cgraph.Graph // If outputting a graph
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
@@ -709,8 +715,8 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 	}
 	if gf.srcName == "" { // Simple modify or delete
 		g.recordDepotFileType(gf)
-		g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
-			gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
+		g.logger.Debugf("UDR1: Submit: %d, depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
+			gf.commit.commit.Mark, gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
 			g.depotFileRevs[gf.depotFile].action,
 			g.depotFileRevs[gf.depotFile].lbrFile,
 			g.depotFileRevs[gf.depotFile].lbrRev,
@@ -755,8 +761,8 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			gf.isMerge = false
 		}
 		g.recordDepotFileType(gf)
-		g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
-			gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
+		g.logger.Debugf("UDR2: Submit: %d, depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
+			gf.commit.commit.Mark, gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
 			g.depotFileRevs[gf.depotFile].action,
 			g.depotFileRevs[gf.depotFile].lbrFile,
 			g.depotFileRevs[gf.depotFile].lbrRev,
@@ -781,20 +787,31 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		g.recordDepotFileType(gf)
 	} else { // Copy/branch
 		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-		gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
-		if !gf.blob.hasData || gf.isMerge { // Copied but changed
-			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+		srcExists := g.depotFileTypeExists(gf.srcDepotFile, gf.srcRev)
+		if !srcExists {
+			g.logger.Debugf("UDR4: ")
+			gf.isMerge = false
+			gf.srcDepotFile = ""
+			gf.srcName = ""
+			gf.isMerge = false
 		} else {
-			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
+			if !gf.blob.hasData || gf.isMerge { // Copied but changed
+				g.logger.Debugf("UDR5: ")
+				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+			} else {
+				g.logger.Debugf("UDR6: ")
+				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+			}
 		}
 		g.recordDepotFileType(gf)
 	}
-	g.logger.Debugf("depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
-		gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
+	g.logger.Debugf("UDR3: Submit: %d, depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
+		gf.commit.commit.Mark, gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
 		g.depotFileRevs[gf.depotFile].action,
 		g.depotFileRevs[gf.depotFile].lbrFile,
 		g.depotFileRevs[gf.depotFile].lbrRev,
@@ -815,6 +832,12 @@ func (g *GitP4Transfer) getDepotFileTypes(depotFile string, rev int) journal.Fil
 		return 0
 	}
 	return g.depotFileTypes[k]
+}
+
+func (g *GitP4Transfer) depotFileTypeExists(depotFile string, rev int) bool {
+	k := fmt.Sprintf("%s#%d", depotFile, rev)
+	_, ok := g.depotFileTypes[k]
+	return ok
 }
 
 func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
@@ -855,17 +878,55 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 	}
 }
 
-func (g *GitP4Transfer) processCommit(currCommit *GitCommit) {
-	if currCommit != nil { // Process previous commit
-		g.setBranch(currCommit)
-		g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
-			currCommit.commit.Mark, len(currCommit.files), currCommit.commitSize, Humanize(currCommit.commitSize))
-		for i := range currCommit.files {
-			currCommit.files[i].setDepotPaths(g.opts, currCommit)
-			currCommit.files[i].updateFileDetails()
-			g.updateDepotRevs(g.opts, currCommit.files[i], currCommit.commit.Mark)
+func (g *GitP4Transfer) createGraphEdges(cmt *GitCommit) {
+	// Sets the branch for the current commit, using its parent if not otherwise specified
+	if cmt == nil {
+		return
+	}
+	if cmt.commit.From != "" {
+		if intVar, err := strconv.Atoi(cmt.commit.From[1:]); err == nil {
+			parent := g.commits[intVar]
+			e, err := g.graph.CreateEdge("p", parent.gNode, cmt.gNode)
+			if err != nil {
+				log.Fatal(err)
+			}
+			e.SetLabel("p")
 		}
-		g.gitChan <- *currCommit
+	}
+	if len(cmt.commit.Merge) < 1 {
+		return
+	}
+	for _, merge := range cmt.commit.Merge {
+		if intVar, err := strconv.Atoi(merge[1:]); err == nil {
+			mergeFrom := g.commits[intVar]
+			e, err := g.graph.CreateEdge("m", mergeFrom.gNode, cmt.gNode)
+			if err != nil {
+				log.Fatal(err)
+			}
+			e.SetLabel("m")
+		}
+	}
+}
+
+func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
+	if cmt != nil { // Process previous commit
+		g.setBranch(cmt)
+		g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
+			cmt.commit.Mark, len(cmt.files), cmt.commitSize, Humanize(cmt.commitSize))
+		for i := range cmt.files {
+			cmt.files[i].setDepotPaths(g.opts, cmt)
+			cmt.files[i].updateFileDetails()
+			g.updateDepotRevs(g.opts, cmt.files[i], cmt.commit.Mark)
+		}
+		if g.graph != nil { // Optional Graphviz structure to be output
+			var err error
+			cmt.gNode, err = g.graph.CreateNode(fmt.Sprintf("Commit: %d %s", cmt.commit.Mark, cmt.branch))
+			if err != nil {
+				g.logger.Error(err)
+			}
+			g.createGraphEdges(cmt)
+		}
+		g.gitChan <- *cmt
 	}
 }
 
@@ -902,6 +963,15 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	pondSize := runtime.NumCPU()
 	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
 
+	var gv *graphviz.Graphviz
+	if g.opts.graphFile != "" { // Optional Graphviz structure to be output
+		gv = graphviz.New()
+		g.graph, err = gv.Graph()
+		if err != nil {
+			g.logger.Fatal(err)
+		}
+	}
+
 	f := libfastimport.NewFrontend(buf, nil, nil)
 	go func() {
 		defer file.Close()
@@ -923,9 +993,11 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.blobFileMatcher.addBlob(b)
 				commitSize += len(blob.Data)
 				b.SaveBlob(pool, g.opts.archiveRoot, g.opts.dummyArchives, g.blobFileMatcher)
+
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
+
 			case libfastimport.CmdCommit:
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
@@ -933,6 +1005,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				currCommit = newGitCommit(&commit, commitSize)
 				commitSize = 0
 				g.commits[commit.Mark] = currCommit
+
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
 				g.logger.Debugf("CommitEnd: %+v", commit)
@@ -942,6 +1015,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 					g.processCommit(currCommit)
 					return
 				}
+
 			case libfastimport.FileModify:
 				f := cmd.(libfastimport.FileModify)
 				g.logger.Debugf("FileModify: %+v", f)
@@ -968,6 +1042,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				}
 				currCommit.files = append(currCommit.files, gf)
 				node.addFile(gf.name)
+
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s", f.Path)
@@ -1015,6 +1090,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
 				gf := newGitFile(&GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy, logger: g.logger})
 				currCommit.files = append(currCommit.files, gf)
+
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
@@ -1057,15 +1133,35 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 						}
 					}
 				}
+
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
 				g.logger.Debugf("CmdTag: %+v", t)
+
 			default:
 				g.logger.Errorf("Not handled: Found cmd %+v", cmd)
 				g.logger.Errorf("Cmd type %T", cmd)
 			}
 		}
 		g.processCommit(currCommit)
+		// Render/close Graphviz if required
+		if g.opts.graphFile == "" {
+			return
+		}
+		f, err := os.OpenFile(g.opts.graphFile, os.O_CREATE|os.O_WRONLY, 0644)
+		if err != nil {
+			g.logger.Error(err)
+		}
+		defer f.Close()
+
+		if err := gv.Render(g.graph, "dot", f); err != nil {
+			g.logger.Fatal(err)
+		}
+		if err := g.graph.Close(); err != nil {
+			g.logger.Fatal(err)
+		}
+		gv.Close()
+
 	}()
 
 	return g.gitChan
@@ -1129,6 +1225,10 @@ func main() {
 			"archive.root",
 			"Archive root dir under which to store extracted archives.",
 		).String()
+		outputGraph = kingpin.Flag(
+			"graphfile",
+			"Graphviz dot file to output git commit/file structure to.",
+		).String()
 		outputJournal = kingpin.Flag(
 			"journal",
 			"P4D journal file to write (assuming --dump not specified).",
@@ -1161,6 +1261,7 @@ func main() {
 		dryRun:        *dryrun,
 		dummyArchives: *dummyArchives,
 		maxCommits:    *maxCommits,
+		graphFile:     *outputGraph,
 	}
 
 	if *dump {
