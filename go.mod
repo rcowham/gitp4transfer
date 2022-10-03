@@ -3,6 +3,8 @@ module github.com/rcowham/gitp4transfer
 go 1.17
 
 require (
+	github.com/emicklei/dot v1.0.0
+	github.com/goccy/go-graphviz v0.0.9
 	github.com/h2non/filetype v1.1.3
 	github.com/perforce/p4prometheus v0.7.5
 	github.com/pkg/profile v1.6.0
@@ -14,7 +16,6 @@ require (
 
 require (
 	github.com/fogleman/gg v1.3.0 // indirect
-	github.com/goccy/go-graphviz v0.0.9 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 )

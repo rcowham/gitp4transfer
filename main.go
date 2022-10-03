@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"         // profiling only
 	_ "net/http/pprof" // profiling only
 	"os"
@@ -18,8 +17,7 @@ import (
 	"time"
 
 	"github.com/alitto/pond"
-	"github.com/goccy/go-graphviz"
-	"github.com/goccy/go-graphviz/cgraph"
+	"github.com/emicklei/dot"
 	"github.com/h2non/filetype"
 	"github.com/pkg/profile"
 	journal "github.com/rcowham/gitp4transfer/journal"
@@ -309,12 +307,12 @@ func newGitFile(gf *GitFile) *GitFile {
 // GitCommit - A git commit
 type GitCommit struct {
 	commit       *libfastimport.CmdCommit
-	branch       string       // branch name
-	prevBranch   string       // set if first commit on new branch
-	parentBranch string       // set to ancestor of current branch
-	mergeBranch  string       // set if commit is a merge - assumes only 1 merge candidate!
-	commitSize   int          // Size of all files in this commit - useful for memory sizing
-	gNode        *cgraph.Node // Optional link to GraphizNode
+	branch       string   // branch name
+	prevBranch   string   // set if first commit on new branch
+	parentBranch string   // set to ancestor of current branch
+	mergeBranch  string   // set if commit is a merge - assumes only 1 merge candidate!
+	commitSize   int      // Size of all files in this commit - useful for memory sizing
+	gNode        dot.Node // Optional link to GraphizNode
 	files        []*GitFile
 }
 
@@ -351,8 +349,8 @@ type GitP4Transfer struct {
 	depotFileTypes  map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
 	blobFileMatcher *BlobFileMatcher            // Map between gitfile ID and record
 	commits         map[int]*GitCommit
-	testInput       string        // For testing only
-	graph           *cgraph.Graph // If outputting a graph
+	testInput       string     // For testing only
+	graph           *dot.Graph // If outputting a graph
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
@@ -886,11 +884,7 @@ func (g *GitP4Transfer) createGraphEdges(cmt *GitCommit) {
 	if cmt.commit.From != "" {
 		if intVar, err := strconv.Atoi(cmt.commit.From[1:]); err == nil {
 			parent := g.commits[intVar]
-			e, err := g.graph.CreateEdge("p", parent.gNode, cmt.gNode)
-			if err != nil {
-				log.Fatal(err)
-			}
-			e.SetLabel("p")
+			g.graph.Edge(parent.gNode, cmt.gNode, "p")
 		}
 	}
 	if len(cmt.commit.Merge) < 1 {
@@ -899,11 +893,7 @@ func (g *GitP4Transfer) createGraphEdges(cmt *GitCommit) {
 	for _, merge := range cmt.commit.Merge {
 		if intVar, err := strconv.Atoi(merge[1:]); err == nil {
 			mergeFrom := g.commits[intVar]
-			e, err := g.graph.CreateEdge("m", mergeFrom.gNode, cmt.gNode)
-			if err != nil {
-				log.Fatal(err)
-			}
-			e.SetLabel("m")
+			g.graph.Edge(mergeFrom.gNode, cmt.gNode, "m")
 		}
 	}
 }
@@ -919,11 +909,7 @@ func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
 			g.updateDepotRevs(g.opts, cmt.files[i], cmt.commit.Mark)
 		}
 		if g.graph != nil { // Optional Graphviz structure to be output
-			var err error
-			cmt.gNode, err = g.graph.CreateNode(fmt.Sprintf("Commit: %d %s", cmt.commit.Mark, cmt.branch))
-			if err != nil {
-				g.logger.Error(err)
-			}
+			cmt.gNode = g.graph.Node(fmt.Sprintf("Commit: %d %s", cmt.commit.Mark, cmt.branch))
 			g.createGraphEdges(cmt)
 		}
 		g.gitChan <- *cmt
@@ -963,13 +949,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	pondSize := runtime.NumCPU()
 	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
 
-	var gv *graphviz.Graphviz
 	if g.opts.graphFile != "" { // Optional Graphviz structure to be output
-		gv = graphviz.New()
-		g.graph, err = gv.Graph()
-		if err != nil {
-			g.logger.Fatal(err)
-		}
+		g.graph = dot.NewGraph(dot.Directed)
 	}
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
@@ -1154,14 +1135,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 		}
 		defer f.Close()
 
-		if err := gv.Render(g.graph, "dot", f); err != nil {
-			g.logger.Fatal(err)
-		}
-		if err := g.graph.Close(); err != nil {
-			g.logger.Fatal(err)
-		}
-		gv.Close()
-
+		f.Write([]byte(g.graph.String()))
 	}()
 
 	return g.gitChan
