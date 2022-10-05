@@ -154,6 +154,9 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 		case libfastimport.CmdTag:
 			t := cmd.(libfastimport.CmdTag)
 			g.logger.Debugf("CmdTag: %+v", t)
+			if options.renameRefs {
+				t.RefName = strings.ReplaceAll(t.RefName, " ", "_")
+			}
 			backend.Do(t)
 
 		default:
