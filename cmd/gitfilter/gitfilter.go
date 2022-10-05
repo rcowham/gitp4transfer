@@ -36,6 +36,7 @@ func Humanize(b int) string {
 type GitFilterOptions struct {
 	gitImportFile string
 	gitExportFile string
+	renameRefs    bool
 }
 
 // GitFilter - Transfer via git fast-export file
@@ -109,12 +110,21 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
 			g.logger.Debugf("Reset: - %+v", reset)
-			backend.Do(cmd)
+			if options.renameRefs {
+				reset.RefName = strings.ReplaceAll(reset.RefName, " ", "_")
+			}
+			backend.Do(reset)
 
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
 			g.logger.Debugf("Commit:  %+v", commit)
-			backend.Do(cmd)
+			if commit.Msg[len(commit.Msg)-1] != '\n' {
+				commit.Msg += "\n"
+			}
+			if options.renameRefs {
+				commit.Ref = strings.ReplaceAll(commit.Ref, " ", "_")
+			}
+			backend.Do(commit)
 
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
@@ -177,6 +187,10 @@ func main() {
 			"gitexport",
 			"Git fast-import file to write.",
 		).String()
+		renameRefs = kingpin.Flag(
+			"rename",
+			"Enable debugging level.",
+		).Short('r').Bool()
 		debug = kingpin.Flag(
 			"debug",
 			"Enable debugging level.",
@@ -200,6 +214,7 @@ func main() {
 	opts := GitFilterOptions{
 		gitImportFile: *gitimport,
 		gitExportFile: *gitexport,
+		renameRefs:    *renameRefs,
 	}
 
 	g.RunGitFilter(opts)
