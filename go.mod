@@ -8,7 +8,7 @@ require (
 	github.com/h2non/filetype v1.1.3
 	github.com/perforce/p4prometheus v0.7.5
 	github.com/pkg/profile v1.6.0
-	github.com/rcowham/go-libgitfastimport v0.1.4
+	github.com/rcowham/go-libgitfastimport v0.1.5
 	github.com/sirupsen/logrus v1.8.1
 	github.com/stretchr/testify v1.7.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
@@ -17,6 +17,7 @@ require (
 require (
 	github.com/fogleman/gg v1.3.0 // indirect
 	github.com/golang/freetype v0.0.0-20170609003504-e2365dfdc4a0 // indirect
+	github.com/mattn/go-sqlite3 v1.14.15 // indirect
 	golang.org/x/image v0.0.0-20200119044424-58c23975cae1 // indirect
 )
 

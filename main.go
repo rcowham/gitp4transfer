@@ -536,8 +536,10 @@ func (gf *GitFile) CreateArchiveFile(depotRoot string, matcher *BlobFileMatcher,
 func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	dt := int(c.commit.Author.Time.Unix())
 	chgNo := c.commit.Mark
-	if gf.fileType == 0 {
+	fileType := gf.fileType
+	if fileType == 0 {
 		gf.logger.Errorf("Unexpected filetype text: %s#%d", gf.depotFile, gf.rev)
+		fileType = journal.CText
 	}
 	if gf.action == modify {
 		if gf.isBranch || gf.isMerge {
@@ -641,7 +643,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			}
 			gf, ok := files[oid]
 			if ok {
-				gf.name = f.Path.String()
+				gf.name = string(f.Path)
 				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.blob.Mark)
 				gf.archiveFile = archName
 				g.logger.Infof("Path:%s Size:%d/%s Archive:%s", gf.name, gf.size, Humanize(gf.size), gf.archiveFile)
@@ -961,10 +963,11 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 		for {
 			cmd, err := f.ReadCmd()
 			if err != nil {
-				if err != io.EOF {
-					g.logger.Errorf("ERROR: Failed to read cmd: %v", err)
+				if err == io.EOF {
+					break
 				}
-				break
+				g.logger.Errorf("ERROR: Failed to read cmd: %v", err)
+				continue
 			}
 			switch cmd.(type) {
 			case libfastimport.CmdBlob:
@@ -982,10 +985,13 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.CmdCommit:
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
-				g.logger.Debugf("Commit:  %+v", commit)
+				g.logger.Debugf("Commit: %+v", commit)
 				currCommit = newGitCommit(&commit, commitSize)
 				commitSize = 0
 				g.commits[commit.Mark] = currCommit
+				if commit.Mark > 157570 {
+					g.logger.Debugf("CommitOver: %+v", commit)
+				}
 
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
@@ -1008,11 +1014,11 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				b := g.blobFileMatcher.getBlob(oid)
 				if b != nil {
 					if len(b.gitFileIDs) == 0 {
-						gf = newGitFile(&GitFile{name: f.Path.String(), action: modify,
+						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
 							blob: b, fileType: b.fileType, compressed: b.compressed,
 							logger: g.logger})
 					} else {
-						gf = newGitFile(&GitFile{name: f.Path.String(), action: modify,
+						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
 							blob: b, fileType: b.fileType, compressed: b.compressed,
 							duplicateArchive: true, logger: g.logger})
 					}
@@ -1028,17 +1034,17 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: Path:%s", f.Path)
 				// Look for delete of dirs vs files
-				if node.findFile(f.Path.String()) {
-					gf := newGitFile(&GitFile{name: f.Path.String(), action: delete, logger: g.logger})
+				if node.findFile(string(f.Path)) {
+					gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
 					currCommit.files = append(currCommit.files, gf)
 					node.addFile(gf.name)
 				} else {
-					files := node.getFiles(f.Path.String())
+					files := node.getFiles(string(f.Path))
 					if len(files) > 0 {
 						g.logger.Debugf("DirDelete: Path:%s", f.Path)
 						for _, df := range files {
-							if !hasPrefix(df, f.Path.String()) {
-								g.logger.Errorf("Unexpected path found: %s: %s", f.Path.String(), df)
+							if !hasPrefix(df, string(f.Path)) {
+								g.logger.Errorf("Unexpected path found: %s: %s", string(f.Path), df)
 								continue
 							}
 							g.logger.Debugf("DirFileDelete: Path:%s", df)
@@ -1054,7 +1060,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							}
 						}
 					} else {
-						g.logger.Errorf("FileDeleteMissing: Path:%s", f.Path.String())
+						g.logger.Errorf("FileDeleteMissing: Path:%s", string(f.Path))
 						if g.logger.IsLevelEnabled(logrus.DebugLevel) && !missingDeleteLogged {
 							missingDeleteLogged = true // only do it once
 							nodeFiles := node.getFiles("")
@@ -1069,27 +1075,27 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
-				gf := newGitFile(&GitFile{name: f.Src.String(), targ: f.Dst.String(), action: copy, logger: g.logger})
+				gf := newGitFile(&GitFile{name: string(f.Src), targ: string(f.Dst), action: copy, logger: g.logger})
 				currCommit.files = append(currCommit.files, gf)
 
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
 				// Look for renames of dirs vs files
-				if node.findFile(f.Src.String()) {
-					gf := newGitFile(&GitFile{name: f.Dst.String(), srcName: f.Src.String(), action: rename, logger: g.logger})
+				if node.findFile(string(f.Src)) {
+					gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: rename, logger: g.logger})
 					currCommit.files = append(currCommit.files, gf)
 					node.addFile(gf.name)
 				} else {
-					files := node.getFiles(f.Src.String())
+					files := node.getFiles(string(f.Src))
 					if len(files) > 0 {
 						g.logger.Debugf("DirRename: Src:%s Dst:%s", f.Src, f.Dst)
 						for _, rf := range files {
-							if !hasPrefix(rf, f.Src.String()) {
-								g.logger.Errorf("Unexpected src found: %s: %s", f.Src.String(), rf)
+							if !hasPrefix(rf, string(f.Src)) {
+								g.logger.Errorf("Unexpected src found: %s: %s", string(f.Src), rf)
 								continue
 							}
-							dest := fmt.Sprintf("%s%s", f.Dst.String(), rf[len(f.Src.String()):])
+							dest := fmt.Sprintf("%s%s", string(f.Dst), rf[len(string(f.Src)):])
 							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
 							gf := newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger})
 							// Have to set up depot paths to be able to look up deleted files.
@@ -1103,7 +1109,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							}
 						}
 					} else {
-						g.logger.Errorf("FileRenameMissing: Src:%s Dst:%s", f.Src.String(), f.Dst.String())
+						g.logger.Errorf("FileRenameMissing: Src:%s Dst:%s", string(f.Src), string(f.Dst))
 						if g.logger.IsLevelEnabled(logrus.DebugLevel) && !missingRenameLogged {
 							missingRenameLogged = true // only do it once
 							nodeFiles := node.getFiles("")
