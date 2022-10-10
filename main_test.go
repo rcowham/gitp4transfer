@@ -154,6 +154,7 @@ func createLogger() *logrus.Logger {
 func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opts *GitParserOptions) string {
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
+	user := getGitUser(t)
 	p4t := MakeP4Test(t.TempDir())
 	if opts != nil {
 		opts.archiveRoot = p4t.serverRoot
@@ -178,7 +179,7 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opt
 	j.WriteHeader()
 
 	for _, c := range commits {
-		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+		j.WriteChange(c.commit.Mark, user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			f.CreateArchiveFile(p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 			f.WriteJournal(&j, &c)
@@ -196,6 +197,14 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opt
 	// assert.Equal(t, "Phase 1 of the storage upgrade has finished.\n", result)
 
 	return p4t.serverRoot
+}
+
+func getGitUser(t *testing.T) string {
+	output, err := runCmd("git config user.email")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git config '%s': %v\n", output, err)
+	}
+	return getUserFromEmail(output)
 }
 
 func runTransfer(t *testing.T, logger *logrus.Logger) string {
@@ -263,7 +272,7 @@ func TestAdd(t *testing.T) {
 	j.SetWriter(buf)
 	j.WriteHeader()
 	c = commits[0]
-	j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+	j.WriteChange(c.commit.Mark, defaultP4user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
 	j.WriteRev(f.depotFile, f.rev, f.p4action, f.fileType, c.commit.Mark,
 		f.depotFile, c.commit.Mark, int(c.commit.Author.Time.Unix()))
@@ -324,6 +333,7 @@ func TestAddEdit(t *testing.T) {
 	writeToFile(src, srcContents2)
 	runCmd("git add .")
 	runCmd("git commit -m initial")
+	user := getGitUser(t)
 
 	r := runTransfer(t, logger)
 	logger.Debugf("Server root: %s", r)
@@ -356,12 +366,12 @@ func TestAddEdit(t *testing.T) {
 
 	result, err = runCmd("p4 changes")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
-	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, fmt.Sprintf(`Change 4 on .* by %s@git\-client`, user), result)
+	assert.Regexp(t, fmt.Sprintf(`Change 2 on .* by %s@git\-client`, user), result)
 	result, err = runCmd("p4 changes //import/...")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
-	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, fmt.Sprintf(`Change 4 on .* by %s@git\-client`, user), result)
+	assert.Regexp(t, fmt.Sprintf(`Change 2 on .* by %s@git\-client`, user), result)
 	result, err = runCmd("p4 storage //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `lbrType text\+C`, result)
@@ -385,6 +395,7 @@ func TestMaxCommits(t *testing.T) {
 	writeToFile(src, srcContents2)
 	runCmd("git add .")
 	runCmd("git commit -m initial")
+	user := getGitUser(t)
 
 	r := runTransferOpts(t, logger, &GitParserOptions{maxCommits: 1})
 	logger.Debugf("Server root: %s", r)
@@ -409,8 +420,8 @@ func TestMaxCommits(t *testing.T) {
 
 	result, err = runCmd("p4 changes")
 	assert.Equal(t, nil, err)
-	assert.NotRegexp(t, `Change 4 on .* by git\-user@git\-client`, result)
-	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	assert.NotRegexp(t, fmt.Sprintf(`Change 4 on .* by %s@git\-client`, user), result)
+	assert.Regexp(t, fmt.Sprintf(`Change 2 on .* by %s@git\-client`, user), result)
 }
 
 func TestAddSameFile(t *testing.T) {
@@ -542,6 +553,7 @@ func TestAddWildcard(t *testing.T) {
 	writeToFile(src, srcContents2)
 	runCmd("git add .")
 	runCmd("git commit -m initial")
+	user := getGitUser(t)
 
 	r := runTransfer(t, logger)
 	logger.Debugf("Server root: %s", r)
@@ -574,12 +586,12 @@ func TestAddWildcard(t *testing.T) {
 
 	result, err = runCmd("p4 changes")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
-	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, fmt.Sprintf(`Change 4 on .* by %s@git\-client`, user), result)
+	assert.Regexp(t, fmt.Sprintf(`Change 2 on .* by %s@git\-client`, user), result)
 	result, err = runCmd("p4 changes //import/...")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `Change 4 on .* by git\-user@git\-client`, result)
-	assert.Regexp(t, `Change 2 on .* by git\-user@git\-client`, result)
+	assert.Regexp(t, fmt.Sprintf(`Change 4 on .* by %s@git\-client`, user), result)
+	assert.Regexp(t, fmt.Sprintf(`Change 2 on .* by %s@git\-client`, user), result)
 	result, err = runCmd("p4 storage //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `lbrType text\+C`, result)
@@ -1134,7 +1146,7 @@ func TestBranch(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/dev/file1.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file1.txt`, result)
-	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client`, result)
+	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by .*@git-client`, result)
 	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client (text+C) 'changed on dev '`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/file1.txt#1`, result)
 
@@ -1306,8 +1318,8 @@ Env/Assets/Art/Structure/Universal/Bunker.meta`
 // 	result, err = runCmd("p4 filelog //import/dev/file1.txt#1")
 // 	assert.Equal(t, nil, err)
 // 	assert.Regexp(t, `//import/dev/file1.txt`, result)
-// 	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client`, result)
-// 	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client (text+C) 'changed on dev '`, result)
+// 	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by .*@git-client`, result)
+// 	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by .*@git-client (text+C) 'changed on dev '`, result)
 // 	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/file1.txt#1`, result)
 
 // }
@@ -1369,8 +1381,8 @@ func TestBranch2(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/dev/file2.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file2.txt`, result)
-	assert.Regexp(t, `\.\.\. #1 change 3 add on .* by git-user@git-client`, result)
-	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by git-user@git-client (text+C) 'changed on dev '`, result)
+	assert.Regexp(t, `\.\.\. #1 change 3 add on .* by .*@git-client`, result)
+	// assert.Regexp(t, `\.\.\. #1 change 4 add on .* by .*@git-client (text+C) 'changed on dev '`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. edit into //import/dev2/file2.txt#1`, result)
 
 }
@@ -1436,13 +1448,13 @@ func TestBranchRename(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/dev/file2.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file2.txt`, result)
-	assert.Regexp(t, `\.\.\. #1 change 6 delete on .* by git-user@git-client.*
+	assert.Regexp(t, `\.\.\. #1 change 6 delete on .* by .*@git-client.*
 \.\.\. \.\.\. branch into //import/dev/file3.txt#1`, result)
 
 	result, err = runCmd("p4 filelog //import/dev/file3.txt#1")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file3.txt`, result)
-	assert.Regexp(t, `\.\.\. #1 change 6 add on .* by git-user@git-client.*
+	assert.Regexp(t, `\.\.\. #1 change 6 add on .* by .*@git-client.*
 \.\.\. \.\.\. branch from //import/dev/file2.txt#1`, result)
 
 }
@@ -1495,18 +1507,18 @@ func TestBranchMerge(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `(?m)//import/branch1/file1.txt
-\.\.\. #1 change 6 add on .* by git-user@git-client \(text\+C\).*
+\.\.\. #1 change 6 add on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. edit into //import/main/file1.txt#2
 \.\.\. \.\.\. branch from //import/main/file1.txt#1`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file1.txt
-\.\.\. #2 change 7 edit on .* by git-user@git-client \(text\+C\).*
+\.\.\. #2 change 7 edit on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. branch from //import/branch1/file1.txt#1
-\.\.\. #1 change 2 add on .* by git-user@git-client \(text\+C\).*
+\.\.\. #1 change 2 add on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. edit into //import/branch1/file1.txt#1`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file2.txt
-\.\.\. #1 change 4 add on .* by git-user@git-client \(text\+C\).*`, result)
+\.\.\. #1 change 4 add on .* by .*@git-client \(text\+C\).*`, result)
 
 	result, err = runCmd("p4 print -q //import/main/file2.txt#1")
 	assert.Equal(t, nil, err)
@@ -1579,19 +1591,19 @@ func TestBranchDelete(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `(?m)//import/branch1/file1.txt
-\.\.\. #2 change 6 delete on .* by git-user@git-client \(text\+C\).*
+\.\.\. #2 change 6 delete on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. delete into //import/main/file1.txt#2
-\.\.\. #1 change 5 add on .* by git-user@git-client \(text\+C\).*
+\.\.\. #1 change 5 add on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. branch from //import/main/file1.txt#1`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file1.txt
-\.\.\. #2 change 7 delete on .* by git-user@git-client \(text\+C\).*
+\.\.\. #2 change 7 delete on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. delete from //import/branch1/file1.txt#2
-\.\.\. #1 change 3 add on .* by git-user@git-client \(text\+C\).*
+\.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. edit into //import/branch1/file1.txt#1`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file2.txt
-\.\.\. #1 change 3 add on .* by git-user@git-client \(text\+C\).*`, result)
+\.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*`, result)
 
 	// result, err = runCmd("p4 print -q //import/main/file2.txt#1")
 	// assert.Equal(t, nil, err)
@@ -1659,16 +1671,16 @@ func TestBranchDelete2(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `(?m)//import/branch1/file1.txt
-\.\.\. #1 change 4 delete on .* by git-user@git-client \(text\+C\).*
+\.\.\. #1 change 4 delete on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. delete into //import/main/file1.txt#2`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file1.txt
-\.\.\. #2 change 5 delete on .* by git-user@git-client \(text\+C\).*
+\.\.\. #2 change 5 delete on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. delete from //import/branch1/file1.txt#1
-\.\.\. #1 change 3 add on .* by git-user@git-client \(text\+C\).*`, result)
+\.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file2.txt
-\.\.\. #1 change 3 add on .* by git-user@git-client \(text\+C\).*`, result)
+\.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*`, result)
 
 }
 
@@ -1735,18 +1747,18 @@ func TestBranchMergeCompressed(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/...")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `(?m)//import/branch1/file1.png
-\.\.\. #1 change 6 add on .* by git-user@git-client \(binary\+F\).*
+\.\.\. #1 change 6 add on .* by .*@git-client \(binary\+F\).*
 \.\.\. \.\.\. edit into //import/main/file1.png#2
 \.\.\. \.\.\. branch from //import/main/file1.png#1`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file1.png
-\.\.\. #2 change 9 edit on .* by git-user@git-client \(binary\+F\).*
+\.\.\. #2 change 9 edit on .* by .*@git-client \(binary\+F\).*
 \.\.\. \.\.\. branch from //import/branch1/file1.png#1
-\.\.\. #1 change 2 add on .* by git-user@git-client \(binary\+F\).*
+\.\.\. #1 change 2 add on .* by .*@git-client \(binary\+F\).*
 \.\.\. \.\.\. edit into //import/branch1/file1.png#1`, result)
 
 	assert.Regexp(t, `(?m)//import/main/file2.png
-\.\.\. #1 change 4 add on .* by git-user@git-client \(binary\+F\).*`, result)
+\.\.\. #1 change 4 add on .* by .*@git-client \(binary\+F\).*`, result)
 
 	result, err = runCmd("p4 print -q //import/main/file2.png#1")
 	assert.Equal(t, nil, err)

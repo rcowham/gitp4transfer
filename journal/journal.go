@@ -238,7 +238,7 @@ func (j *Journal) WriteHeader() {
 
 }
 
-func (j *Journal) WriteChange(chgNo int, description string, chgTime int) {
+func (j *Journal) WriteChange(chgNo int, user string, description string, chgTime int) {
 
 	description = strings.ReplaceAll(description, "@", "@@")
 
@@ -249,7 +249,7 @@ func (j *Journal) WriteChange(chgNo int, description string, chgTime int) {
 
 	// @pv@ 0 @db.change@ 1 1 @svn-client@ @pallen@ 1363872228 1 @add@
 	_, err = fmt.Fprintf(j.w, "@pv@ 0 @db.change@ %d %d @%s@ @%s@ %d %s @%s@ \n",
-		chgNo, chgNo, p4client, p4user, chgTime, statusSubmitted, description)
+		chgNo, chgNo, p4client, user, chgTime, statusSubmitted, description)
 	if err != nil {
 		panic(err)
 	}

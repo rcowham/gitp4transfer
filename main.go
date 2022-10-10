@@ -28,6 +28,8 @@ import (
 	"gopkg.in/alecthomas/kingpin.v2"
 )
 
+var defaultP4user = "git-user" // Default user if non found
+
 func Humanize(b int) string {
 	const unit = 1000
 	if b < unit {
@@ -307,6 +309,7 @@ func newGitFile(gf *GitFile) *GitFile {
 // GitCommit - A git commit
 type GitCommit struct {
 	commit       *libfastimport.CmdCommit
+	user         string
 	branch       string   // branch name
 	prevBranch   string   // set if first commit on new branch
 	parentBranch string   // set to ancestor of current branch
@@ -321,8 +324,20 @@ func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[0:len(prefix)] == prefix
 }
 
+func getUserFromEmail(email string) string {
+	if email == "" {
+		return defaultP4user
+	}
+	parts := strings.Split(email, "@")
+	if len(parts) > 0 && parts[0] != "" {
+		return parts[0]
+	}
+	return defaultP4user
+}
+
 func newGitCommit(commit *libfastimport.CmdCommit, commitSize int) *GitCommit {
-	gc := &GitCommit{commit: commit, commitSize: commitSize, files: make([]*GitFile, 0)}
+	user := getUserFromEmail(commit.Author.Email)
+	gc := &GitCommit{commit: commit, user: user, commitSize: commitSize, files: make([]*GitFile, 0)}
 	gc.branch = strings.Replace(commit.Ref, "refs/heads/", "", 1)
 	if hasPrefix(gc.branch, "refs/tags") || hasPrefix(gc.branch, "refs/remote") {
 		gc.branch = ""
@@ -1262,7 +1277,7 @@ func main() {
 	j.WriteHeader()
 
 	for c := range commitChan {
-		j.WriteChange(c.commit.Mark, c.commit.Msg, int(c.commit.Author.Time.Unix()))
+		j.WriteChange(c.commit.Mark, c.user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
 				f.CreateArchiveFile(opts.archiveRoot, g.blobFileMatcher, c.commit.Mark)
