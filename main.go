@@ -5,8 +5,7 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
-	"io"
-	"net/http"         // profiling only
+	"io"               // profiling only
 	_ "net/http/pprof" // profiling only
 	"os"
 	"path"
@@ -19,7 +18,6 @@ import (
 	"github.com/alitto/pond"
 	"github.com/emicklei/dot"
 	"github.com/h2non/filetype"
-	"github.com/pkg/profile"
 	journal "github.com/rcowham/gitp4transfer/journal"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
@@ -282,6 +280,8 @@ type GitFile struct {
 	srcName          string // Name of git source file for rename/copy
 	srcDepotFile     string //   "
 	srcRev           int    //   "
+	parentDepotFile  string // For branched files
+	parentDepotRev   int
 	archiveFile      string
 	duplicateArchive bool
 	action           GitAction
@@ -576,10 +576,19 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
 		}
 	} else if gf.action == rename {
-		j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-		j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-		// TODO - don't use 0 for startfromRev, startToRev
-		j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+		if gf.isBranch { // Rename of a branched file - create integ records from parent
+			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteInteg(gf.srcDepotFile, gf.parentDepotFile, 0, gf.srcRev, 0, gf.parentDepotRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			j.WriteInteg(gf.depotFile, gf.parentDepotFile, 0, gf.srcRev, 0, gf.parentDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+		} else {
+			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			// TODO - don't use 0 for startfromRev, startToRev
+			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+		}
+	} else {
+		gf.logger.Errorf("Unexpected action: %s", gf.action.String())
 	}
 }
 
@@ -755,6 +764,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			if _, ok := g.depotFileRevs[depotPathOrig]; !ok {
 				g.logger.Errorf("Failed to find original file: '%s'", depotPathOrig)
 			} else {
+				gf.isBranch = true
 				lbrFileOrig := g.depotFileRevs[depotPathOrig].lbrFile
 				lbrRevOrig := g.depotFileRevs[depotPathOrig].lbrRev
 				g.depotFileRevs[gf.srcDepotFile] = &RevChange{rev: 1, chgNo: chgNo, lbrRev: lbrRevOrig,
@@ -762,6 +772,8 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
 				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+				gf.parentDepotFile = depotPathOrig
+				gf.parentDepotRev = g.depotFileRevs[depotPathOrig].rev
 				gf.fileType = g.getDepotFileTypes(depotPathOrig, g.depotFileRevs[depotPathOrig].rev)
 				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
 				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
@@ -975,6 +987,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 		defer file.Close()
 		defer close(g.gitChan)
 		defer pool.StopAndWait()
+	CmdLoop:
 		for {
 			cmd, err := f.ReadCmd()
 			if err != nil {
@@ -1014,8 +1027,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				commitCount += 1
 				if g.opts.maxCommits > 0 && commitCount >= g.opts.maxCommits {
 					g.logger.Infof("Processed %d commits", commitCount)
-					g.processCommit(currCommit)
-					return
+					break CmdLoop
 				}
 
 			case libfastimport.FileModify:
@@ -1178,10 +1190,10 @@ func main() {
 	// var err error
 
 	// Turn on profiling
-	defer profile.Start(profile.MemProfile).Stop()
-	go func() {
-		http.ListenAndServe(":8080", nil)
-	}()
+	// defer profile.Start(profile.MemProfile).Stop()
+	// go func() {
+	// 	http.ListenAndServe(":8080", nil)
+	// }()
 
 	var (
 		gitimport = kingpin.Arg(
