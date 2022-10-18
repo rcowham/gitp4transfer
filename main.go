@@ -289,6 +289,7 @@ type GitFile struct {
 	targ             string // For use with copy/move
 	isBranch         bool
 	isMerge          bool
+	isDirtyRename    bool // Rename where content changed
 	fileType         journal.FileType
 	compressed       bool
 	blob             *GitBlob
@@ -343,6 +344,15 @@ func newGitCommit(commit *libfastimport.CmdCommit, commitSize int) *GitCommit {
 		gc.branch = ""
 	}
 	return gc
+}
+
+func (gc *GitCommit) findGitFile(name string) *GitFile {
+	for _, gf := range gc.files {
+		if gf.name == name {
+			return gf
+		}
+	}
+	return nil
 }
 
 type CommitMap map[int]*GitCommit
@@ -516,7 +526,7 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 }
 
 func (gf *GitFile) CreateArchiveFile(depotRoot string, matcher *BlobFileMatcher, changeNo int) {
-	if gf.action == delete || gf.action == rename || !gf.blob.hasData {
+	if gf.action == delete || (gf.action == rename && !gf.isDirtyRename) || !gf.blob.hasData {
 		return
 	}
 	depotFile := strings.ReplaceAll(gf.depotFile[2:], "@", "%40")
@@ -770,8 +780,10 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				g.depotFileRevs[gf.srcDepotFile] = &RevChange{rev: 1, chgNo: chgNo, lbrRev: lbrRevOrig,
 					lbrFile: lbrFileOrig, action: delete}
 				gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+				if !gf.isDirtyRename {
+					gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+					gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+				}
 				gf.parentDepotFile = depotPathOrig
 				gf.parentDepotRev = g.depotFileRevs[depotPathOrig].rev
 				gf.fileType = g.getDepotFileTypes(depotPathOrig, g.depotFileRevs[depotPathOrig].rev)
@@ -1054,7 +1066,18 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				} else {
 					g.logger.Errorf("Failed to find blob: %d", oid)
 				}
-				currCommit.files = append(currCommit.files, gf)
+				// Search for renames (or deletes) of same file in current commit mark if so.
+				dupGF := currCommit.findGitFile(gf.name)
+				if dupGF != nil {
+					dupGF.isDirtyRename = true
+					dupGF.blob = gf.blob
+					dupGF.compressed = gf.compressed
+					dupGF.duplicateArchive = gf.duplicateArchive
+					dupGF.fileType = gf.fileType
+					g.logger.Debugf("DirtyRenameFound: %s", gf.name)
+				} else {
+					currCommit.files = append(currCommit.files, gf)
+				}
 				node.addFile(gf.name)
 
 			case libfastimport.FileDelete:
