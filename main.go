@@ -357,11 +357,20 @@ func (gc *GitCommit) findGitFile(name string) *GitFile {
 	return nil
 }
 
-func (gc *GitCommit) removeGitFile(name string) {
+func (gc *GitCommit) findGitFileRename(fromName string) *GitFile {
+	for _, gf := range gc.files {
+		if gf.srcName == fromName {
+			return gf
+		}
+	}
+	return nil
+}
+
+func (gc *GitCommit) removeGitFile(ID int) {
 	i := 0
 	var gf *GitFile
 	for i, gf = range gc.files {
-		if gf.name == name {
+		if gf.ID == ID {
 			break
 		}
 	}
@@ -424,7 +433,7 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
 		gf.isBranch = true
 		gf.srcDepotFile = gf.getDepotPath(opts, gc.prevBranch, gf.srcName)
 	}
-	if gc.mergeBranch != "" {
+	if gc.mergeBranch != "" && gc.mergeBranch != gc.branch {
 		gf.isMerge = true
 		if gf.srcName == "" {
 			gf.srcName = gf.name
@@ -1132,8 +1141,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							dupGF.name, dupGF.ID, dupGF.name, dupGF.blob.blob.Mark, dupGF.blob.fileType)
 					} else if dupGF.action == delete {
 						// Having a modify with a delete doesn't make sense - we discard the delete!
-						g.logger.Warnf("ModifyOfDeletedFile:")
-						currCommit.removeGitFile(gf.name)
+						g.logger.Warnf("ModifyOfDeletedFile: GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+						currCommit.removeGitFile(gf.ID)
 						g.blobFileMatcher.addGitFile(gf)
 						g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 						currCommit.files = append(currCommit.files, gf)
@@ -1151,9 +1160,15 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("FileDelete: %s Path:%s", currCommit.ref(), f.Path)
 				// Look for delete of dirs vs files
 				if node.findFile(string(f.Path)) {
-					gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
-					currCommit.files = append(currCommit.files, gf)
-					node.addFile(gf.name)
+					dupGF := currCommit.findGitFileRename(string(f.Path))
+					if dupGF != nil && dupGF.action == rename {
+						g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: ID %d, %s", dupGF.ID, f.Path)
+						currCommit.removeGitFile(dupGF.ID)
+					} else {
+						gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
+						currCommit.files = append(currCommit.files, gf)
+						node.addFile(gf.name)
+					}
 				} else {
 					files := node.getFiles(string(f.Path))
 					if len(files) > 0 {
@@ -1164,15 +1179,21 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 								continue
 							}
 							g.logger.Debugf("DirFileDelete: %s Path:%s", currCommit.ref(), df)
-							gf := newGitFile(&GitFile{name: df, action: delete, logger: g.logger})
-							// Have to set up depot paths to be able to look up deleted files.
-							g.setBranch(currCommit)
-							gf.setDepotPaths(g.opts, currCommit)
-							if g.isSrcDeletedFile(gf) {
-								g.logger.Debugf("DirFileDeleteIgnoreDeleted: Path:%s", df)
+							dupGF := currCommit.findGitFileRename(df)
+							if dupGF != nil && dupGF.action == rename {
+								g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: ID %d, %s", dupGF.ID, df)
+								currCommit.removeGitFile(dupGF.ID)
 							} else {
-								currCommit.files = append(currCommit.files, gf)
-								node.addFile(gf.name)
+								gf := newGitFile(&GitFile{name: df, action: delete, logger: g.logger})
+								// Have to set up depot paths to be able to look up deleted files.
+								g.setBranch(currCommit)
+								gf.setDepotPaths(g.opts, currCommit)
+								if g.isSrcDeletedFile(gf) {
+									g.logger.Debugf("DirFileDeleteIgnoreDeleted: Path:%s", df)
+								} else {
+									currCommit.files = append(currCommit.files, gf)
+									node.addFile(gf.name)
+								}
 							}
 						}
 					} else {
