@@ -947,7 +947,8 @@ func TestRenameRename(t *testing.T) {
 }
 
 func TestRenameOnBranchWithEdit(t *testing.T) {
-	// Rename of a file on a branch with edited contents so R and M records
+	// Rename of a file on a branch with edited contents so R and M records, then merge back to main
+	debug = true
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
 
@@ -971,6 +972,9 @@ func TestRenameOnBranchWithEdit(t *testing.T) {
 	appendToFile(targ, "1") // Small extra char - should still be a rename
 	runCmd("git add .")
 	runCmd("git commit -m renamed")
+	runCmd("git switch main")
+	runCmd("git merge --no-ff dev")
+	runCmd("git commit -m \"merged change\"")
 	runCmd("git log --graph --abbrev-commit --oneline")
 
 	r := runTransfer(t, logger)
@@ -985,31 +989,37 @@ func TestRenameOnBranchWithEdit(t *testing.T) {
 	assert.Equal(t, `//import/dev/file1.txt#1 - add change 4 (text+C)
 //import/dev/src.txt#1 - delete change 6 (text+C)
 //import/dev/targ.txt#1 - add change 6 (text+C)
-//import/main/src.txt#1 - add change 2 (text+C)
+//import/main/file1.txt#1 - add change 7 (text+C)
+//import/main/src.txt#2 - delete change 7 (text+C)
+//import/main/targ.txt#1 - add change 7 (text+C)
 `,
 		result)
 
-	result, err = runCmd("p4 filelog -i //import/dev/file1.txt")
+	result, err = runCmd("p4 filelog //import/dev/file1.txt")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file1.txt`, result)
 	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by .* \(text\+C\)`, result)
 
-	result, err = runCmd("p4 filelog -i //import/dev/src.txt")
+	result, err = runCmd("p4 filelog //import/dev/src.txt")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `\.\.\. #1 change 6 delete on .* by .* \(text\+C\)`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. delete from //import/main/src.txt#1`, result)
 
-	result, err = runCmd("p4 filelog -i //import/dev/targ.txt")
+	result, err = runCmd("p4 filelog //import/dev/targ.txt")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `\.\.\. #1 change 6 add on .* by .* \(text\+C\)`, result)
+	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/src.txt#1`, result)
+
+	result, err = runCmd("p4 filelog //import/main/src.txt")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `\.\.\. #1 change 2 add on .* by .* \(text\+C\)`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. delete into //import/dev/src.txt#1`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/dev/targ.txt#1`, result)
 
-	result, err = runCmd("p4 filelog -i //import/main/src.txt")
+	result, err = runCmd("p4 filelog //import/main/targ.txt")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `\.\.\. #1 change 2 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. delete into //import/dev/src.txt#1`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/dev/targ.txt#1`, result)
+	assert.Regexp(t, `\.\.\. #1 change 7 add on .* by .* \(text\+C\)`, result)
+	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/dev/targ.txt#1,#2`, result)
 }
 
 func TestRenameDir(t *testing.T) {

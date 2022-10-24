@@ -270,31 +270,33 @@ func (m *BlobFileMatcher) updateDuplicateGitFile(gf *GitFile) {
 
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
-	name             string // Git filename (target for rename/copy)
-	ID               int
-	size             int
-	depotFile        string // Full depot path
-	rev              int    // Depot rev
-	lbrRev           int    // Lbr rev - usually same as Depot rev
-	lbrFile          string // Lbr file - usually same as Depot file
-	srcName          string // Name of git source file for rename/copy
-	srcDepotFile     string //   "
-	srcRev           int    //   "
-	parentDepotFile  string // For branched files
-	parentDepotRev   int
-	archiveFile      string
-	duplicateArchive bool
-	action           GitAction
-	p4action         journal.FileAction
-	targ             string // For use with copy/move
-	isBranch         bool
-	isMerge          bool
-	isDirtyRename    bool // Rename where content changed
-	fileType         journal.FileType
-	compressed       bool
-	blob             *GitBlob
-	logger           *logrus.Logger
-	commit           *GitCommit
+	name               string // Git filename (target for rename/copy)
+	ID                 int
+	size               int
+	depotFile          string // Full depot path
+	rev                int    // Depot rev
+	lbrRev             int    // Lbr rev - usually same as Depot rev
+	lbrFile            string // Lbr file - usually same as Depot file
+	srcName            string // Name of git source file for rename/copy
+	srcDepotFile       string //   "
+	srcRev             int    //   "
+	branchDepotFile    string // For branched files
+	branchDepotRev     int
+	branchSrcDepotFile string // The source file for a merged rename
+	branchSrcDepotRev  int
+	archiveFile        string
+	duplicateArchive   bool
+	action             GitAction
+	p4action           journal.FileAction
+	targ               string // For use with copy/move
+	isBranch           bool
+	isMerge            bool
+	isDirtyRename      bool // Rename where content changed
+	fileType           journal.FileType
+	compressed         bool
+	blob               *GitBlob
+	logger             *logrus.Logger
+	commit             *GitCommit
 }
 
 func newGitFile(gf *GitFile) *GitFile {
@@ -355,6 +357,10 @@ func (gc *GitCommit) findGitFile(name string) *GitFile {
 	return nil
 }
 
+func (gc *GitCommit) ref() string {
+	return fmt.Sprintf("%s:%d", gc.branch, gc.commit.Mark)
+}
+
 type CommitMap map[int]*GitCommit
 
 type RevChange struct { // Struct to remember revs and changes per depotFile
@@ -403,10 +409,13 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
 		gf.srcName = gf.name
 		gf.isBranch = true
 		gf.srcDepotFile = gf.getDepotPath(opts, gc.prevBranch, gf.srcName)
-	} else if gc.mergeBranch != "" {
-		gf.srcName = gf.name
+	}
+	if gc.mergeBranch != "" {
 		gf.isMerge = true
-		gf.srcDepotFile = gf.getDepotPath(opts, gc.mergeBranch, gf.srcName)
+		if gf.srcName == "" {
+			gf.srcName = gf.name
+			gf.srcDepotFile = gf.getDepotPath(opts, gc.mergeBranch, gf.srcName)
+		}
 	}
 }
 
@@ -589,8 +598,13 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 		if gf.isBranch { // Rename of a branched file - create integ records from parent
 			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
 			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteInteg(gf.srcDepotFile, gf.parentDepotFile, 0, gf.srcRev, 0, gf.parentDepotRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
-			j.WriteInteg(gf.depotFile, gf.parentDepotFile, 0, gf.srcRev, 0, gf.parentDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			j.WriteInteg(gf.srcDepotFile, gf.branchDepotFile, 0, gf.srcRev, 0, gf.branchDepotRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			j.WriteInteg(gf.depotFile, gf.branchDepotFile, 0, gf.srcRev, 0, gf.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+		} else if gf.isMerge { // Merging a rename
+			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteInteg(gf.srcDepotFile, gf.branchSrcDepotFile, 0, gf.branchSrcDepotRev, 0, gf.srcRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			j.WriteInteg(gf.depotFile, gf.branchDepotFile, 0, gf.srcRev, 0, gf.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else {
 			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
 			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
@@ -784,8 +798,8 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 					gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
 					gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
 				}
-				gf.parentDepotFile = depotPathOrig
-				gf.parentDepotRev = g.depotFileRevs[depotPathOrig].rev
+				gf.branchDepotFile = depotPathOrig
+				gf.branchDepotRev = g.depotFileRevs[depotPathOrig].rev
 				gf.fileType = g.getDepotFileTypes(depotPathOrig, g.depotFileRevs[depotPathOrig].rev)
 				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
 				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
@@ -815,15 +829,42 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
 		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
 	} else if gf.action == rename { // Rename means old file is being deleted
-		g.depotFileRevs[gf.srcDepotFile].rev += 1
-		g.depotFileRevs[gf.srcDepotFile].action = delete
-		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-		gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-		gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-		gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev-1)
-		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
-		g.recordDepotFileType(gf)
+		// If it is a merge of a rename then link to file on the branch
+		handled := false
+		if gf.isMerge {
+			targOrigDepotPath := gf.getDepotPath(opts, gf.commit.mergeBranch, gf.name)
+			srcOrigDepotPath := gf.getDepotPath(opts, gf.commit.mergeBranch, gf.srcName)
+			if _, ok := g.depotFileRevs[targOrigDepotPath]; !ok {
+				targOrigDepotPath = ""
+			}
+			if _, ok := g.depotFileRevs[srcOrigDepotPath]; !ok {
+				srcOrigDepotPath = ""
+			}
+			if targOrigDepotPath != "" && srcOrigDepotPath != "" {
+				handled = true
+				g.depotFileRevs[gf.srcDepotFile].rev += 1
+				gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+				gf.branchDepotFile = targOrigDepotPath
+				gf.branchDepotRev = g.depotFileRevs[targOrigDepotPath].rev
+				gf.branchSrcDepotFile = srcOrigDepotPath
+				gf.branchSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
+				gf.fileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
+				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+				g.recordDepotFileType(gf)
+			}
+		}
+		if !handled {
+			g.depotFileRevs[gf.srcDepotFile].rev += 1
+			g.depotFileRevs[gf.srcDepotFile].action = delete
+			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
+			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev-1)
+			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
+			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+			g.recordDepotFileType(gf)
+		}
 	} else { // Copy/branch
 		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
 		srcExists := g.depotFileTypeExists(gf.srcDepotFile, gf.srcRev)
@@ -832,7 +873,6 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			gf.isMerge = false
 			gf.srcDepotFile = ""
 			gf.srcName = ""
-			gf.isMerge = false
 		} else {
 			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
 			if !gf.blob.hasData || gf.isMerge { // Copied but changed
@@ -1044,7 +1084,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 			case libfastimport.FileModify:
 				f := cmd.(libfastimport.FileModify)
-				g.logger.Debugf("FileModify: %+v", f)
+				g.logger.Debugf("FileModify: %s %+v", currCommit.ref(), f)
 				oid, err := getOID(f.DataRef)
 				if err != nil {
 					g.logger.Errorf("Failed to get oid: %+v", f)
@@ -1061,8 +1101,6 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 							blob: b, fileType: b.fileType, compressed: b.compressed,
 							duplicateArchive: true, logger: g.logger})
 					}
-					g.blobFileMatcher.addGitFile(gf)
-					g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 				} else {
 					g.logger.Errorf("Failed to find blob: %d", oid)
 				}
@@ -1074,15 +1112,20 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 					dupGF.compressed = gf.compressed
 					dupGF.duplicateArchive = gf.duplicateArchive
 					dupGF.fileType = gf.fileType
-					g.logger.Debugf("DirtyRenameFound: %s", gf.name)
+					g.blobFileMatcher.addGitFile(dupGF)
+					g.logger.Debugf("DirtyRenameFound: %s, GitFile: ID %d, %s, blobID %d, filetype: %s",
+						dupGF.name, dupGF.ID, dupGF.name, dupGF.blob.blob.Mark, dupGF.blob.fileType)
 				} else {
+					// Only record gitfiles when not duplicates
+					g.blobFileMatcher.addGitFile(gf)
+					g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 					currCommit.files = append(currCommit.files, gf)
 				}
 				node.addFile(gf.name)
 
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
-				g.logger.Debugf("FileDelete: Path:%s", f.Path)
+				g.logger.Debugf("FileDelete: %s Path:%s", currCommit.ref(), f.Path)
 				// Look for delete of dirs vs files
 				if node.findFile(string(f.Path)) {
 					gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
@@ -1097,7 +1140,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 								g.logger.Errorf("Unexpected path found: %s: %s", string(f.Path), df)
 								continue
 							}
-							g.logger.Debugf("DirFileDelete: Path:%s", df)
+							g.logger.Debugf("DirFileDelete: %s Path:%s", currCommit.ref(), df)
 							gf := newGitFile(&GitFile{name: df, action: delete, logger: g.logger})
 							// Have to set up depot paths to be able to look up deleted files.
 							g.setBranch(currCommit)
@@ -1124,13 +1167,13 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
-				g.logger.Debugf("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
+				g.logger.Debugf("FileCopy: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
 				gf := newGitFile(&GitFile{name: string(f.Src), targ: string(f.Dst), action: copy, logger: g.logger})
 				currCommit.files = append(currCommit.files, gf)
 
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
-				g.logger.Debugf("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
+				g.logger.Debugf("FileRename: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
 				// Look for renames of dirs vs files
 				if node.findFile(string(f.Src)) {
 					gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: rename, logger: g.logger})
@@ -1146,7 +1189,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 								continue
 							}
 							dest := fmt.Sprintf("%s%s", string(f.Dst), rf[len(string(f.Src)):])
-							g.logger.Debugf("DirFileRename: Src:%s Dst:%s", rf, dest)
+							g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", currCommit.ref(), rf, dest)
 							gf := newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger})
 							// Have to set up depot paths to be able to look up deleted files.
 							g.setBranch(currCommit)
