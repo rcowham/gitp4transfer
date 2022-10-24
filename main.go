@@ -357,6 +357,20 @@ func (gc *GitCommit) findGitFile(name string) *GitFile {
 	return nil
 }
 
+func (gc *GitCommit) removeGitFile(name string) {
+	i := 0
+	var gf *GitFile
+	for i, gf = range gc.files {
+		if gf.name == name {
+			break
+		}
+	}
+	if i >= len(gc.files) {
+		return
+	}
+	gc.files = append(gc.files[:i], gc.files[i+1:]...)
+}
+
 func (gc *GitCommit) ref() string {
 	return fmt.Sprintf("%s:%d", gc.branch, gc.commit.Mark)
 }
@@ -1107,14 +1121,23 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				// Search for renames (or deletes) of same file in current commit mark if so.
 				dupGF := currCommit.findGitFile(gf.name)
 				if dupGF != nil {
-					dupGF.isDirtyRename = true
-					dupGF.blob = gf.blob
-					dupGF.compressed = gf.compressed
-					dupGF.duplicateArchive = gf.duplicateArchive
-					dupGF.fileType = gf.fileType
-					g.blobFileMatcher.addGitFile(dupGF)
-					g.logger.Debugf("DirtyRenameFound: %s, GitFile: ID %d, %s, blobID %d, filetype: %s",
-						dupGF.name, dupGF.ID, dupGF.name, dupGF.blob.blob.Mark, dupGF.blob.fileType)
+					if dupGF.action == rename {
+						dupGF.isDirtyRename = true
+						dupGF.blob = gf.blob
+						dupGF.compressed = gf.compressed
+						dupGF.duplicateArchive = gf.duplicateArchive
+						dupGF.fileType = gf.fileType
+						g.blobFileMatcher.addGitFile(dupGF)
+						g.logger.Debugf("DirtyRenameFound: %s, GitFile: ID %d, %s, blobID %d, filetype: %s",
+							dupGF.name, dupGF.ID, dupGF.name, dupGF.blob.blob.Mark, dupGF.blob.fileType)
+					} else if dupGF.action == delete {
+						// Having a modify with a delete doesn't make sense - we discard the delete!
+						g.logger.Warnf("ModifyOfDeletedFile:")
+						currCommit.removeGitFile(gf.name)
+						g.blobFileMatcher.addGitFile(gf)
+						g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+						currCommit.files = append(currCommit.files, gf)
+					}
 				} else {
 					// Only record gitfiles when not duplicates
 					g.blobFileMatcher.addGitFile(gf)
