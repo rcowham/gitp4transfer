@@ -163,7 +163,7 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opt
 	} else {
 		opts = &GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
 	}
-	commitChan := g.GitParse(*opts)
+	commitChan := g.GitParse(*opts, nil)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
 	for c := range commitChan {
@@ -181,7 +181,7 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opt
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.CreateArchiveFile(p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
+			f.CreateArchiveFile(nil, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 			f.WriteJournal(&j, &c)
 		}
 	}
@@ -252,7 +252,7 @@ func TestAdd(t *testing.T) {
 	g := NewGitP4Transfer(logger)
 	g.testInput = output
 	opts := GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
-	commitChan := g.GitParse(opts)
+	commitChan := g.GitParse(opts, nil)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
 	for c := range commitChan {
@@ -294,7 +294,7 @@ func TestAdd(t *testing.T) {
 
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
-	f.CreateArchiveFile(p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
+	f.CreateArchiveFile(nil, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 	runCmd("p4 storage -r")

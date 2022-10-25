@@ -545,25 +545,26 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 		if dummyFlag {
 			data = fmt.Sprintf("%d", b.blob.Mark)
 		}
-		pool.Submit(func(rootDir string, fname string, data string) func() {
-			return func() {
-				err := os.MkdirAll(rootDir, 0755)
-				if err != nil {
-					panic(err)
+		pool.Submit(
+			func(rootDir string, fname string, data string) func() {
+				return func() {
+					err := os.MkdirAll(rootDir, 0755)
+					if err != nil {
+						panic(err)
+					}
+					f, err := os.Create(fname)
+					if err != nil {
+						panic(err)
+					}
+					defer f.Close()
+					zw := gzip.NewWriter(f)
+					defer zw.Close()
+					_, err = zw.Write([]byte(data))
+					if err != nil {
+						panic(err)
+					}
 				}
-				f, err := os.Create(fname)
-				if err != nil {
-					panic(err)
-				}
-				defer f.Close()
-				zw := gzip.NewWriter(f)
-				defer zw.Close()
-				_, err = zw.Write([]byte(data))
-				if err != nil {
-					panic(err)
-				}
-			}
-		}(rootDir, fname, data))
+			}(rootDir, fname, data))
 	} else {
 		fname := path.Join(rootDir, b.blobFileName)
 		matcher.logger.Debugf("SavingBlob: %s", fname)
@@ -571,23 +572,24 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 		if dummyFlag {
 			data = fmt.Sprintf("%d", b.blob.Mark)
 		}
-		pool.Submit(func(rootDir string, fname string, data string) func() {
-			return func() {
-				err := os.MkdirAll(rootDir, 0755)
-				if err != nil {
-					panic(err)
+		pool.Submit(
+			func(rootDir string, fname string, data string) func() {
+				return func() {
+					err := os.MkdirAll(rootDir, 0755)
+					if err != nil {
+						panic(err)
+					}
+					f, err := os.Create(fname)
+					if err != nil {
+						panic(err)
+					}
+					defer f.Close()
+					fmt.Fprint(f, data)
+					if err != nil {
+						panic(err)
+					}
 				}
-				f, err := os.Create(fname)
-				if err != nil {
-					panic(err)
-				}
-				defer f.Close()
-				fmt.Fprint(f, data)
-				if err != nil {
-					panic(err)
-				}
-			}
-		}(rootDir, fname, data))
+			}(rootDir, fname, data))
 	}
 	b.saved = true
 	b.blob.Data = "" // Allow contents to be GC'ed
@@ -595,7 +597,7 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 	return nil
 }
 
-func (gf *GitFile) CreateArchiveFile(depotRoot string, matcher *BlobFileMatcher, changeNo int) {
+func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, depotRoot string, matcher *BlobFileMatcher, changeNo int) {
 	if gf.action == delete || (gf.action == rename && !gf.isDirtyRename) || !gf.blob.hasData {
 		return
 	}
@@ -618,12 +620,24 @@ func (gf *GitFile) CreateArchiveFile(depotRoot string, matcher *BlobFileMatcher,
 		return
 	}
 	// Rename the archive file for first copy, expect a duplicate otherwise and save references to it
+	// By submitting to the pool we allow files to be written first (we hope!)
 	if !gf.duplicateArchive {
-		err = os.Rename(bname, fname)
-		if err != nil {
-			gf.logger.Errorf("Failed to Rename: %v", err)
+		if pool != nil {
+			pool.Submit(
+				func(bname string, fname string) func() {
+					return func() {
+						err = os.Rename(bname, fname)
+						if err != nil {
+							gf.logger.Errorf("Failed to Rename: %v", err)
+						}
+					}
+				}(bname, fname))
+		} else {
+			err = os.Rename(bname, fname)
+			if err != nil {
+				gf.logger.Errorf("Failed to Rename: %v", err)
+			}
 		}
-		return
 	}
 }
 
@@ -1203,7 +1217,7 @@ func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
 }
 
 // GitParse - returns channel which contains commits with associated files.
-func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
+func (g *GitP4Transfer) GitParse(options GitParserOptions, pool *pond.WorkerPool) chan GitCommit {
 	var buf io.Reader
 	var file *os.File
 	var err error
@@ -1228,8 +1242,12 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	// Create an unbuffered (blocking) pool with a fixed
 	// number of workers
-	pondSize := runtime.NumCPU()
-	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
+	weCreatedPool := false
+	if pool == nil {
+		weCreatedPool = true
+		pondSize := runtime.NumCPU()
+		pool = pond.New(pondSize, 0, pond.MinWorkers(10))
+	}
 
 	if g.opts.graphFile != "" { // Optional Graphviz structure to be output
 		g.graph = dot.NewGraph(dot.Directed)
@@ -1239,7 +1257,9 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	go func() {
 		defer file.Close()
 		defer close(g.gitChan)
-		defer pool.StopAndWait()
+		if weCreatedPool {
+			defer pool.StopAndWait()
+		}
 	CmdLoop:
 		for {
 			cmd, err := f.ReadCmd()
@@ -1486,7 +1506,10 @@ func main() {
 		return
 	}
 
-	commitChan := g.GitParse(opts)
+	pondSize := runtime.NumCPU()
+	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
+
+	commitChan := g.GitParse(opts, pool)
 
 	j := journal.Journal{}
 	f, err := os.Create(*outputJournal)
@@ -1502,7 +1525,7 @@ func main() {
 		j.WriteChange(c.commit.Mark, c.user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
-				f.CreateArchiveFile(opts.archiveRoot, g.blobFileMatcher, c.commit.Mark)
+				f.CreateArchiveFile(pool, opts.archiveRoot, g.blobFileMatcher, c.commit.Mark)
 			} else if f.blob != nil && f.blob.hasData && !f.blob.dataRemoved {
 				f.blob.blob.Data = "" // Allow contents to be GC'ed
 				f.blob.dataRemoved = true
@@ -1511,6 +1534,7 @@ func main() {
 		}
 	}
 
+	defer pool.StopAndWait()
 	// close(filesChan)
 
 }
