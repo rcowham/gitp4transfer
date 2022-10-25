@@ -7,7 +7,7 @@ import (
 	"compress/gzip"
 	"flag"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -47,7 +47,7 @@ func unzipBuf(data string) string {
 	if err != nil {
 		log.Fatal(err)
 	}
-	buf, err := ioutil.ReadAll(gz)
+	buf, err := io.ReadAll(gz)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -94,13 +94,13 @@ func (p4t *P4Test) ensureDirectories() {
 	}
 }
 
-func (p4t *P4Test) cleanupTestTree() {
-	os.Chdir(p4t.startDir)
-	err := os.RemoveAll(p4t.testRoot)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to remove %s: %v", p4t.startDir, err)
-	}
-}
+// func (p4t *P4Test) cleanupTestTree() {
+// 	os.Chdir(p4t.startDir)
+// 	err := os.RemoveAll(p4t.testRoot)
+// 	if err != nil {
+// 		fmt.Fprintf(os.Stderr, "Failed to remove %s: %v", p4t.startDir, err)
+// 	}
+// }
 
 func writeToFile(fname, contents string) {
 	f, err := os.Create(fname)
@@ -126,18 +126,18 @@ func appendToFile(fname, contents string) {
 	}
 }
 
-func writeToTempFile(contents string) string {
-	f, err := os.CreateTemp("", "*.txt")
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-	fmt.Fprint(f, contents)
-	if err != nil {
-		fmt.Println(err)
-	}
-	return f.Name()
-}
+// func writeToTempFile(contents string) string {
+// 	f, err := os.CreateTemp("", "*.txt")
+// 	if err != nil {
+// 		panic(err)
+// 	}
+// 	defer f.Close()
+// 	fmt.Fprint(f, contents)
+// 	if err != nil {
+// 		fmt.Println(err)
+// 	}
+// 	return f.Name()
+// }
 
 func createLogger() *logrus.Logger {
 	if logger != nil {
@@ -1443,12 +1443,21 @@ func TestNode(t *testing.T) {
 	assert.True(t, n.findFile("src/file2.txt"))
 	assert.False(t, n.findFile("src/file99.txt"))
 	assert.False(t, n.findFile("file99.txt"))
+
+	n.deleteFile("src/file2.txt")
+	f = n.getFiles("src")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "src/file3.txt", f[0])
+
+	n.deleteFile("src/file3.txt")
+	f = n.getFiles("src")
+	assert.Equal(t, 0, len(f))
 }
 
 func TestBigNode(t *testing.T) {
 	n := &Node{name: ""}
 	files := `Env/Assets/ArtEnv/Cookies/cookie.png
-Env/Assets/ArtEnv/Cookies/cookie.png/cookie.png.meta
+Env/Assets/ArtEnv/Cookies/cookie.png.meta
 Env/Assets/Art/Structure/Universal.meta
 Env/Assets/Art/Structure/Universal/Bunker.meta`
 
@@ -1463,6 +1472,11 @@ Env/Assets/Art/Structure/Universal/Bunker.meta`
 	assert.Equal(t, 2, len(f))
 	assert.Equal(t, "Env/Assets/Art/Structure/Universal.meta", f[0])
 	assert.Equal(t, "Env/Assets/Art/Structure/Universal/Bunker.meta", f[1])
+
+	f = n.getFiles("")
+	assert.Equal(t, 4, len(f))
+	assert.Equal(t, "Env/Assets/ArtEnv/Cookies/cookie.png", f[0])
+	assert.Equal(t, "Env/Assets/ArtEnv/Cookies/cookie.png.meta", f[1])
 
 }
 

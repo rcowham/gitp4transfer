@@ -62,7 +62,6 @@ const (
 	delete
 	copy
 	rename
-	renamed // Source of rename so deleted
 )
 
 func (a GitAction) String() string {
@@ -98,8 +97,36 @@ func (n *Node) addSubFile(fullPath string, subPath string) {
 	}
 }
 
+func (n *Node) deleteSubFile(fullPath string, subPath string) {
+	parts := strings.Split(subPath, "/")
+	if len(parts) == 1 {
+		i := 0
+		var c *Node
+		for i, c = range n.children {
+			if c.name == parts[0] {
+				break
+			}
+		}
+		if i < len(n.children) {
+			n.children[i] = n.children[len(n.children)-1]
+			n.children = n.children[:len(n.children)-1]
+		}
+	} else {
+		for _, c := range n.children {
+			if c.name == parts[0] {
+				c.deleteSubFile(fullPath, strings.Join(parts[1:], "/"))
+				return
+			}
+		}
+	}
+}
+
 func (n *Node) addFile(path string) {
 	n.addSubFile(path, path)
+}
+
+func (n *Node) deleteFile(path string) {
+	n.deleteSubFile(path, path)
 }
 
 func (n *Node) getChildFiles() []string {
@@ -274,13 +301,12 @@ func (m *BlobFileMatcher) updateDuplicateGitFile(gf *GitFile) {
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
 	name             string // Git filename (target for rename/copy)
+	srcName          string // Name of git source file for rename/copy
 	ID               int
 	size             int
 	p4               *P4File
-	srcName          string // Name of git source file for rename/copy
 	duplicateArchive bool
 	action           GitAction
-	targ             string // For use with copy/move
 	isBranch         bool
 	isMerge          bool
 	isDirtyRename    bool // Rename where content changed
@@ -297,8 +323,8 @@ type P4File struct {
 	rev                int    // Depot rev
 	lbrRev             int    // Lbr rev - usually same as Depot rev
 	lbrFile            string // Lbr file - usually same as Depot file
-	srcDepotFile       string //   "
-	srcRev             int    //   "
+	srcDepotFile       string // Depot path of source for a rename
+	srcRev             int    // Ditto for rev
 	branchDepotFile    string // For branched files
 	branchDepotRev     int
 	branchSrcDepotFile string // The source file for a merged rename
@@ -412,8 +438,9 @@ type GitP4Transfer struct {
 	depotFileTypes  map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
 	blobFileMatcher *BlobFileMatcher            // Map between gitfile ID and record
 	commits         map[int]*GitCommit
-	testInput       string     // For testing only
-	graph           *dot.Graph // If outputting a graph
+	testInput       string           // For testing only
+	graph           *dot.Graph       // If outputting a graph
+	filesOnBranch   map[string]*Node // Records current state of git tree per branch
 }
 
 func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
@@ -421,7 +448,8 @@ func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
 		depotFileRevs:   make(map[string]*RevChange),
 		blobFileMatcher: newBlobFileMatcher(logger),
 		depotFileTypes:  make(map[string]journal.FileType),
-		commits:         make(map[int]*GitCommit)}
+		commits:         make(map[int]*GitCommit),
+		filesOnBranch:   make(map[string]*Node)}
 }
 
 func (gf *GitFile) getDepotPath(opts GitParserOptions, branch string, name string) string {
@@ -681,7 +709,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			}
 			break
 		}
-		switch cmd.(type) {
+		switch ctype := cmd.(type) {
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
 			g.logger.Infof("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
@@ -742,7 +770,7 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			t := cmd.(libfastimport.CmdTag)
 			g.logger.Infof("CmdTag: %+v", t)
 		default:
-			g.logger.Errorf("Not handled - found cmd %+v", cmd)
+			g.logger.Errorf("Not handled - found ctype %s cmd %+v", ctype, cmd)
 			g.logger.Infof("Cmd type %T", cmd)
 		}
 	}
@@ -752,26 +780,15 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 }
 
 // Is current head rev a deleted rev?
-func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
-	if gf.p4.srcDepotFile == "" {
-		return false
-	}
-	if f, ok := g.depotFileRevs[gf.p4.srcDepotFile]; ok {
-		return f.action == delete
-	}
-	return false
-}
-
-// Is current head rev a deleted rev?
-func (g *GitP4Transfer) isRenamedFile(gf *GitFile) bool {
-	if gf.p4.depotFile == "" {
-		return false
-	}
-	if f, ok := g.depotFileRevs[gf.p4.depotFile]; ok {
-		return f.action == renamed
-	}
-	return false
-}
+// func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
+// 	if gf.p4.srcDepotFile == "" {
+// 		return false
+// 	}
+// 	if f, ok := g.depotFileRevs[gf.p4.srcDepotFile]; ok {
+// 		return f.action == delete
+// 	}
+// 	return false
+// }
 
 // Maintain a list of latest revision counters indexed by depotFile and set lbrArchive/Rev
 func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgNo int) {
@@ -1022,22 +1039,164 @@ func (g *GitP4Transfer) createGraphEdges(cmt *GitCommit) {
 	}
 }
 
-func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
-	if cmt != nil { // Process previous commit
-		g.setBranch(cmt)
-		g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
-			cmt.commit.Mark, len(cmt.files), cmt.commitSize, Humanize(cmt.commitSize))
-		for i := range cmt.files {
-			cmt.files[i].setDepotPaths(g.opts, cmt)
-			cmt.files[i].updateFileDetails()
-			g.updateDepotRevs(g.opts, cmt.files[i], cmt.commit.Mark)
-		}
-		if g.graph != nil { // Optional Graphviz structure to be output
-			cmt.gNode = g.graph.Node(fmt.Sprintf("Commit: %d %s", cmt.commit.Mark, cmt.branch))
-			g.createGraphEdges(cmt)
-		}
-		g.gitChan <- *cmt
+// Validate that all collected GitFiles make sense - remove any that don't!
+func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
+	if cmt == nil {
+		return
 	}
+	g.setBranch(cmt)
+	g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
+		cmt.commit.Mark, len(cmt.files), cmt.commitSize, Humanize(cmt.commitSize))
+	// If a new branch, then copy files from parent
+	if _, ok := g.filesOnBranch[cmt.parentBranch]; !ok {
+		g.filesOnBranch[cmt.parentBranch] = &Node{name: ""}
+	}
+	if _, ok := g.filesOnBranch[cmt.branch]; !ok {
+		g.filesOnBranch[cmt.branch] = &Node{name: ""}
+		pfiles := g.filesOnBranch[cmt.parentBranch].getFiles("")
+		for _, f := range pfiles {
+			g.filesOnBranch[cmt.branch].addFile(f)
+		}
+	}
+	newfiles := make([]*GitFile, 0)
+	node := g.filesOnBranch[cmt.branch]
+	// Phase 1 - expand deletes/renames/copies of directories to individual commands
+	for i := range cmt.files {
+		gf := cmt.files[i]
+		if gf.action == modify {
+			newfiles = append(newfiles, gf)
+		} else if gf.action == delete {
+			if node.findFile(gf.name) {
+				newfiles = append(newfiles, gf)
+				continue
+			}
+			files := node.getFiles(gf.name)
+			if len(files) > 0 {
+				g.logger.Debugf("DirDelete: Path:%s", gf.name)
+				for _, df := range files {
+					if !hasPrefix(df, gf.name) {
+						g.logger.Errorf("Unexpected path found: %s: %s", gf.name, df)
+						continue
+					}
+					g.logger.Debugf("DirFileDelete: %s Path:%s", cmt.ref(), df)
+					newfiles = append(newfiles, newGitFile(&GitFile{name: df, action: delete, logger: g.logger}))
+				}
+			}
+		} else if gf.action == rename {
+			if node.findFile(gf.srcName) {
+				newfiles = append(newfiles, gf)
+				continue
+			}
+			files := node.getFiles(gf.srcName)
+			if len(files) > 0 {
+				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
+				for _, rf := range files {
+					if !hasPrefix(rf, string(gf.srcName)) {
+						g.logger.Errorf("Unexpected src found: %s: %s", string(gf.srcName), rf)
+						continue
+					}
+					dest := fmt.Sprintf("%s%s", gf.name, rf[len(gf.srcName):])
+					g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
+				}
+			}
+		} else if gf.action == copy {
+			if node.findFile(gf.name) {
+				newfiles = append(newfiles, gf)
+				continue
+			}
+			files := node.getFiles(gf.name)
+			if len(files) > 0 {
+				g.logger.Debugf("DirCopy: Src:%s Dst:%s", gf.srcName, gf.name)
+				for _, rf := range files {
+					if !hasPrefix(rf, string(gf.srcName)) {
+						g.logger.Errorf("Unexpected src found: %s: %s", string(gf.srcName), rf)
+						continue
+					}
+					dest := fmt.Sprintf("%s%s", gf.name, rf[len(gf.srcName):])
+					g.logger.Debugf("DirFileCopy: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: copy, logger: g.logger}))
+				}
+			}
+		} else {
+			g.logger.Errorf("Unexpected GFAction: GitFile: ID %d, %s, %s", gf.ID, gf.name, gf.action.String())
+		}
+	}
+	// Phase 2 - remove actions which do not make sense, e.g. delete of a renamed file or rename/copy of a deleted file
+	cmt.files = newfiles
+	newfiles = make([]*GitFile, 0)
+	for i := range cmt.files {
+		valid := true
+		gf := cmt.files[i]
+		if gf.action == modify {
+			valid = true
+		} else if gf.action == delete {
+			dupGF := cmt.findGitFileRename(string(gf.name))
+			if dupGF != nil && dupGF.action == rename {
+				g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				valid = false
+			}
+			if !g.filesOnBranch[cmt.branch].findFile(gf.name) {
+				g.logger.Warnf("DeleteOfDeletedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				valid = false
+			}
+		} else if gf.action == rename {
+			dupGF := cmt.findGitFile(string(gf.srcName))
+			if dupGF != nil && dupGF.action == delete {
+				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: ID %d, %s -> %s", dupGF.ID, gf.srcName, gf.name)
+				valid = false
+			}
+			if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
+				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				valid = false
+			}
+		} else if gf.action == copy {
+			dupGF := cmt.findGitFile(string(gf.srcName))
+			if dupGF != nil && dupGF.action == delete {
+				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: ID %d, %s -> %s", dupGF.ID, gf.srcName, gf.name)
+				valid = false
+			}
+			if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
+				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				valid = false
+			}
+		}
+		if valid {
+			newfiles = append(newfiles, gf)
+		}
+	}
+	// Phase 3 - update our list of files for validation of future commits
+	cmt.files = newfiles
+	for i := range cmt.files {
+		gf := cmt.files[i]
+		if gf.action == modify || gf.action == copy {
+			node.addFile(gf.name)
+		} else if gf.action == delete {
+			node.deleteFile(gf.name)
+		} else if gf.action == rename {
+			node.addFile(gf.name)
+			node.deleteFile(gf.srcName)
+		}
+	}
+	for i := range cmt.files {
+		cmt.files[i].setDepotPaths(g.opts, cmt)
+		cmt.files[i].updateFileDetails()
+	}
+}
+
+// Process a previously validated commit
+func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
+	if cmt == nil {
+		return
+	}
+	for i := range cmt.files {
+		g.updateDepotRevs(g.opts, cmt.files[i], cmt.commit.Mark)
+	}
+	if g.graph != nil { // Optional Graphviz structure to be output
+		cmt.gNode = g.graph.Node(fmt.Sprintf("Commit: %d %s", cmt.commit.Mark, cmt.branch))
+		g.createGraphEdges(cmt)
+	}
+	g.gitChan <- *cmt
 }
 
 // GitParse - returns channel which contains commits with associated files.
@@ -1064,10 +1223,6 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 	var commitSize = 0
 	commitCount := 0
 
-	missingRenameLogged := false
-	missingDeleteLogged := false
-	node := &Node{name: ""} // Track directories and file trees
-
 	// Create an unbuffered (blocking) pool with a fixed
 	// number of workers
 	pondSize := runtime.NumCPU()
@@ -1092,7 +1247,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Errorf("ERROR: Failed to read cmd: %v", err)
 				continue
 			}
-			switch cmd.(type) {
+			switch ctype := cmd.(type) {
 			case libfastimport.CmdBlob:
 				blob := cmd.(libfastimport.CmdBlob)
 				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
@@ -1106,15 +1261,13 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				g.logger.Debugf("Reset: - %+v", reset)
 
 			case libfastimport.CmdCommit:
+				g.validateCommit(currCommit)
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
 				g.logger.Debugf("Commit: %+v", commit)
 				currCommit = newGitCommit(&commit, commitSize)
 				commitSize = 0
 				g.commits[commit.Mark] = currCommit
-				if commit.Mark > 157570 {
-					g.logger.Debugf("CommitOver: %+v", commit)
-				}
 
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
@@ -1147,7 +1300,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				} else {
 					g.logger.Errorf("Failed to find blob: %d", oid)
 				}
-				// Search for renames (or deletes) of same file in current commit mark if so.
+				// Search for renames (or deletes) of same file in current commit and note if found.
 				dupGF := currCommit.findGitFile(gf.name)
 				if dupGF != nil {
 					if dupGF.action == rename {
@@ -1168,125 +1321,39 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 						currCommit.files = append(currCommit.files, gf)
 					}
 				} else {
-					// Only record gitfiles when not duplicates
 					g.blobFileMatcher.addGitFile(gf)
 					g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 					currCommit.files = append(currCommit.files, gf)
 				}
-				node.addFile(gf.name)
 
 			case libfastimport.FileDelete:
 				f := cmd.(libfastimport.FileDelete)
 				g.logger.Debugf("FileDelete: %s Path:%s", currCommit.ref(), f.Path)
-				// Look for delete of dirs vs files
-				if node.findFile(string(f.Path)) {
-					dupGF := currCommit.findGitFileRename(string(f.Path))
-					if dupGF != nil && dupGF.action == rename {
-						g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: ID %d, %s", dupGF.ID, f.Path)
-						currCommit.removeGitFile(dupGF.ID)
-					} else {
-						gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
-						currCommit.files = append(currCommit.files, gf)
-						node.addFile(gf.name)
-					}
-				} else {
-					files := node.getFiles(string(f.Path))
-					if len(files) > 0 {
-						g.logger.Debugf("DirDelete: Path:%s", f.Path)
-						for _, df := range files {
-							if !hasPrefix(df, string(f.Path)) {
-								g.logger.Errorf("Unexpected path found: %s: %s", string(f.Path), df)
-								continue
-							}
-							g.logger.Debugf("DirFileDelete: %s Path:%s", currCommit.ref(), df)
-							dupGF := currCommit.findGitFileRename(df)
-							if dupGF != nil && dupGF.action == rename {
-								g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: ID %d, %s", dupGF.ID, df)
-								currCommit.removeGitFile(dupGF.ID)
-							} else {
-								gf := newGitFile(&GitFile{name: df, action: delete, logger: g.logger})
-								// Have to set up depot paths to be able to look up deleted files.
-								g.setBranch(currCommit)
-								gf.setDepotPaths(g.opts, currCommit)
-								if g.isSrcDeletedFile(gf) {
-									g.logger.Debugf("DirFileDeleteIgnoreDeleted: Path:%s", df)
-								} else {
-									currCommit.files = append(currCommit.files, gf)
-									node.addFile(gf.name)
-								}
-							}
-						}
-					} else {
-						g.logger.Errorf("FileDeleteMissing: Path:%s", string(f.Path))
-						if g.logger.IsLevelEnabled(logrus.DebugLevel) && !missingDeleteLogged {
-							missingDeleteLogged = true // only do it once
-							nodeFiles := node.getFiles("")
-							g.logger.Debugf("nodeFiles:")
-							for _, s := range nodeFiles {
-								g.logger.Debug(s)
-							}
-						}
-					}
-				}
+				gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
+				currCommit.files = append(currCommit.files, gf)
 
 			case libfastimport.FileCopy:
 				f := cmd.(libfastimport.FileCopy)
 				g.logger.Debugf("FileCopy: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
-				gf := newGitFile(&GitFile{name: string(f.Src), targ: string(f.Dst), action: copy, logger: g.logger})
+				gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: copy, logger: g.logger})
 				currCommit.files = append(currCommit.files, gf)
 
 			case libfastimport.FileRename:
 				f := cmd.(libfastimport.FileRename)
 				g.logger.Debugf("FileRename: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
-				// Look for renames of dirs vs files
-				if node.findFile(string(f.Src)) {
-					gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: rename, logger: g.logger})
-					currCommit.files = append(currCommit.files, gf)
-					node.addFile(gf.name)
-				} else {
-					files := node.getFiles(string(f.Src))
-					if len(files) > 0 {
-						g.logger.Debugf("DirRename: Src:%s Dst:%s", f.Src, f.Dst)
-						for _, rf := range files {
-							if !hasPrefix(rf, string(f.Src)) {
-								g.logger.Errorf("Unexpected src found: %s: %s", string(f.Src), rf)
-								continue
-							}
-							dest := fmt.Sprintf("%s%s", string(f.Dst), rf[len(string(f.Src)):])
-							g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", currCommit.ref(), rf, dest)
-							gf := newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger})
-							// Have to set up depot paths to be able to look up deleted files.
-							g.setBranch(currCommit)
-							gf.setDepotPaths(g.opts, currCommit)
-							if g.isSrcDeletedFile(gf) {
-								g.logger.Debugf("DirFileRenameIgnoreDeleted: Src:%s", rf)
-							} else {
-								currCommit.files = append(currCommit.files, gf)
-								node.addFile(gf.name)
-							}
-						}
-					} else {
-						g.logger.Errorf("FileRenameMissing: Src:%s Dst:%s", string(f.Src), string(f.Dst))
-						if g.logger.IsLevelEnabled(logrus.DebugLevel) && !missingRenameLogged {
-							missingRenameLogged = true // only do it once
-							nodeFiles := node.getFiles("")
-							g.logger.Debugf("nodeFiles:")
-							for _, s := range nodeFiles {
-								g.logger.Debug(s)
-							}
-						}
-					}
-				}
+				gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: rename, logger: g.logger})
+				currCommit.files = append(currCommit.files, gf)
 
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
 				g.logger.Debugf("CmdTag: %+v", t)
 
 			default:
-				g.logger.Errorf("Not handled: Found cmd %+v", cmd)
+				g.logger.Errorf("Not handled: Found ctype %v cmd %+v", ctype, cmd)
 				g.logger.Errorf("Cmd type %T", cmd)
 			}
 		}
+		g.validateCommit(currCommit)
 		g.processCommit(currCommit)
 		// Render/close Graphviz if required
 		if g.opts.graphFile == "" {
