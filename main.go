@@ -52,6 +52,7 @@ type GitParserOptions struct {
 	defaultBranch string
 	graphFile     string
 	maxCommits    int
+	debugCommit   int // For debug breakpoint
 }
 
 type GitAction int
@@ -909,6 +910,8 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				gf.p4.branchSrcDepotFile = srcOrigDepotPath
 				gf.p4.branchSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
 				gf.fileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
+				gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
+				gf.p4.lbrRev = g.depotFileRevs[targOrigDepotPath].lbrRev
 				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 				g.recordDepotFileType(gf)
@@ -1119,7 +1122,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				}
 			}
 		} else {
-			g.logger.Errorf("Unexpected GFAction: GitFile: ID %d, %s, %s", gf.ID, gf.name, gf.action.String())
+			g.logger.Errorf("Unexpected GFAction: GitFile: %s ID %d, %s, %s", cmt.ref(), gf.ID, gf.name, gf.action.String())
 		}
 	}
 	// Phase 2 - remove actions which do not make sense, e.g. delete of a renamed file or rename/copy of a deleted file
@@ -1133,31 +1136,31 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		} else if gf.action == delete {
 			dupGF := cmt.findGitFileRename(string(gf.name))
 			if dupGF != nil && dupGF.action == rename {
-				g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
 			}
 			if !g.filesOnBranch[cmt.branch].findFile(gf.name) {
-				g.logger.Warnf("DeleteOfDeletedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				g.logger.Warnf("DeleteOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
 			}
 		} else if gf.action == rename {
 			dupGF := cmt.findGitFile(string(gf.srcName))
 			if dupGF != nil && dupGF.action == delete {
-				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: ID %d, %s -> %s", dupGF.ID, gf.srcName, gf.name)
+				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s -> %s", cmt.ref(), dupGF.ID, gf.srcName, gf.name)
 				valid = false
 			}
 			if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
-				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
 			}
 		} else if gf.action == copy {
 			dupGF := cmt.findGitFile(string(gf.srcName))
 			if dupGF != nil && dupGF.action == delete {
-				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: ID %d, %s -> %s", dupGF.ID, gf.srcName, gf.name)
+				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: %s ID %d, %s -> %s", cmt.ref(), dupGF.ID, gf.srcName, gf.name)
 				valid = false
 			}
 			if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
-				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: ID %d, %s", dupGF.ID, gf.name)
+				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
 			}
 		}
@@ -1268,6 +1271,9 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 				currCommit = newGitCommit(&commit, commitSize)
 				commitSize = 0
 				g.commits[commit.Mark] = currCommit
+				if g.opts.debugCommit != 0 && g.opts.debugCommit == commit.Mark {
+					g.logger.Debugf("Commit breakpoint: %d", commit.Mark)
+				}
 
 			case libfastimport.CmdCommitEnd:
 				commit := cmd.(libfastimport.CmdCommitEnd)
@@ -1310,11 +1316,12 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 						dupGF.duplicateArchive = gf.duplicateArchive
 						dupGF.fileType = gf.fileType
 						g.blobFileMatcher.addGitFile(dupGF)
-						g.logger.Debugf("DirtyRenameFound: %s, GitFile: ID %d, %s, blobID %d, filetype: %s",
-							dupGF.name, dupGF.ID, dupGF.name, dupGF.blob.blob.Mark, dupGF.blob.fileType)
+						g.logger.Debugf("DirtyRenameFound: %s %s, GitFile: ID %d, %s, blobID %d, filetype: %s",
+							currCommit.ref(), dupGF.name, dupGF.ID, dupGF.name, dupGF.blob.blob.Mark, dupGF.blob.fileType)
 					} else if dupGF.action == delete {
 						// Having a modify with a delete doesn't make sense - we discard the delete!
-						g.logger.Warnf("ModifyOfDeletedFile: GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+						g.logger.Warnf("ModifyOfDeletedFile: %s GitFile: ID %d, %s, blobID %d, filetype: %s",
+							currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 						currCommit.removeGitFile(gf.ID)
 						g.blobFileMatcher.addGitFile(gf)
 						g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
@@ -1322,7 +1329,8 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 					}
 				} else {
 					g.blobFileMatcher.addGitFile(gf)
-					g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+					g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
+						currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 					currCommit.files = append(currCommit.files, gf)
 				}
 
@@ -1441,6 +1449,10 @@ func main() {
 			"debug",
 			"Enable debugging level.",
 		).Int()
+		debugCommit = kingpin.Flag(
+			"debug.commit",
+			"For debugging - to allow breakpoints to be set.",
+		).Int()
 	)
 	kingpin.UsageTemplate(kingpin.CompactUsageTemplate).Version(version.Print("gitp4transfer")).Author("Robert Cowham")
 	kingpin.CommandLine.Help = "Parses one or more git fast-export files to create a Perforce Helix Core import\n"
@@ -1466,6 +1478,7 @@ func main() {
 		dummyArchives: *dummyArchives,
 		maxCommits:    *maxCommits,
 		graphFile:     *outputGraph,
+		debugCommit:   *debugCommit,
 	}
 
 	if *dump {

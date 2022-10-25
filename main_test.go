@@ -1991,3 +1991,67 @@ func TestBranchMergeCompressed(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.6$`, result)
 
 }
+
+func TestBranchMergeRename(t *testing.T) {
+	// Merge branches with where a file has been renamed on the branch
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	targ := "targ.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git switch -c dev")
+	runCmd(fmt.Sprintf("mv %s %s", src, targ))
+	runCmd("git add .")
+	runCmd("git commit -m renamed")
+	runCmd("git switch main")
+	runCmd("git merge --no-ff dev")
+	runCmd("git commit -m \"merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src.txt#1 - delete change 3 (text+C)
+//import/dev/targ.txt#1 - add change 3 (text+C)
+//import/main/src.txt#2 - delete change 4 (text+C)
+//import/main/targ.txt#1 - add change 4 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 filelog //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `(?m)//import/dev/src.txt
+\.\.\. #1 change 3 delete on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. delete from //import/main/src.txt#1
+\.\.\. \.\.\. delete into //import/main/src.txt#1,#2`, result)
+
+	assert.Regexp(t, `(?m)//import/dev/targ.txt
+\.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. branch from //import/main/src.txt#1`, result)
+
+	assert.Regexp(t, `(?m)//import/main/src.txt
+\.\.\. #2 change 4 delete on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. delete from //import/dev/src.txt#1
+\.\.\. #1 change 2 add on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. delete into //import/dev/src.txt#1
+\.\.\. \.\.\. branch into //import/dev/targ.txt#1`, result)
+
+	assert.Regexp(t, `(?m)//import/main/targ.txt
+\.\.\. #1 change 4 add on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. branch from //import/dev/targ.txt#1,#2`, result)
+
+}
