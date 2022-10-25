@@ -62,13 +62,14 @@ const (
 	delete
 	copy
 	rename
+	renamed // Source of rename so deleted
 )
 
 func (a GitAction) String() string {
 	return [...]string{"Unknown", "Modify", "Delete", "Copy", "Rename"}[a]
 }
 
-// Node - tree structure to record directory contents for directory renames
+// Node - tree structure to record directory contents for directory renames, deletes and copies
 type Node struct {
 	name     string
 	path     string
@@ -113,6 +114,7 @@ func (n *Node) getChildFiles() []string {
 	return files
 }
 
+// Return a list of all files in a directory
 func (n *Node) getFiles(dirName string) []string {
 	parts := strings.Split(dirName, "/")
 	files := make([]string, 0)
@@ -141,6 +143,7 @@ func (n *Node) getFiles(dirName string) []string {
 	return files
 }
 
+// Returns true if it finds a single file with specified name
 func (n *Node) findFile(fileName string) bool {
 	parts := strings.Split(fileName, "/")
 	dir := ""
@@ -251,33 +254,49 @@ func (m *BlobFileMatcher) getBlob(blobID int) *GitBlob {
 func (m *BlobFileMatcher) updateDuplicateGitFile(gf *GitFile) {
 	b, ok := m.blobMap[gf.blob.blob.Mark]
 	if !ok {
-		gf.logger.Errorf("Failed to find GitFile ID1: %d %s", gf.blob.blob.Mark, gf.depotFile)
+		gf.logger.Errorf("Failed to find GitFile ID1: %d %s", gf.blob.blob.Mark, gf.p4.depotFile)
 		return
 	}
 	if len(b.gitFileIDs) == 0 {
-		gf.logger.Errorf("Failed to find GitFile ID2: %d %s", gf.blob.blob.Mark, gf.depotFile)
+		gf.logger.Errorf("Failed to find GitFile ID2: %d %s", gf.blob.blob.Mark, gf.p4.depotFile)
 		return
 	}
 	origGF, ok := m.gitFileMap[b.gitFileIDs[0]]
 	if !ok {
-		gf.logger.Errorf("Failed to find GitFile ID: %d %s", b.gitFileIDs[0], gf.depotFile)
+		gf.logger.Errorf("Failed to find GitFile ID: %d %s", b.gitFileIDs[0], gf.p4.depotFile)
 		return
 	}
-	gf.lbrFile = origGF.lbrFile
-	gf.lbrRev = origGF.lbrRev
-	gf.logger.Debugf("Duplicate file %s %d of: %s %d", gf.depotFile, gf.rev, gf.lbrFile, gf.lbrRev)
+	gf.p4.lbrFile = origGF.p4.lbrFile
+	gf.p4.lbrRev = origGF.p4.lbrRev
+	gf.logger.Debugf("Duplicate file %s %d of: %s %d", gf.p4.depotFile, gf.p4.rev, gf.p4.lbrFile, gf.p4.lbrRev)
 }
 
 // GitFile - A git file record - modify/delete/copy/move
 type GitFile struct {
-	name               string // Git filename (target for rename/copy)
-	ID                 int
-	size               int
+	name             string // Git filename (target for rename/copy)
+	ID               int
+	size             int
+	p4               *P4File
+	srcName          string // Name of git source file for rename/copy
+	duplicateArchive bool
+	action           GitAction
+	targ             string // For use with copy/move
+	isBranch         bool
+	isMerge          bool
+	isDirtyRename    bool // Rename where content changed
+	fileType         journal.FileType
+	compressed       bool
+	blob             *GitBlob
+	logger           *logrus.Logger
+	commit           *GitCommit
+}
+
+// Information for a P4File
+type P4File struct {
 	depotFile          string // Full depot path
 	rev                int    // Depot rev
 	lbrRev             int    // Lbr rev - usually same as Depot rev
 	lbrFile            string // Lbr file - usually same as Depot file
-	srcName            string // Name of git source file for rename/copy
 	srcDepotFile       string //   "
 	srcRev             int    //   "
 	branchDepotFile    string // For branched files
@@ -285,18 +304,7 @@ type GitFile struct {
 	branchSrcDepotFile string // The source file for a merged rename
 	branchSrcDepotRev  int
 	archiveFile        string
-	duplicateArchive   bool
-	action             GitAction
 	p4action           journal.FileAction
-	targ               string // For use with copy/move
-	isBranch           bool
-	isMerge            bool
-	isDirtyRename      bool // Rename where content changed
-	fileType           journal.FileType
-	compressed         bool
-	blob               *GitBlob
-	logger             *logrus.Logger
-	commit             *GitCommit
 }
 
 func newGitFile(gf *GitFile) *GitFile {
@@ -305,6 +313,7 @@ func newGitFile(gf *GitFile) *GitFile {
 	if gf.fileType == 0 {
 		gf.fileType = journal.CText // Default - may be overwritten later
 	}
+	gf.p4 = &P4File{}
 	gf.updateFileDetails()
 	return gf
 }
@@ -425,19 +434,19 @@ func (gf *GitFile) getDepotPath(opts GitParserOptions, branch string, name strin
 
 func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
 	gf.commit = gc
-	gf.depotFile = gf.getDepotPath(opts, gc.branch, gf.name)
+	gf.p4.depotFile = gf.getDepotPath(opts, gc.branch, gf.name)
 	if gf.srcName != "" {
-		gf.srcDepotFile = gf.getDepotPath(opts, gc.branch, gf.srcName)
+		gf.p4.srcDepotFile = gf.getDepotPath(opts, gc.branch, gf.srcName)
 	} else if gc.prevBranch != "" {
 		gf.srcName = gf.name
 		gf.isBranch = true
-		gf.srcDepotFile = gf.getDepotPath(opts, gc.prevBranch, gf.srcName)
+		gf.p4.srcDepotFile = gf.getDepotPath(opts, gc.prevBranch, gf.srcName)
 	}
 	if gc.mergeBranch != "" && gc.mergeBranch != gc.branch {
 		gf.isMerge = true
 		if gf.srcName == "" {
 			gf.srcName = gf.name
-			gf.srcDepotFile = gf.getDepotPath(opts, gc.mergeBranch, gf.srcName)
+			gf.p4.srcDepotFile = gf.getDepotPath(opts, gc.mergeBranch, gf.srcName)
 		}
 	}
 }
@@ -470,13 +479,13 @@ func (b *GitBlob) setCompressionDetails() {
 func (gf *GitFile) updateFileDetails() {
 	switch gf.action {
 	case delete:
-		gf.p4action = journal.Delete
+		gf.p4.p4action = journal.Delete
 		return
 	case rename:
-		gf.p4action = journal.Rename
+		gf.p4.p4action = journal.Rename
 		return
 	case modify:
-		gf.p4action = journal.Edit
+		gf.p4.p4action = journal.Edit
 	}
 }
 
@@ -561,7 +570,7 @@ func (gf *GitFile) CreateArchiveFile(depotRoot string, matcher *BlobFileMatcher,
 	if gf.action == delete || (gf.action == rename && !gf.isDirtyRename) || !gf.blob.hasData {
 		return
 	}
-	depotFile := strings.ReplaceAll(gf.depotFile[2:], "@", "%40")
+	depotFile := strings.ReplaceAll(gf.p4.depotFile[2:], "@", "%40")
 	rootDir := path.Join(depotRoot, fmt.Sprintf("%s,d", depotFile))
 	if gf.blob.blobFileName == "" {
 		gf.logger.Debugf(fmt.Sprintf("NoBlobFound: %s", depotFile))
@@ -595,44 +604,44 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	chgNo := c.commit.Mark
 	fileType := gf.fileType
 	if fileType == 0 {
-		gf.logger.Errorf("Unexpected filetype text: %s#%d", gf.depotFile, gf.rev)
+		gf.logger.Errorf("Unexpected filetype text: %s#%d", gf.p4.depotFile, gf.p4.rev)
 		fileType = journal.CText
 	}
 	if gf.action == modify {
 		if gf.isBranch || gf.isMerge {
 			// we write rev for newly branched depot file, with link to old version
 			action := journal.Add
-			if gf.rev > 1 { // TODO
+			if gf.p4.rev > 1 { // TODO
 				action = journal.Edit
 			}
-			j.WriteRev(gf.depotFile, gf.rev, action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteInteg(gf.depotFile, gf.srcDepotFile, gf.srcRev-1, gf.srcRev, gf.rev-1, gf.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, gf.p4.srcRev-1, gf.p4.srcRev, gf.p4.rev-1, gf.p4.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
 		} else {
-			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 		}
 	} else if gf.action == delete {
 		if gf.isMerge {
-			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteInteg(gf.depotFile, gf.srcDepotFile, gf.srcRev-1, gf.srcRev, gf.rev-1, gf.rev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, gf.p4.srcRev-1, gf.p4.srcRev, gf.p4.rev-1, gf.p4.rev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 		} else {
-			j.WriteRev(gf.depotFile, gf.rev, gf.p4action, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 		}
 	} else if gf.action == rename {
 		if gf.isBranch { // Rename of a branched file - create integ records from parent
-			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteInteg(gf.srcDepotFile, gf.branchDepotFile, 0, gf.srcRev, 0, gf.branchDepotRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
-			j.WriteInteg(gf.depotFile, gf.branchDepotFile, 0, gf.srcRev, 0, gf.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchDepotFile, 0, gf.p4.srcRev, 0, gf.p4.branchDepotRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, 0, gf.p4.srcRev, 0, gf.p4.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else if gf.isMerge { // Merging a rename
-			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteInteg(gf.srcDepotFile, gf.branchSrcDepotFile, 0, gf.branchSrcDepotRev, 0, gf.srcRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
-			j.WriteInteg(gf.depotFile, gf.branchDepotFile, 0, gf.srcRev, 0, gf.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchSrcDepotFile, 0, gf.p4.branchSrcDepotRev, 0, gf.p4.srcRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, 0, gf.p4.srcRev, 0, gf.p4.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else {
-			j.WriteRev(gf.srcDepotFile, gf.srcRev, journal.Delete, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
-			j.WriteRev(gf.depotFile, gf.rev, journal.Add, gf.fileType, chgNo, gf.lbrFile, gf.lbrRev, dt)
+			j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			// TODO - don't use 0 for startfromRev, startToRev
-			j.WriteInteg(gf.depotFile, gf.srcDepotFile, 0, gf.srcRev, 0, gf.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, 0, gf.p4.srcRev, 0, gf.p4.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		}
 	} else {
 		gf.logger.Errorf("Unexpected action: %s", gf.action.String())
@@ -716,8 +725,8 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 			if ok {
 				gf.name = string(f.Path)
 				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.blob.Mark)
-				gf.archiveFile = archName
-				g.logger.Infof("Path:%s Size:%d/%s Archive:%s", gf.name, gf.size, Humanize(gf.size), gf.archiveFile)
+				gf.p4.archiveFile = archName
+				g.logger.Infof("Path:%s Size:%d/%s Archive:%s", gf.name, gf.size, Humanize(gf.size), gf.p4.archiveFile)
 				currCommit.files = append(currCommit.files, gf)
 			}
 		case libfastimport.FileDelete:
@@ -744,11 +753,22 @@ func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
 
 // Is current head rev a deleted rev?
 func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
-	if gf.srcDepotFile == "" {
+	if gf.p4.srcDepotFile == "" {
 		return false
 	}
-	if f, ok := g.depotFileRevs[gf.srcDepotFile]; ok {
+	if f, ok := g.depotFileRevs[gf.p4.srcDepotFile]; ok {
 		return f.action == delete
+	}
+	return false
+}
+
+// Is current head rev a deleted rev?
+func (g *GitP4Transfer) isRenamedFile(gf *GitFile) bool {
+	if gf.p4.depotFile == "" {
+		return false
+	}
+	if f, ok := g.depotFileRevs[gf.p4.depotFile]; ok {
+		return f.action == renamed
 	}
 	return false
 }
@@ -756,56 +776,56 @@ func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
 // Maintain a list of latest revision counters indexed by depotFile and set lbrArchive/Rev
 func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgNo int) {
 	prevAction := unknown
-	if _, ok := g.depotFileRevs[gf.depotFile]; !ok {
-		g.depotFileRevs[gf.depotFile] = &RevChange{rev: 0, chgNo: chgNo, lbrRev: chgNo,
-			lbrFile: gf.depotFile, action: gf.action}
+	if _, ok := g.depotFileRevs[gf.p4.depotFile]; !ok {
+		g.depotFileRevs[gf.p4.depotFile] = &RevChange{rev: 0, chgNo: chgNo, lbrRev: chgNo,
+			lbrFile: gf.p4.depotFile, action: gf.action}
 	}
-	if gf.action == delete && gf.srcName == "" && g.depotFileRevs[gf.depotFile].rev != 0 {
-		gf.fileType = g.getDepotFileTypes(gf.depotFile, g.depotFileRevs[gf.depotFile].rev)
+	if gf.action == delete && gf.srcName == "" && g.depotFileRevs[gf.p4.depotFile].rev != 0 {
+		gf.fileType = g.getDepotFileTypes(gf.p4.depotFile, g.depotFileRevs[gf.p4.depotFile].rev)
 	}
-	g.depotFileRevs[gf.depotFile].rev += 1
-	if g.depotFileRevs[gf.depotFile].rev > 1 {
-		prevAction = g.depotFileRevs[gf.depotFile].action
+	g.depotFileRevs[gf.p4.depotFile].rev += 1
+	if g.depotFileRevs[gf.p4.depotFile].rev > 1 {
+		prevAction = g.depotFileRevs[gf.p4.depotFile].action
 	}
-	g.depotFileRevs[gf.depotFile].action = gf.action
-	g.depotFileRevs[gf.depotFile].lbrRev = chgNo
-	g.depotFileRevs[gf.depotFile].lbrFile = gf.depotFile
-	gf.lbrRev = chgNo
-	gf.lbrFile = gf.depotFile
-	gf.rev = g.depotFileRevs[gf.depotFile].rev
+	g.depotFileRevs[gf.p4.depotFile].action = gf.action
+	g.depotFileRevs[gf.p4.depotFile].lbrRev = chgNo
+	g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.depotFile
+	gf.p4.lbrRev = chgNo
+	gf.p4.lbrFile = gf.p4.depotFile
+	gf.p4.rev = g.depotFileRevs[gf.p4.depotFile].rev
 	if gf.action == modify {
 		// modify defaults to edit, except when first rev or previously deleted
-		if gf.rev == 1 || prevAction == delete {
-			gf.p4action = journal.Add
+		if gf.p4.rev == 1 || prevAction == delete {
+			gf.p4.p4action = journal.Add
 		}
 	}
 	if gf.duplicateArchive {
 		g.blobFileMatcher.updateDuplicateGitFile(gf)
-		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+		g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+		g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 	}
 	if gf.srcName == "" { // Simple modify or delete
 		g.recordDepotFileType(gf)
 		g.logger.Debugf("UDR1: Submit: %d, depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
-			gf.commit.commit.Mark, gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
-			g.depotFileRevs[gf.depotFile].action,
-			g.depotFileRevs[gf.depotFile].lbrFile,
-			g.depotFileRevs[gf.depotFile].lbrRev,
+			gf.commit.commit.Mark, gf.p4.depotFile, g.depotFileRevs[gf.p4.depotFile].rev,
+			g.depotFileRevs[gf.p4.depotFile].action,
+			g.depotFileRevs[gf.p4.depotFile].lbrFile,
+			g.depotFileRevs[gf.p4.depotFile].lbrRev,
 			gf.fileType)
 		return
 	}
 	if gf.action != delete {
-		gf.p4action = journal.Add
+		gf.p4.p4action = journal.Add
 	}
-	if _, ok := g.depotFileRevs[gf.srcDepotFile]; !ok {
+	if _, ok := g.depotFileRevs[gf.p4.srcDepotFile]; !ok {
 		if gf.action == delete {
 			// A delete without a source file just becomes delete
-			g.logger.Warnf("Integ of delete becomes delete: '%s' '%s'", gf.depotFile, gf.srcDepotFile)
-			gf.srcDepotFile = ""
+			g.logger.Warnf("Integ of delete becomes delete: '%s' '%s'", gf.p4.depotFile, gf.p4.srcDepotFile)
+			gf.p4.srcDepotFile = ""
 			gf.srcName = ""
 			gf.isMerge = false
 		} else if gf.action == rename {
-			g.logger.Debugf("Rename of branched file: '%s' <- '%s'", gf.depotFile, gf.srcDepotFile)
+			g.logger.Debugf("Rename of branched file: '%s' <- '%s'", gf.p4.depotFile, gf.p4.srcDepotFile)
 			// Create a record for the source of the rename referring to its branched source
 			depotPathOrig := gf.getDepotPath(opts, gf.commit.parentBranch, gf.srcName)
 			if _, ok := g.depotFileRevs[depotPathOrig]; !ok {
@@ -814,43 +834,43 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				gf.isBranch = true
 				lbrFileOrig := g.depotFileRevs[depotPathOrig].lbrFile
 				lbrRevOrig := g.depotFileRevs[depotPathOrig].lbrRev
-				g.depotFileRevs[gf.srcDepotFile] = &RevChange{rev: 1, chgNo: chgNo, lbrRev: lbrRevOrig,
+				g.depotFileRevs[gf.p4.srcDepotFile] = &RevChange{rev: 1, chgNo: chgNo, lbrRev: lbrRevOrig,
 					lbrFile: lbrFileOrig, action: delete}
-				gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
+				gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
 				if !gf.isDirtyRename {
-					gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-					gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
+					gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
+					gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
 				}
-				gf.branchDepotFile = depotPathOrig
-				gf.branchDepotRev = g.depotFileRevs[depotPathOrig].rev
+				gf.p4.branchDepotFile = depotPathOrig
+				gf.p4.branchDepotRev = g.depotFileRevs[depotPathOrig].rev
 				gf.fileType = g.getDepotFileTypes(depotPathOrig, g.depotFileRevs[depotPathOrig].rev)
-				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 				g.recordDepotFileType(gf)
 			}
 		} else {
 			// A copy or branch without a source file just becomes new file added on branch
-			g.logger.Warnf("Copy/branch becomes add: '%s' <- '%s'", gf.depotFile, gf.srcDepotFile)
-			gf.srcDepotFile = ""
+			g.logger.Warnf("Copy/branch becomes add: '%s' <- '%s'", gf.p4.depotFile, gf.p4.srcDepotFile)
+			gf.p4.srcDepotFile = ""
 			gf.srcName = ""
 			gf.isBranch = false
 			gf.isMerge = false
 		}
 		g.recordDepotFileType(gf)
 		g.logger.Debugf("UDR2: Submit: %d, depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
-			gf.commit.commit.Mark, gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
-			g.depotFileRevs[gf.depotFile].action,
-			g.depotFileRevs[gf.depotFile].lbrFile,
-			g.depotFileRevs[gf.depotFile].lbrRev,
+			gf.commit.commit.Mark, gf.p4.depotFile, g.depotFileRevs[gf.p4.depotFile].rev,
+			g.depotFileRevs[gf.p4.depotFile].action,
+			g.depotFileRevs[gf.p4.depotFile].lbrFile,
+			g.depotFileRevs[gf.p4.depotFile].lbrRev,
 			gf.fileType)
 		return
 	}
 	if gf.action == delete { // merge of delete
-		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-		gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-		gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-		g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-		g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+		gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
+		gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
+		gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
+		g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+		g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 	} else if gf.action == rename { // Rename means old file is being deleted
 		// If it is a merge of a rename then link to file on the branch
 		handled := false
@@ -865,64 +885,64 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			}
 			if targOrigDepotPath != "" && srcOrigDepotPath != "" {
 				handled = true
-				g.depotFileRevs[gf.srcDepotFile].rev += 1
-				gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-				gf.branchDepotFile = targOrigDepotPath
-				gf.branchDepotRev = g.depotFileRevs[targOrigDepotPath].rev
-				gf.branchSrcDepotFile = srcOrigDepotPath
-				gf.branchSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
+				g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
+				gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
+				gf.p4.branchDepotFile = targOrigDepotPath
+				gf.p4.branchDepotRev = g.depotFileRevs[targOrigDepotPath].rev
+				gf.p4.branchSrcDepotFile = srcOrigDepotPath
+				gf.p4.branchSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
 				gf.fileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
-				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 				g.recordDepotFileType(gf)
 			}
 		}
 		if !handled {
-			g.depotFileRevs[gf.srcDepotFile].rev += 1
-			g.depotFileRevs[gf.srcDepotFile].action = delete
-			gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-			gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-			gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev-1)
-			g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-			g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+			g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
+			g.depotFileRevs[gf.p4.srcDepotFile].action = delete
+			gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
+			gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
+			gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
+			gf.fileType = g.getDepotFileTypes(gf.p4.srcDepotFile, gf.p4.srcRev-1)
+			g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+			g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			g.recordDepotFileType(gf)
 		}
 	} else { // Copy/branch
-		gf.srcRev = g.depotFileRevs[gf.srcDepotFile].rev
-		srcExists := g.depotFileTypeExists(gf.srcDepotFile, gf.srcRev)
+		gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
+		srcExists := g.depotFileTypeExists(gf.p4.srcDepotFile, gf.p4.srcRev)
 		if !srcExists {
 			g.logger.Debugf("UDR4: ")
 			gf.isMerge = false
-			gf.srcDepotFile = ""
+			gf.p4.srcDepotFile = ""
 			gf.srcName = ""
 		} else {
-			gf.fileType = g.getDepotFileTypes(gf.srcDepotFile, gf.srcRev)
+			gf.fileType = g.getDepotFileTypes(gf.p4.srcDepotFile, gf.p4.srcRev)
 			if !gf.blob.hasData || gf.isMerge { // Copied but changed
 				g.logger.Debugf("UDR5: ")
-				gf.lbrRev = g.depotFileRevs[gf.srcDepotFile].lbrRev
-				gf.lbrFile = g.depotFileRevs[gf.srcDepotFile].lbrFile
-				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+				gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
+				gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
+				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			} else {
 				g.logger.Debugf("UDR6: ")
-				g.depotFileRevs[gf.depotFile].lbrRev = gf.lbrRev
-				g.depotFileRevs[gf.depotFile].lbrFile = gf.lbrFile
+				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			}
 		}
 		g.recordDepotFileType(gf)
 	}
 	g.logger.Debugf("UDR3: Submit: %d, depotFile: %s, rev %d, action %v, lbrFile %s, lbrRev %d, filetype %v",
-		gf.commit.commit.Mark, gf.depotFile, g.depotFileRevs[gf.depotFile].rev,
-		g.depotFileRevs[gf.depotFile].action,
-		g.depotFileRevs[gf.depotFile].lbrFile,
-		g.depotFileRevs[gf.depotFile].lbrRev,
+		gf.commit.commit.Mark, gf.p4.depotFile, g.depotFileRevs[gf.p4.depotFile].rev,
+		g.depotFileRevs[gf.p4.depotFile].action,
+		g.depotFileRevs[gf.p4.depotFile].lbrFile,
+		g.depotFileRevs[gf.p4.depotFile].lbrRev,
 		gf.fileType)
 }
 
 // Maintain a list of latest revision counters indexed by depotFile/rev
 func (g *GitP4Transfer) recordDepotFileType(gf *GitFile) {
-	k := fmt.Sprintf("%s#%d", gf.depotFile, gf.rev)
+	k := fmt.Sprintf("%s#%d", gf.p4.depotFile, gf.p4.rev)
 	g.depotFileTypes[k] = gf.fileType
 }
 
@@ -1046,7 +1066,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions) chan GitCommit {
 
 	missingRenameLogged := false
 	missingDeleteLogged := false
-	node := &Node{name: ""}
+	node := &Node{name: ""} // Track directories and file trees
 
 	// Create an unbuffered (blocking) pool with a fixed
 	// number of workers

@@ -274,8 +274,8 @@ func TestAdd(t *testing.T) {
 	c = commits[0]
 	j.WriteChange(c.commit.Mark, defaultP4user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
-	j.WriteRev(f.depotFile, f.rev, f.p4action, f.fileType, c.commit.Mark,
-		f.depotFile, c.commit.Mark, int(c.commit.Author.Time.Unix()))
+	j.WriteRev(f.p4.depotFile, f.p4.rev, f.p4.p4action, f.fileType, c.commit.Mark,
+		f.p4.depotFile, c.commit.Mark, int(c.commit.Author.Time.Unix()))
 	dt := c.commit.Author.Time.Unix()
 	expectedJournal := fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
 @pv@ 3 @db.domain@ @import@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
