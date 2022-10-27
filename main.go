@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/alitto/pond"
 	"github.com/emicklei/dot"
 	"github.com/h2non/filetype"
+	"github.com/rcowham/gitp4transfer/config"
 	journal "github.com/rcowham/gitp4transfer/journal"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
@@ -43,13 +45,11 @@ func Humanize(b int) string {
 }
 
 type GitParserOptions struct {
+	config        *config.Config
 	gitImportFile string
 	archiveRoot   string
 	dryRun        bool
 	dummyArchives bool
-	importDepot   string
-	importPath    string // After depot and branch
-	defaultBranch string
 	graphFile     string
 	maxCommits    int
 	debugCommit   int // For debug breakpoint
@@ -430,52 +430,94 @@ type RevChange struct { // Struct to remember revs and changes per depotFile
 	action  GitAction
 }
 
+type BranchRegex struct {
+	nameRegex *regexp.Regexp
+	prefix    string
+}
+
+// BranchNameMapper - maps blobs to files and vice versa
+type BranchNameMapper struct {
+	branchMaps []BranchRegex
+}
+
+func newBranchNameMapper(config *config.Config) *BranchNameMapper {
+	bm := &BranchNameMapper{
+		branchMaps: make([]BranchRegex, 0),
+	}
+	if config == nil {
+		return bm
+	}
+	for _, m := range config.BranchMappings {
+		br := BranchRegex{
+			nameRegex: regexp.MustCompile(m.Name),
+			prefix:    m.Prefix,
+		}
+		bm.branchMaps = append(bm.branchMaps, br)
+	}
+	return bm
+}
+
+func (bm *BranchNameMapper) branchName(name string) string {
+	for _, m := range bm.branchMaps {
+		if m.nameRegex.MatchString(name) {
+			return m.prefix + name
+		}
+	}
+	return name
+}
+
 // GitP4Transfer - Transfer via git fast-export file
 type GitP4Transfer struct {
-	logger          *logrus.Logger
-	gitChan         chan GitCommit
-	opts            GitParserOptions
-	depotFileRevs   map[string]*RevChange       // Map depotFile to latest rev/chg
-	depotFileTypes  map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
-	blobFileMatcher *BlobFileMatcher            // Map between gitfile ID and record
-	commits         map[int]*GitCommit
-	testInput       string           // For testing only
-	graph           *dot.Graph       // If outputting a graph
-	filesOnBranch   map[string]*Node // Records current state of git tree per branch
+	logger           *logrus.Logger
+	gitChan          chan GitCommit
+	opts             GitParserOptions
+	depotFileRevs    map[string]*RevChange       // Map depotFile to latest rev/chg
+	depotFileTypes   map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
+	blobFileMatcher  *BlobFileMatcher            // Map between gitfile ID and record
+	commits          map[int]*GitCommit
+	testInput        string           // For testing only
+	graph            *dot.Graph       // If outputting a graph
+	filesOnBranch    map[string]*Node // Records current state of git tree per branch
+	branchNameMapper *BranchNameMapper
 }
 
-func NewGitP4Transfer(logger *logrus.Logger) *GitP4Transfer {
-	return &GitP4Transfer{logger: logger,
-		depotFileRevs:   make(map[string]*RevChange),
-		blobFileMatcher: newBlobFileMatcher(logger),
-		depotFileTypes:  make(map[string]journal.FileType),
-		commits:         make(map[int]*GitCommit),
-		filesOnBranch:   make(map[string]*Node)}
+func NewGitP4Transfer(logger *logrus.Logger, opts *GitParserOptions) (*GitP4Transfer, error) {
+
+	g := &GitP4Transfer{logger: logger,
+		opts:             *opts,
+		depotFileRevs:    make(map[string]*RevChange),
+		blobFileMatcher:  newBlobFileMatcher(logger),
+		depotFileTypes:   make(map[string]journal.FileType),
+		commits:          make(map[int]*GitCommit),
+		filesOnBranch:    make(map[string]*Node),
+		branchNameMapper: newBranchNameMapper(opts.config)}
+	return g, nil
 }
 
-func (gf *GitFile) getDepotPath(opts GitParserOptions, branch string, name string) string {
-	if len(opts.importPath) == 0 {
-		return fmt.Sprintf("//%s/%s/%s", opts.importDepot, branch, name)
+func (gf *GitFile) getDepotPath(opts GitParserOptions, mapper *BranchNameMapper, branch string, name string) string {
+	bname := mapper.branchName(branch)
+	if len(opts.config.ImportPath) == 0 {
+		return fmt.Sprintf("//%s/%s/%s", opts.config.ImportDepot, bname, name)
 	} else {
-		return fmt.Sprintf("//%s/%s/%s/%s", opts.importDepot, opts.importPath, branch, name)
+		return fmt.Sprintf("//%s/%s/%s/%s", opts.config.ImportDepot, opts.config.ImportPath, bname, name)
 	}
 }
 
-func (gf *GitFile) setDepotPaths(opts GitParserOptions, gc *GitCommit) {
+func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper, gc *GitCommit) {
 	gf.commit = gc
-	gf.p4.depotFile = gf.getDepotPath(opts, gc.branch, gf.name)
+	gf.p4.depotFile = gf.getDepotPath(opts, mapper, gc.branch, gf.name)
 	if gf.srcName != "" {
-		gf.p4.srcDepotFile = gf.getDepotPath(opts, gc.branch, gf.srcName)
+		gf.p4.srcDepotFile = gf.getDepotPath(opts, mapper, gc.branch, gf.srcName)
 	} else if gc.prevBranch != "" {
 		gf.srcName = gf.name
 		gf.isBranch = true
-		gf.p4.srcDepotFile = gf.getDepotPath(opts, gc.prevBranch, gf.srcName)
+		gf.p4.srcDepotFile = gf.getDepotPath(opts, mapper, gc.prevBranch, gf.srcName)
 	}
 	if gc.mergeBranch != "" && gc.mergeBranch != gc.branch {
 		gf.isMerge = true
 		if gf.srcName == "" {
 			gf.srcName = gf.name
-			gf.p4.srcDepotFile = gf.getDepotPath(opts, gc.mergeBranch, gf.srcName)
+			gf.p4.srcDepotFile = gf.getDepotPath(opts, mapper, gc.mergeBranch, gf.srcName)
 		}
 	}
 }
@@ -693,21 +735,20 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 
 // DumpGit - incrementally parse the git file, collecting stats and optionally saving archives as we go
 // Useful for parsing very large git fast-export files without loading too much into memory!
-func (g *GitP4Transfer) DumpGit(options GitParserOptions, saveFiles bool) {
+func (g *GitP4Transfer) DumpGit(saveFiles bool) {
 	var buf io.Reader
 
 	if g.testInput != "" {
 		buf = strings.NewReader(g.testInput)
 	} else {
-		file, err := os.Open(options.gitImportFile)
+		file, err := os.Open(g.opts.gitImportFile)
 		if err != nil {
-			fmt.Printf("ERROR: Failed to open file '%s': %v\n", options.gitImportFile, err)
+			fmt.Printf("ERROR: Failed to open file '%s': %v\n", g.opts.gitImportFile, err)
 			os.Exit(1)
 		}
 		defer file.Close()
 		buf = bufio.NewReader(file)
 	}
-	g.opts = options
 
 	commits := make(map[int]*GitCommit, 0)
 	files := make(map[int]*GitFile, 0)
@@ -859,7 +900,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		} else if gf.action == rename {
 			g.logger.Debugf("Rename of branched file: '%s' <- '%s'", gf.p4.depotFile, gf.p4.srcDepotFile)
 			// Create a record for the source of the rename referring to its branched source
-			depotPathOrig := gf.getDepotPath(opts, gf.commit.parentBranch, gf.srcName)
+			depotPathOrig := gf.getDepotPath(opts, g.branchNameMapper, gf.commit.parentBranch, gf.srcName)
 			if _, ok := g.depotFileRevs[depotPathOrig]; !ok {
 				g.logger.Errorf("Failed to find original file: '%s'", depotPathOrig)
 			} else {
@@ -907,8 +948,8 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		// If it is a merge of a rename then link to file on the branch
 		handled := false
 		if gf.isMerge {
-			targOrigDepotPath := gf.getDepotPath(opts, gf.commit.mergeBranch, gf.name)
-			srcOrigDepotPath := gf.getDepotPath(opts, gf.commit.mergeBranch, gf.srcName)
+			targOrigDepotPath := gf.getDepotPath(opts, g.branchNameMapper, gf.commit.mergeBranch, gf.name)
+			srcOrigDepotPath := gf.getDepotPath(opts, g.branchNameMapper, gf.commit.mergeBranch, gf.srcName)
 			if _, ok := g.depotFileRevs[targOrigDepotPath]; !ok {
 				targOrigDepotPath = ""
 			}
@@ -1016,7 +1057,7 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 			}
 		}
 	} else {
-		currCommit.branch = g.opts.defaultBranch
+		currCommit.branch = g.opts.config.DefaultBranch
 	}
 	if len(currCommit.commit.Merge) == 1 {
 		firstMerge := currCommit.commit.Merge[0]
@@ -1196,7 +1237,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		}
 	}
 	for i := range cmt.files {
-		cmt.files[i].setDepotPaths(g.opts, cmt)
+		cmt.files[i].setDepotPaths(g.opts, g.branchNameMapper, cmt)
 		cmt.files[i].updateFileDetails()
 	}
 }
@@ -1217,7 +1258,7 @@ func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
 }
 
 // GitParse - returns channel which contains commits with associated files.
-func (g *GitP4Transfer) GitParse(options GitParserOptions, pool *pond.WorkerPool) chan GitCommit {
+func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 	var buf io.Reader
 	var file *os.File
 	var err error
@@ -1225,15 +1266,13 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions, pool *pond.WorkerPool
 	if g.testInput != "" {
 		buf = strings.NewReader(g.testInput)
 	} else {
-		file, err = os.Open(options.gitImportFile) // Note deferred close in go routine below.
+		file, err = os.Open(g.opts.gitImportFile) // Note deferred close in go routine below.
 		if err != nil {
-			fmt.Printf("ERROR: Failed to open file '%s': %v\n", options.gitImportFile, err)
+			fmt.Printf("ERROR: Failed to open file '%s': %v\n", g.opts.gitImportFile, err)
 			os.Exit(1)
 		}
 		buf = bufio.NewReader(file)
 	}
-
-	g.opts = options
 
 	g.gitChan = make(chan GitCommit, 50)
 	var currCommit *GitCommit
@@ -1282,12 +1321,14 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions, pool *pond.WorkerPool
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
 				g.logger.Debugf("Reset: - %+v", reset)
+				reset.RefName = strings.ReplaceAll(reset.RefName, " ", "_") // For consistency with Commits even though unused
 
 			case libfastimport.CmdCommit:
 				g.validateCommit(currCommit)
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
 				g.logger.Debugf("Commit: %+v", commit)
+				commit.Ref = strings.ReplaceAll(commit.Ref, " ", "_")
 				currCommit = newGitCommit(&commit, commitSize)
 				commitSize = 0
 				g.commits[commit.Mark] = currCommit
@@ -1375,6 +1416,7 @@ func (g *GitP4Transfer) GitParse(options GitParserOptions, pool *pond.WorkerPool
 			case libfastimport.CmdTag:
 				t := cmd.(libfastimport.CmdTag)
 				g.logger.Debugf("CmdTag: %+v", t)
+				t.RefName = strings.ReplaceAll(t.RefName, " ", "_")
 
 			default:
 				g.logger.Errorf("Not handled: Found ctype %v cmd %+v", ctype, cmd)
@@ -1421,18 +1463,26 @@ func main() {
 	// }()
 
 	var (
+		configFile = kingpin.Flag(
+			"config",
+			"Config file for gitp4transfer.",
+		).Default("gitp4transfer.yaml").Short('c').String()
 		gitimport = kingpin.Arg(
 			"gitimport",
 			"Git fast-export file to process.",
 		).String()
 		importDepot = kingpin.Flag(
 			"import.depot",
-			"Git fast-export file to process.",
-		).Default("import").Short('d').String()
+			"Depot into which to import (overrides config).",
+		).Default(config.DefaultDepot).Short('d').String()
+		importPath = kingpin.Flag(
+			"import.path",
+			"(Optional) path component under import.depot (overrides config).",
+		).String()
 		defaultBranch = kingpin.Flag(
 			"default.branch",
-			"Name of default git branch.",
-		).Default("main").Short('b').String()
+			"Name of default git branch (overrides config).",
+		).Default(config.DefaultBranch).Short('b').String()
 		dummyArchives = kingpin.Flag(
 			"dummy",
 			"Create dummy (small) archive files - for quick analysis of large repos.",
@@ -1484,32 +1534,48 @@ func main() {
 	if *debug > 0 {
 		logger.Level = logrus.DebugLevel
 	}
+	cfg, err := config.LoadConfigFile(*configFile)
+	if err != nil {
+		logger.Errorf("error loading config file: %v", err)
+		os.Exit(-1)
+	}
+	if *defaultBranch != config.DefaultBranch {
+		cfg.DefaultBranch = *defaultBranch
+	}
+	if *importDepot != config.DefaultDepot {
+		cfg.ImportDepot = *importDepot
+	}
+	if *importPath != "" {
+		cfg.ImportPath = *importPath
+	}
 	startTime := time.Now()
 	logger.Infof("%v", version.Print("gitp4transfer"))
 	logger.Infof("Starting %s, gitimport: %v", startTime, *gitimport)
 
-	g := NewGitP4Transfer(logger)
-	opts := GitParserOptions{
+	opts := &GitParserOptions{
+		config:        cfg,
 		gitImportFile: *gitimport,
-		importDepot:   *importDepot,
 		archiveRoot:   *archive,
-		defaultBranch: *defaultBranch,
 		dryRun:        *dryrun,
 		dummyArchives: *dummyArchives,
 		maxCommits:    *maxCommits,
 		graphFile:     *outputGraph,
 		debugCommit:   *debugCommit,
 	}
-
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Errorf("error loading config: %v", err)
+		os.Exit(-1)
+	}
 	if *dump {
-		g.DumpGit(opts, *dumpArchives)
+		g.DumpGit(*dumpArchives)
 		return
 	}
 
 	pondSize := runtime.NumCPU()
 	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
 
-	commitChan := g.GitParse(opts, pool)
+	commitChan := g.GitParse(pool)
 
 	j := journal.Journal{}
 	f, err := os.Create(*outputJournal)
@@ -1519,7 +1585,7 @@ func main() {
 	defer f.Close()
 
 	j.SetWriter(f)
-	j.WriteHeader()
+	j.WriteHeader(opts.config.ImportDepot)
 
 	for c := range commitChan {
 		j.WriteChange(c.commit.Mark, c.user, c.commit.Msg, int(c.commit.Author.Time.Unix()))

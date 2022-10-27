@@ -223,15 +223,15 @@ func (j *Journal) SetWriter(w io.Writer) {
 	j.w = w
 }
 
-func (j *Journal) WriteHeader() {
+func (j *Journal) WriteHeader(depot string) {
 
-	hdr := `@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
-@pv@ 3 @db.domain@ @import@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
+	hdr := `@pv@ 0 @db.depot@ @%s@ 0 @subdir@ @%s/...@ 
+@pv@ 3 @db.domain@ @%s@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
 @pv@ 3 @db.user@ @git-user@ @git-user@@git-client@ @@ 0 0 @git-user@ @@ 0 @@ 0 
 @pv@ 0 @db.view@ @git-client@ 0 0 @//git-client/...@ @//import/...@ 
 @pv@ 3 @db.domain@ @git-client@ 99 @@ @/ws@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
 `
-	_, err := fmt.Fprint(j.w, hdr)
+	_, err := fmt.Fprintf(j.w, hdr, depot, depot, depot)
 	if err != nil {
 		panic(err)
 	}

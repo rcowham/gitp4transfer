@@ -52,6 +52,7 @@ declare -i shiftArgs=0
 declare -i Debug=0
 declare -i Dummy=0
 declare -i MaxCommits=0
+declare ConfigFile=""
 declare P4Root=""
 declare GitFile=""
 declare GraphFile=""
@@ -62,6 +63,7 @@ while [[ $# -gt 0 ]]; do
     case $1 in
         (-h) usage -h  && exit 1;;
         # (-man) usage -man;;
+        (-c) ConfigFile=$2; shiftArgs=1;;
         (-p) P4Root=$2; shiftArgs=1;;
         (-d) Debug=1;;
         (-dummy) Dummy=1;;
@@ -97,13 +99,17 @@ DummyFlag=""
 if [[ $Dummy -ne 0 ]]; then
     DummyFlag="--dummy"
 fi
-GraphFlag=""
+GraphArgs=""
 if [[ ! -z $GraphFile ]]; then
-    GraphFlag="--graphfile=$GraphFile"
+    GraphArgs="--graphfile=$GraphFile"
+fi
+ConfigArgs=""
+if [[ ! -z $ConfigFile ]]; then
+    ConfigArgs="--config=$ConfigFile"
 fi
 
-echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $MaxCommitArgs $GraphFlag --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
-./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $MaxCommitArgs $GraphFlag --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $MaxCommitArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+./gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $MaxCommitArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
 pushd "$P4Root"
 

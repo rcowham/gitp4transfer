@@ -15,6 +15,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/rcowham/gitp4transfer/config"
 	"github.com/rcowham/gitp4transfer/journal"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
@@ -152,18 +153,26 @@ func createLogger() *logrus.Logger {
 }
 
 func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opts *GitParserOptions) string {
-	g := NewGitP4Transfer(logger)
-	g.testInput = output
-	user := getGitUser(t)
 	p4t := MakeP4Test(t.TempDir())
 	if opts != nil {
 		opts.archiveRoot = p4t.serverRoot
-		opts.importDepot = "import"
-		opts.defaultBranch = "main"
+		if opts.config != nil && opts.config.ImportDepot == "" {
+			opts.config.ImportDepot = "import"
+		}
+		if opts.config != nil && opts.config.DefaultBranch == "" {
+			opts.config.DefaultBranch = "main"
+		}
 	} else {
-		opts = &GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
+		opts = &GitParserOptions{archiveRoot: p4t.serverRoot,
+			config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
 	}
-	commitChan := g.GitParse(*opts, nil)
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+	g.testInput = output
+	user := getGitUser(t)
+	commitChan := g.GitParse(nil)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
 	for c := range commitChan {
@@ -176,7 +185,7 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opt
 
 	j := journal.Journal{}
 	j.SetWriter(buf)
-	j.WriteHeader()
+	j.WriteHeader(opts.config.ImportDepot)
 
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
@@ -249,10 +258,14 @@ func TestAdd(t *testing.T) {
 	os.Chdir(p4t.serverRoot)
 	logger.Debugf("P4D serverRoot: %s", p4t.serverRoot)
 
-	g := NewGitP4Transfer(logger)
+	opts := &GitParserOptions{archiveRoot: p4t.serverRoot,
+		config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatal("Failed to create object")
+	}
 	g.testInput = output
-	opts := GitParserOptions{archiveRoot: p4t.serverRoot, importDepot: "import", defaultBranch: "main"}
-	commitChan := g.GitParse(opts, nil)
+	commitChan := g.GitParse(nil)
 	commits := make([]GitCommit, 0)
 	// just read all commits and test them
 	for c := range commitChan {
@@ -270,7 +283,7 @@ func TestAdd(t *testing.T) {
 	buf := new(bytes.Buffer)
 	j := journal.Journal{}
 	j.SetWriter(buf)
-	j.WriteHeader()
+	j.WriteHeader(opts.config.ImportDepot)
 	c = commits[0]
 	j.WriteChange(c.commit.Mark, defaultP4user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
@@ -397,7 +410,10 @@ func TestMaxCommits(t *testing.T) {
 	runCmd("git commit -m initial")
 	user := getGitUser(t)
 
-	r := runTransferOpts(t, logger, &GitParserOptions{maxCommits: 1})
+	r := runTransferOpts(t, logger, &GitParserOptions{
+		maxCommits: 1,
+		config:     &config.Config{ImportDepot: "import", DefaultBranch: "main"},
+	})
 	logger.Debugf("Server root: %s", r)
 
 	result, err := runCmd("p4 files //...")
@@ -2053,5 +2069,78 @@ func TestBranchMergeRename(t *testing.T) {
 	assert.Regexp(t, `(?m)//import/main/targ.txt
 \.\.\. #1 change 4 add on .* by .*@git-client \(text\+C\).*
 \.\.\. \.\.\. branch from //import/dev/targ.txt#1,#2`, result)
+
+}
+
+func TestBranchNameMapping(t *testing.T) {
+	// Merge branches with where a file has been renamed on the branch
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	targ := "targ.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git switch -c dev")
+	runCmd(fmt.Sprintf("mv %s %s", src, targ))
+	runCmd("git add .")
+	runCmd("git commit -m renamed")
+	runCmd("git switch main")
+	runCmd("git merge --no-ff dev")
+	runCmd("git commit -m \"merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	mainMap := config.BranchMapping{Name: "mai.*", Prefix: "trunk/"}
+	devMap := config.BranchMapping{Name: "dev.*", Prefix: "branches/"}
+	opts := &GitParserOptions{
+		config: &config.Config{
+			ImportDepot:    "testimport",
+			ImportPath:     "subdir",
+			BranchMappings: [](config.BranchMapping){mainMap, devMap},
+		},
+	}
+	r := runTransferOpts(t, logger, opts)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//testimport/subdir/branches/dev/src.txt#1 - delete change 3 (text+C)
+//testimport/subdir/branches/dev/targ.txt#1 - add change 3 (text+C)
+//testimport/subdir/trunk/main/src.txt#2 - delete change 4 (text+C)
+//testimport/subdir/trunk/main/targ.txt#1 - add change 4 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 filelog //testimport/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `(?m)//testimport/subdir/branches/dev/src.txt
+\.\.\. #1 change 3 delete on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. delete from //testimport/subdir/trunk/main/src.txt#1
+\.\.\. \.\.\. delete into //testimport/subdir/trunk/main/src.txt#1,#2`, result)
+
+	assert.Regexp(t, `(?m)//testimport/subdir/branches/dev/targ.txt
+\.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. branch from //testimport/subdir/trunk/main/src.txt#1`, result)
+
+	assert.Regexp(t, `(?m)//testimport/subdir/trunk/main/src.txt
+\.\.\. #2 change 4 delete on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. delete from //testimport/subdir/branches/dev/src.txt#1
+\.\.\. #1 change 2 add on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. delete into //testimport/subdir/branches/dev/src.txt#1
+\.\.\. \.\.\. branch into //testimport/subdir/branches/dev/targ.txt#1`, result)
+
+	assert.Regexp(t, `(?m)//testimport/subdir/trunk/main/targ.txt
+\.\.\. #1 change 4 add on .* by .*@git-client \(text\+C\).*
+\.\.\. \.\.\. branch from //testimport/subdir/branches/dev/targ.txt#1,#2`, result)
 
 }
