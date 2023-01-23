@@ -118,6 +118,7 @@ p4d -r . -jr jnl.0
 p4d -r . -J journal -xu
 p4 -p "$P4PORT" storage -r
 p4 -p "$P4PORT" storage -w
+p4 -p "$P4PORT" configure set monitor=1
 
 echo "P4PORT=$P4PORT" > .p4config
 export P4CONFIG=.p4config
