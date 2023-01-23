@@ -410,7 +410,7 @@ func (gc *GitCommit) removeGitFile(ID int) {
 			break
 		}
 	}
-	if i >= len(gc.files) {
+	if gf.ID != ID {
 		return
 	}
 	gc.files = append(gc.files[:i], gc.files[i+1:]...)
@@ -1324,7 +1324,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				reset.RefName = strings.ReplaceAll(reset.RefName, " ", "_") // For consistency with Commits even though unused
 
 			case libfastimport.CmdCommit:
-				g.validateCommit(currCommit)
+ 				g.validateCommit(currCommit)
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
 				g.logger.Debugf("Commit: %+v", commit)
@@ -1355,11 +1355,11 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				var gf *GitFile
 				b := g.blobFileMatcher.getBlob(oid)
 				if b != nil {
-					if len(b.gitFileIDs) == 0 {
+					if len(b.gitFileIDs) == 0 { // First ref to this blob
 						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
 							blob: b, fileType: b.fileType, compressed: b.compressed,
 							logger: g.logger})
-					} else {
+					} else { // Duplicate ref
 						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
 							blob: b, fileType: b.fileType, compressed: b.compressed,
 							duplicateArchive: true, logger: g.logger})
@@ -1391,7 +1391,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				} else {
 					g.blobFileMatcher.addGitFile(gf)
 					g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
-						currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+							currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 					currCommit.files = append(currCommit.files, gf)
 				}
 
