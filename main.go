@@ -1124,7 +1124,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		if gf.action == modify {
 			newfiles = append(newfiles, gf)
 		} else if gf.action == delete {
-			if node.findFile(gf.name) {
+			if node.findFile(gf.name) { // Single file found
 				newfiles = append(newfiles, gf)
 				continue
 			}
@@ -1139,6 +1139,8 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 					g.logger.Debugf("DirFileDelete: %s Path:%s", cmt.ref(), df)
 					newfiles = append(newfiles, newGitFile(&GitFile{name: df, action: delete, logger: g.logger}))
 				}
+			} else {
+				g.logger.Debugf("DeleteIgnored: %s Path:%s", cmt.ref(), gf.name)
 			}
 		} else if gf.action == rename {
 			if node.findFile(gf.srcName) {
@@ -1157,6 +1159,8 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 					g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
 					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
 				}
+			} else {
+				g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
 			}
 		} else if gf.action == copy {
 			if node.findFile(gf.name) {
@@ -1175,6 +1179,8 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 					g.logger.Debugf("DirFileCopy: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
 					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: copy, logger: g.logger}))
 				}
+			} else {
+				g.logger.Debugf("CopyIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
 			}
 		} else {
 			g.logger.Errorf("Unexpected GFAction: GitFile: %s ID %d, %s, %s", cmt.ref(), gf.ID, gf.name, gf.action.String())
