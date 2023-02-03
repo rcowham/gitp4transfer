@@ -25,13 +25,14 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-graph <graphFile.dot>] [-m <max commits>]
+run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-depot <import depot>] [-graph <graphFile.dot>] [-m <max commits>]
  
    or
 
 run_conversion.sh -h
 
     -d          Debug
+    -depot      Depot to use for this import (default is 'import')
     -dummy      Create dummy archives as placeholders (no real content) - much faster
     -graph      Create Graphviz output showing commit structure
     -m          Max no of commits to process
@@ -66,6 +67,7 @@ while [[ $# -gt 0 ]]; do
         (-c) ConfigFile=$2; shiftArgs=1;;
         (-p) P4Root=$2; shiftArgs=1;;
         (-d) Debug=1;;
+        (-depot) ImportDepot=1;;
         (-dummy) Dummy=1;;
         (-graph) GraphFile=$2; shiftArgs=1;;
         (-m) MaxCommits=$2; shiftArgs=1;;
@@ -112,8 +114,9 @@ echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $MaxCommitAr
 ./gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $MaxCommitArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
 pushd "$P4Root"
+curr_dir=$(pwd)
 
-declare P4PORT="rsh:p4d -r \"$P4Root\" -L log -vserver=3 -i"
+declare P4PORT="rsh:p4d -r \"$curr_dir\" -L log -vserver=3 -i"
 p4d -r . -jr jnl.0
 p4d -r . -J journal -xu
 p4 -p "$P4PORT" storage -r
@@ -124,7 +127,7 @@ echo "P4PORT=$P4PORT" > .p4config
 export P4CONFIG=.p4config
 
 rm -f dirs.txt
-p4 dirs "//import/*" | while read -e f; do echo "$f/..." >> dirs.txt; done
+p4 dirs "//$ImportDepot/*" | while read -e f; do echo "$f/..." >> dirs.txt; done
 echo "Verifying with -qu ..."
 parallel -a dirs.txt p4 verify -qu {} > verify.out 2>&1
 echo "Verify errors: $(wc -l verify.out)"
