@@ -9,6 +9,7 @@ import (
 	"io"               // profiling only
 	_ "net/http/pprof" // profiling only
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -37,6 +38,8 @@ type GitFilterOptions struct {
 	gitImportFile string
 	gitExportFile string
 	renameRefs    bool
+	pathFilter    string // Regex to filter output only to specified files
+	maxCommits    int // Max number of commits to process
 }
 
 // GitFilter - Transfer via git fast-export file
@@ -89,9 +92,17 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 	defer infile.Close()
 
 	g.opts = options
+	var rePathFilter *regexp.Regexp
+	filteringPaths := false
+	if g.opts.pathFilter != "" {
+		rePathFilter = regexp.MustCompile(g.opts.pathFilter)
+		filteringPaths = true
+	}
 
 	frontend := libfastimport.NewFrontend(inbuf, nil, nil)
 	backend := libfastimport.NewBackend(mwc, nil, nil)
+	commitCount := 0
+	CmdLoop:
 	for {
 		cmd, err := frontend.ReadCmd()
 		if err != nil {
@@ -130,26 +141,67 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 			commit := cmd.(libfastimport.CmdCommitEnd)
 			g.logger.Debugf("CommitEnd: %+v", commit)
 			backend.Do(cmd)
+			commitCount += 1
+			if g.opts.maxCommits > 0 && commitCount >= g.opts.maxCommits {
+				g.logger.Infof("Processed %d commits", commitCount)
+				break CmdLoop
+			}
 
 		case libfastimport.FileModify:
 			fm := cmd.(libfastimport.FileModify)
-			g.logger.Debugf("FileModify: %+v", fm)
-			backend.Do(cmd)
+			if filteringPaths {
+				if rePathFilter.MatchString(string(fm.Path)) {
+					g.logger.Debugf("FileModify: %+v", fm)
+					backend.Do(cmd)
+				} else {
+					g.logger.Debugf("Filtered FileModify: %+v", fm)
+				}
+			} else {
+				g.logger.Debugf("FileModify: %+v", fm)
+				backend.Do(cmd)
+			}
 
 		case libfastimport.FileDelete:
 			fdel := cmd.(libfastimport.FileDelete)
-			g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
-			backend.Do(fdel)
+			if filteringPaths {
+				if rePathFilter.MatchString(string(fdel.Path)) {
+					g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
+					backend.Do(fdel)
+				} else {
+					g.logger.Debugf("Filtered FileDelete: Path:%s", fdel.Path)
+				}
+			} else {
+				g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
+				backend.Do(fdel)
+			}
 
 		case libfastimport.FileCopy:
 			fc := cmd.(libfastimport.FileCopy)
-			g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
-			backend.Do(fc)
+			if filteringPaths {
+				if rePathFilter.MatchString(string(fc.Src)) || rePathFilter.MatchString(string(fc.Dst)) {
+					g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
+					backend.Do(fc)
+				} else {
+					g.logger.Debugf("Filtered FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
+				}
+			} else {
+				g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
+				backend.Do(fc)
+			}
 
 		case libfastimport.FileRename:
 			fr := cmd.(libfastimport.FileRename)
-			g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
-			backend.Do(fr)
+			if filteringPaths {
+				if rePathFilter.MatchString(string(fr.Src)) || rePathFilter.MatchString(string(fr.Dst)) {
+					g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+					backend.Do(fr)
+				} else {
+					g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+				}
+			} else {
+				g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+				backend.Do(fr)
+			}
 
 		case libfastimport.CmdTag:
 			t := cmd.(libfastimport.CmdTag)
@@ -194,6 +246,14 @@ func main() {
 			"rename",
 			"Enable debugging level.",
 		).Short('r').Bool()
+		maxCommits = kingpin.Flag(
+			"max.commits",
+			"Max no of commits to process.",
+		).Short('m').Int()
+		pathFilter = kingpin.Flag(
+			"path.filter",
+			"Regex git path to filter output by.",
+		).String()
 		debug = kingpin.Flag(
 			"debug",
 			"Enable debugging level.",
@@ -218,6 +278,8 @@ func main() {
 		gitImportFile: *gitimport,
 		gitExportFile: *gitexport,
 		renameRefs:    *renameRefs,
+		maxCommits: *maxCommits,
+		pathFilter: *pathFilter,
 	}
 
 	g.RunGitFilter(opts)
