@@ -5,11 +5,14 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"               // profiling only
 	_ "net/http/pprof" // profiling only
 	"os"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -34,15 +37,53 @@ func Humanize(b int) string {
 		float64(b)/float64(div), "kMGTPE"[exp])
 }
 
+// append source onto target
+func appendfile(src, dst string) error {
+	const BUFFERSIZE = 1024 * 1024
+	sourceFileStat, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	if !sourceFileStat.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file.", src)
+	}
+	source, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+
+	destination, err := os.OpenFile(dst, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return err
+	}
+	defer destination.Close()
+
+	buf := make([]byte, BUFFERSIZE)
+	for {
+		n, err := source.Read(buf)
+		if err != nil && err != io.EOF {
+			return err
+		}
+		if n == 0 {
+			break
+		}
+		if _, err := destination.Write(buf[:n]); err != nil {
+			return err
+		}
+	}
+	return err
+}
+
 type GitFilterOptions struct {
 	gitImportFile string
 	gitExportFile string
 	renameRefs    bool
 	pathFilter    string // Regex to filter output only to specified files
-	maxCommits    int // Max number of commits to process
+	maxCommits    int    // Max number of commits to process
 }
 
-// GitFilter - Transfer via git fast-export file
+// GitFilter - filter a git fast-export file
 type GitFilter struct {
 	logger    *logrus.Logger
 	opts      GitFilterOptions
@@ -65,6 +106,18 @@ func (mwc *MyWriteCloser) Close() error {
 	return mwc.f.Close()
 }
 
+func getOID(dataref string) (int, error) {
+	if !strings.HasPrefix(dataref, ":") {
+		return 0, errors.New("invalid dataref")
+	}
+	return strconv.Atoi(dataref[1:])
+}
+
+// // FilterGitCommit - A git commit
+// type FilterGitCommit struct {
+// 	commit *libfastimport.CmdCommit
+// }
+
 // RunGitFilter - returns channel which contains commits with associated files.
 func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 	var inbuf io.Reader
@@ -82,14 +135,6 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 		}
 		inbuf = bufio.NewReader(infile)
 	}
-	outfile, err := os.Create(options.gitExportFile)
-	if err != nil {
-		panic(err) // Handle error
-	}
-
-	mwc := &MyWriteCloser{outfile, bufio.NewWriter(outfile)}
-	defer mwc.Close()
-	defer infile.Close()
 
 	g.opts = options
 	var rePathFilter *regexp.Regexp
@@ -99,10 +144,26 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 		filteringPaths = true
 	}
 
+	outpath := options.gitExportFile
+	if filteringPaths {
+		outpath = fmt.Sprintf("%s_", outpath)
+	}
+	outfile, err := os.Create(outpath)
+	if err != nil {
+		panic(err) // Handle error
+	}
+	mwc := &MyWriteCloser{outfile, bufio.NewWriter(outfile)}
+	defer mwc.Close()
+	defer infile.Close()
+
+	blobsFound := map[int]int{}
+
+	// var currCommit *FilterGitCommit
+
 	frontend := libfastimport.NewFrontend(inbuf, nil, nil)
 	backend := libfastimport.NewBackend(mwc, nil, nil)
 	commitCount := 0
-	CmdLoop:
+CmdLoop:
 	for {
 		cmd, err := frontend.ReadCmd()
 		if err != nil {
@@ -111,12 +172,14 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 			}
 			break
 		}
-		switch cmd.(type) {
+		switch ctype := cmd.(type) {
 		case libfastimport.CmdBlob:
 			blob := cmd.(libfastimport.CmdBlob)
-			g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-			blob.Data = fmt.Sprintf("%d\n", blob.Mark) // Filter out blob contents
-			backend.Do(blob)
+			if !filteringPaths {
+				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
+				blob.Data = fmt.Sprintf("%d\n", blob.Mark) // Filter out blob contents
+				backend.Do(blob)
+			}
 
 		case libfastimport.CmdReset:
 			reset := cmd.(libfastimport.CmdReset)
@@ -135,7 +198,12 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 			if options.renameRefs {
 				commit.Ref = strings.ReplaceAll(commit.Ref, " ", "_")
 			}
+			// if currCommit == nil {
+			// 	currCommit = &FilterGitCommit{commit: &commit}
+			// }
+			// if !filteringPaths {
 			backend.Do(commit)
+			// }
 
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
@@ -153,6 +221,14 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 				if rePathFilter.MatchString(string(fm.Path)) {
 					g.logger.Debugf("FileModify: %+v", fm)
 					backend.Do(cmd)
+					if fm.DataRef != "" {
+						oid, err := getOID(fm.DataRef)
+						if err == nil {
+							blobsFound[oid] = 1
+						} else {
+							g.logger.Errorf("Failed to extract Dataref: %+v", fm)
+						}
+					}
 				} else {
 					g.logger.Debugf("Filtered FileModify: %+v", fm)
 				}
@@ -212,8 +288,29 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 			backend.Do(t)
 
 		default:
-			g.logger.Errorf("Not handled: Found cmd %+v", cmd)
+			g.logger.Errorf("Not handled - found ctype %s cmd %+v", ctype, cmd)
 			g.logger.Errorf("Cmd type %T", cmd)
+		}
+	}
+	// Save referenced blobs in a new file which will be concatenated with the original
+	if filteringPaths {
+		outfile, err := os.Create(options.gitExportFile)
+		if err != nil {
+			panic(err) // Handle error
+		}
+		mwcBlob := &MyWriteCloser{outfile, bufio.NewWriter(outfile)}
+		defer mwcBlob.Close()
+		keys := make([]int, 0, len(blobsFound))
+		for k := range blobsFound {
+			keys = append(keys, k)
+		}
+		backendBlob := libfastimport.NewBackend(mwcBlob, nil, nil)
+		sort.Ints(keys)
+		var blob libfastimport.CmdBlob
+		for _, k := range keys {
+			blob.Mark = k
+			blob.Data = fmt.Sprintf("%d\n", blob.Mark)
+			backendBlob.Do(blob)
 		}
 	}
 }
@@ -278,10 +375,17 @@ func main() {
 		gitImportFile: *gitimport,
 		gitExportFile: *gitexport,
 		renameRefs:    *renameRefs,
-		maxCommits: *maxCommits,
-		pathFilter: *pathFilter,
+		maxCommits:    *maxCommits,
+		pathFilter:    *pathFilter,
 	}
 
 	g.RunGitFilter(opts)
+	if opts.pathFilter != "" {
+		err := appendfile(fmt.Sprintf("%s_", opts.gitExportFile), opts.gitExportFile)
+		if err != nil {
+			logger.Errorf("Failed to write %s: %v", opts.gitExportFile, err)
+		}
+	}
+	logger.Infof("Output file: %s", opts.gitExportFile)
 
 }
