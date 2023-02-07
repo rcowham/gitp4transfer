@@ -144,13 +144,15 @@ func (n *Node) getChildFiles() []string {
 
 // Return a list of all files in a directory
 func (n *Node) getFiles(dirName string) []string {
-	parts := strings.Split(dirName, "/")
 	files := make([]string, 0)
+	// Root of node tree - just get all files
+	if n.name == "" && dirName == "" {
+		files = append(files, n.getChildFiles()...)
+		return files
+	}
+	// Otherwise check directory is one of the children of current node
+	parts := strings.Split(dirName, "/")
 	if len(parts) == 1 {
-		if n.name == parts[0] {
-			files = append(files, n.getChildFiles()...)
-			return files
-		}
 		for _, c := range n.children {
 			if c.name == parts[0] {
 				if c.isFile {
@@ -1330,7 +1332,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				reset.RefName = strings.ReplaceAll(reset.RefName, " ", "_") // For consistency with Commits even though unused
 
 			case libfastimport.CmdCommit:
- 				g.validateCommit(currCommit)
+				g.validateCommit(currCommit)
 				g.processCommit(currCommit)
 				commit := cmd.(libfastimport.CmdCommit)
 				g.logger.Debugf("Commit: %+v", commit)
@@ -1397,7 +1399,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				} else {
 					g.blobFileMatcher.addGitFile(gf)
 					g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
-							currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+						currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 					currCommit.files = append(currCommit.files, gf)
 				}
 

@@ -890,6 +890,82 @@ func TestRenameOnBranch(t *testing.T) {
 	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/dev/targ.txt#1`, result)
 }
 
+// func TestAddOfMergedFile(t *testing.T) {
+// 	// Add a file on branch which is merged in from main
+// 	logger := createLogger()
+// 	logger.Debugf("======== Test: %s", t.Name())
+
+// 	d := createGitRepo(t)
+// 	os.Chdir(d)
+// 	logger.Debugf("Git repo: %s", d)
+
+// 	file1 := "file1.txt"
+// 	contents1 := "contents\n"
+// 	file2 := "file2.txt"
+// 	file3 := "file3.txt"
+// 	writeToFile(file1, contents1)
+// 	runCmd("git add .")
+// 	runCmd("git commit -m initial")
+// 	runCmd("git switch -c dev")
+// 	contents11 := "contents11\n"
+// 	writeToFile(file1, contents11)
+// 	runCmd("git add .")
+// 	runCmd("git commit -m 'a file changed on dev'")
+// 	runCmd("git switch main")
+// 	runCmd("git switch -c dev2")
+// 	contents3 := "contents3\n"
+// 	writeToFile(file3, contents3)
+// 	runCmd("git add .")
+// 	runCmd("git commit -m 'a file changed on dev2'")
+// 	contents21 := "contents21\n"
+// 	writeToFile(file2, contents21)
+// 	runCmd("git add .")
+// 	runCmd("git commit -m 'add file2'")
+// 	runCmd("git switch main")
+// 	runCmd("git merge dev2 --no-ff")
+// 	runCmd("git switch dev")
+// 	runCmd("git merge main --no-ff")
+// 	runCmd("git log --graph --abbrev-commit --oneline")
+
+// 	r := runTransfer(t, logger)
+// 	logger.Debugf("Server root: %s", r)
+
+// 	result, err := runCmd("p4 verify -qu //...")
+// 	assert.Equal(t, "", result)
+// 	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+// 	result, err = runCmd("p4 files //...")
+// 	assert.Equal(t, nil, err)
+// 	assert.Equal(t, `//import/dev/file1.txt#1 - add change 4 (text+C)
+// //import/dev/file2.txt#1 - delete change 5 (text+C)
+// //import/dev/file3.txt#1 - add change 5 (text+C)
+// //import/main/file2.txt#1 - add change 2 (text+C)
+// `,
+// 		result)
+
+// 	result, err = runCmd("p4 filelog -i //import/dev/file1.txt")
+// 	assert.Equal(t, nil, err)
+// 	assert.Regexp(t, `//import/dev/file1.txt`, result)
+// 	assert.Regexp(t, `\.\.\. #1 change 4 add on .* by .* \(text\+C\)`, result)
+
+// 	result, err = runCmd("p4 filelog -i //import/dev/file2.txt")
+// 	assert.Equal(t, nil, err)
+// 	assert.Regexp(t, `\.\.\. #1 change 5 delete on .* by .* \(text\+C\)`, result)
+// 	assert.Regexp(t, `\.\.\. \.\.\. delete from //import/main/file2.txt#1`, result)
+
+// 	result, err = runCmd("p4 filelog -i //import/dev/file3.txt")
+// 	assert.Equal(t, nil, err)
+// 	assert.Regexp(t, `\.\.\. #1 change 2 add on .* by .* \(text\+C\)`, result)
+// 	assert.Regexp(t, `\.\.\. \.\.\. delete into //import/dev/file2.txt#1`, result)
+// 	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/dev/file3.txt#1`, result)
+
+// 	result, err = runCmd("p4 filelog -i //import/main/file2.txt")
+// 	assert.Equal(t, nil, err)
+// 	assert.Regexp(t, `\.\.\. #1 change 2 add on .* by .* \(text\+C\)`, result)
+// 	assert.Regexp(t, `\.\.\. \.\.\. delete into //import/dev/file2.txt#1`, result)
+// 	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/dev/file3.txt#1`, result)
+// }
+
 func TestRenameRename(t *testing.T) {
 	// Rename of a file done twice
 	logger := createLogger()
@@ -1494,6 +1570,26 @@ Env/Assets/Art/Structure/Universal/Bunker.meta`
 	assert.Equal(t, "Env/Assets/ArtEnv/Cookies/cookie.png", f[0])
 	assert.Equal(t, "Env/Assets/ArtEnv/Cookies/cookie.png.meta", f[1])
 
+}
+
+func TestBigNode2(t *testing.T) {
+	n := &Node{name: ""}
+	files := `Games/Content/Heroes/Weapons/Weapons/X.txt
+Games/Content/Heroes/Weapons/Others/A.uasset
+Games/Content/Heroes/Weapons/Others/B.uasset`
+
+	for _, f := range strings.Split(files, "\n") {
+		n.addFile(f)
+	}
+	assert.True(t, n.findFile("Games/Content/Heroes/Weapons/Others/A.uasset"))
+	f := n.getFiles("")
+	assert.Equal(t, 3, len(f))
+	f = n.getFiles("Games/Content")
+	assert.Equal(t, 3, len(f))
+
+	f = n.getFiles("Games/Content/Heroes/Weapons/Weapons")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "Games/Content/Heroes/Weapons/Weapons/X.txt", f[0])
 }
 
 // func TestBranchMerge(t *testing.T) {
