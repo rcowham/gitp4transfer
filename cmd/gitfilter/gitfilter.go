@@ -269,10 +269,10 @@ CmdLoop:
 			fr := cmd.(libfastimport.FileRename)
 			if filteringPaths {
 				if rePathFilter.MatchString(string(fr.Src)) || rePathFilter.MatchString(string(fr.Dst)) {
-					g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+					g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
 					backend.Do(fr)
 				} else {
-					g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+					g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
 				}
 			} else {
 				g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
