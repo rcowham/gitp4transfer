@@ -24,3 +24,9 @@ log-*.log
 .vscode/
 __pycache__/
 *.pyc
+
+*.dot
+out*
+archives/
+bin/
+*.git
