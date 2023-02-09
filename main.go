@@ -395,9 +395,9 @@ func (gc *GitCommit) findGitFile(name string) *GitFile {
 	return nil
 }
 
-func (gc *GitCommit) findGitFileRename(fromName string) *GitFile {
+func (gc *GitCommit) findGitFileRenameTarget(fromName string) *GitFile {
 	for _, gf := range gc.files {
-		if gf.srcName == fromName {
+		if gf.name == fromName {
 			return gf
 		}
 	}
@@ -1197,7 +1197,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		if gf.action == modify {
 			valid = true
 		} else if gf.action == delete {
-			dupGF := cmt.findGitFileRename(string(gf.name))
+			dupGF := cmt.findGitFileRenameTarget(string(gf.name))
 			if dupGF != nil && dupGF.action == rename {
 				g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
@@ -1208,10 +1208,10 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 			}
 		} else if gf.action == rename {
 			dupGF := cmt.findGitFile(string(gf.srcName))
-			if dupGF != nil && dupGF.action == delete {
-				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s -> %s", cmt.ref(), dupGF.ID, gf.srcName, gf.name)
-				valid = false
-			}
+			// if dupGF != nil && dupGF.action == delete {
+			// 	g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s -> %s", cmt.ref(), dupGF.ID, gf.srcName, gf.name)
+			// 	valid = false
+			// }
 			if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
 				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false

@@ -1380,6 +1380,73 @@ func TestDeleteDir(t *testing.T) {
 	assert.NotRegexp(t, `(?m)lbrPath`, result)
 }
 
+func TestRenameFileDeleteDir(t *testing.T) {
+	// Git rename of a dir where a file has been renamed with a modification!
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	d1 := filepath.Join("src", "Animatic", "Animation")
+	src1 := filepath.Join(d1, "Bow01.txt")
+	srcContents1 := "contents\n"
+	err := os.MkdirAll(d1, 0777)
+	if err != nil {
+		t.Fatalf("Failed to mkdir %v", err)
+	}
+	writeToFile(src1, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git rm -r src")
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
+
+	// fast-export with rename detection implemented - to tweak to directory rename
+	output, err := runCmd("git fast-export --all -M")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Output: %s", output)
+	lines := strings.Split(output, "\n")
+	logger.Debugf("Len: %d", len(lines))
+	newLines := lines[:len(lines)-4]
+	logger.Debugf("Len new: %d", len(newLines))
+	newLines = append(newLines, "R src/Animatic/Animation/Bow01.txt src/AnimBow/Animation/Bow01.txt")
+	newLines = append(newLines, "D src/Animatic")
+	newLines = append(newLines, "M 100644 :1 src/AnimBow/Animation/Bow01.txt")
+	newLines = append(newLines, "")
+	newOutput := strings.Join(newLines, "\n")
+	logger.Debugf("Changed output: %s", newOutput)
+
+	r := runTransferWithDump(t, logger, newOutput, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/Animatic/Animation/Bow01.txt#1 - add change 2 (text+C)
+`, result)
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/Animatic/Animation/Bow01.txt#3 - delete change 3 (text+C)
+//import/main/src/AnimBow/Animation/Bow01.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	// result, err = runCmd("p4 fstat -Ob //import/main/src/file.txt#2")
+	// assert.Equal(t, nil, err)
+	// assert.Regexp(t, `headType text\+C`, result)
+	// assert.NotRegexp(t, `lbrType`, result)
+	// assert.NotRegexp(t, `lbrFile`, result)
+	// assert.NotRegexp(t, `(?m)lbrPath`, result)
+}
+
 func TestBranch(t *testing.T) {
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
