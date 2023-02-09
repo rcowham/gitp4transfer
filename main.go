@@ -395,9 +395,9 @@ func (gc *GitCommit) findGitFile(name string) *GitFile {
 	return nil
 }
 
-func (gc *GitCommit) findGitFileRenameTarget(fromName string) *GitFile {
+func (gc *GitCommit) findGitFileRename(fromName string) *GitFile {
 	for _, gf := range gc.files {
-		if gf.name == fromName {
+		if gf.srcName == fromName {
 			return gf
 		}
 	}
@@ -728,7 +728,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			// TODO - don't use 0 for startfromRev, startToRev
-			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, 0, gf.p4.srcRev, 0, gf.p4.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, 0, gf.p4.srcRev-1, 0, gf.p4.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		}
 	} else {
 		gf.logger.Errorf("Unexpected action: %s", gf.action.String())
@@ -1197,7 +1197,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		if gf.action == modify {
 			valid = true
 		} else if gf.action == delete {
-			dupGF := cmt.findGitFileRenameTarget(string(gf.name))
+			dupGF := cmt.findGitFileRename(string(gf.name))
 			if dupGF != nil && dupGF.action == rename {
 				g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false

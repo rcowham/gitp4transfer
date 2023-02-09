@@ -1078,11 +1078,11 @@ func TestRenameBack(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/main/src.txt`, result)
 	assert.Regexp(t, `\.\.\. #3 change 4 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/targ.txt#1,#2`, result)
+	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/targ.txt#1`, result)
 	assert.Regexp(t, `\.\.\. #2 change 3 delete on .* by .* \(text\+C\)`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/main/targ.txt#1`, result)
 	assert.Regexp(t, `\.\.\. #1 change 2 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/targ.txt#1,#2`, result)
+	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/targ.txt#1`, result)
 
 	result, err = runCmd("p4 filelog //import/main/targ.txt")
 	assert.Equal(t, nil, err)
@@ -1090,7 +1090,7 @@ func TestRenameBack(t *testing.T) {
 	assert.Regexp(t, `\.\.\. #2 change 4 delete on .* by .* \(text\+C\)`, result)
 	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/main/src.txt#1,#3`, result)
 	assert.Regexp(t, `\.\.\. #1 change 3 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/src.txt#1,#2`, result)
+	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/src.txt#1`, result)
 
 }
 
@@ -1430,7 +1430,7 @@ func TestRenameFileDeleteDir(t *testing.T) {
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/main/src/Animatic/Animation/Bow01.txt#3 - delete change 3 (text+C)
+	assert.Equal(t, `//import/main/src/Animatic/Animation/Bow01.txt#2 - delete change 3 (text+C)
 //import/main/src/AnimBow/Animation/Bow01.txt#1 - add change 3 (text+C)
 `,
 		result)
@@ -1439,12 +1439,18 @@ func TestRenameFileDeleteDir(t *testing.T) {
 	assert.Equal(t, "", result)
 	assert.Equal(t, "<nil>", fmt.Sprint(err))
 
-	// result, err = runCmd("p4 fstat -Ob //import/main/src/file.txt#2")
-	// assert.Equal(t, nil, err)
-	// assert.Regexp(t, `headType text\+C`, result)
-	// assert.NotRegexp(t, `lbrType`, result)
-	// assert.NotRegexp(t, `lbrFile`, result)
-	// assert.NotRegexp(t, `(?m)lbrPath`, result)
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/main/src/Animatic/Animation/Bow01.txt
+\.\.\. #2 change 3 delete on .* by .*@git-client \S* 'deleted '
+\.\.\. #1 change 2 add on .* by .*@git-client \S* 'initial '
+\.\.\. \.\.\. branch into //import/main/src/AnimBow/Animation/Bow01.txt#1
+//import/main/src/AnimBow/Animation/Bow01.txt
+\.\.\. #1 change 3 add on .* by .*@git-client \S* 'deleted '
+\.\.\. \.\.\. branch from //import/main/src/Animatic/Animation/Bow01.txt#1
+`,
+		result)
+
 }
 
 func TestBranch(t *testing.T) {
