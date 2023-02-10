@@ -1,6 +1,6 @@
 module github.com/rcowham/gitp4transfer
 
-go 1.17
+go 1.18
 
 require (
 	github.com/emicklei/dot v1.0.0
