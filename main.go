@@ -987,6 +987,9 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		}
 	} else { // Copy/branch
 		gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
+		if g.depotFileRevs[gf.p4.srcDepotFile].action == delete { // Assume we are branching from previous rev
+			gf.p4.srcRev -= 1
+		}
 		srcExists := g.depotFileTypeExists(gf.p4.srcDepotFile, gf.p4.srcRev)
 		if !srcExists {
 			g.logger.Debugf("UDR4: ")

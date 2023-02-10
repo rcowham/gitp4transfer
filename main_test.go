@@ -1170,6 +1170,78 @@ func TestRenameOnBranchWithEdit(t *testing.T) {
 	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/dev/targ.txt#1,#2`, result)
 }
 
+func TestBranchOfDeletedFile(t *testing.T) {
+	// Rename of a file on a branch with edited contents so R and M records, then merge back to main
+	debug = true
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git switch -c dev")
+	runCmd("git switch main")
+	contents2 := "contents2\n"
+	writeToFile(src, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m 'a file changed on main'")
+	runCmd("git rm " + src)
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
+	runCmd("git switch dev")
+	runCmd("git merge --no-ff main")
+	writeToFile(src, contents2)
+	runCmd("git commit -m \"merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	// fast-export with rename detection implemented - to tweak to directory rename
+	output, err := runCmd("git fast-export --all -M")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Output: %s", output)
+	lines := strings.Split(output, "\n")
+	logger.Debugf("Len: %d", len(lines))
+	newLines := lines[:len(lines)-4]
+	logger.Debugf("Len new: %d", len(newLines))
+	newLines = append(newLines, "M 100644 :3 src.txt")
+	newLines = append(newLines, "")
+	newOutput := strings.Join(newLines, "\n")
+	logger.Debugf("Changed output: %s", newOutput)
+
+	r := runTransferWithDump(t, logger, newOutput, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src.txt#1 - add change 6 (text+C)
+//import/main/src.txt#3 - delete change 5 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/dev/src.txt
+\.\.\. #1 change 6 add on \S+ by \S+@git-client \S+ 'Merge branch 'main' into dev '
+\.\.\. \.\.\. branch from //import/main/src.txt#2
+//import/main/src.txt
+\.\.\. #3 change 5 delete on \S+ by \S+@git-client \S+ 'deleted '
+\.\.\. #2 change 4 edit on \S+ by \S+@git-client \S+ 'a file changed on main '
+\.\.\. \.\.\. edit into //import/dev/src.txt#1
+\.\.\. #1 change 2 add on \S+ by \S+@git-client \S+ 'initial '`,
+		result)
+}
+
 func TestRenameDir(t *testing.T) {
 	// Git rename of a dir consisting of multiple files - expand to constituent parts
 	logger := createLogger()
