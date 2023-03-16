@@ -1,5 +1,33 @@
 package main
 
+// gitp4transfer program
+// This processes a git fast-export file and writes the following:
+//   * a journal file with p4 records (written in 2004.2 format for simplicity)
+//   * accompanying archive/depot files per revision.
+// Note that the latter use CText filetype (compressed) rather than RCS
+//
+// Design:
+// The main loop GitParse():
+//     Reads the next record from the git file using libfastimport
+//     Blobs are sent to a channel to be compressed and saved using their Mark (ID) as a filename
+//         The idea is to write them to disk ASAP and later on to rename the files to their final
+//         name and then release the file to GC - we want to avoid using up too much memory!
+//     Other commands are processed and collected per GitCommit (e.g. File Modify/Delete/Rename/Copy records
+//     are attached to the Commit).
+//     As each Commit is processed, journal records are written.
+//
+// Global data structures:
+// * Hash of GitCommit records
+// * Hash of Blob records (without actual data)
+// * Hash of GitFile action records
+//
+// Notes:
+// * Plastic SCM writes git -fast-export files that are invalid for git! Thus we have to filter records
+//   and handle anomalies, e.g.
+//   - rename of a file already renamed
+//   - delete of a file which has been renamed already
+//   - etc.
+
 import (
 	"bufio"
 	"compress/gzip"
@@ -69,7 +97,10 @@ func (a GitAction) String() string {
 	return [...]string{"Unknown", "Modify", "Delete", "Copy", "Rename"}[a]
 }
 
-// Node - tree structure to record directory contents for directory renames, deletes and copies
+// Node - tree structure to record directory contents for a git branch
+// This is used so that we can reconcile renames, deletes and copies and for example
+// filter out a delete of a renamed file or similar.
+// The tree is updated after every commit is processed.
 type Node struct {
 	name     string
 	path     string
@@ -269,7 +300,7 @@ func (m *BlobFileMatcher) addGitFile(gf *GitFile) {
 	} else {
 		m.logger.Errorf("Found duplicate gitfile: %d", gf.ID)
 	}
-	gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, gf.ID)
+	gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, gf.ID) // Multiple gitFiles can reference same blob
 }
 
 func (m *BlobFileMatcher) getBlob(blobID int) *GitBlob {
@@ -281,6 +312,7 @@ func (m *BlobFileMatcher) getBlob(blobID int) *GitBlob {
 	}
 }
 
+// For a GitFile which is a duplicate, copies the original lbrFile/lbrRev
 func (m *BlobFileMatcher) updateDuplicateGitFile(gf *GitFile) {
 	b, ok := m.blobMap[gf.blob.blob.Mark]
 	if !ok {
@@ -299,6 +331,9 @@ func (m *BlobFileMatcher) updateDuplicateGitFile(gf *GitFile) {
 	gf.p4.lbrFile = origGF.p4.lbrFile
 	gf.p4.lbrRev = origGF.p4.lbrRev
 	gf.logger.Debugf("Duplicate file %s %d of: %s %d", gf.p4.depotFile, gf.p4.rev, gf.p4.lbrFile, gf.p4.lbrRev)
+	if gf.p4.lbrFile == "" {
+		gf.logger.Errorf("Invalid referenced lbrFile in duplicate %s %d", gf.p4.depotFile, gf.p4.rev)
+	}
 }
 
 // GitFile - A git file record - modify/delete/copy/move
@@ -312,7 +347,7 @@ type GitFile struct {
 	action           GitAction
 	isBranch         bool
 	isMerge          bool
-	isDirtyRename    bool // Rename where content changed
+	isDirtyRename    bool // Rename where content changed in same commit
 	fileType         journal.FileType
 	compressed       bool
 	blob             *GitBlob
@@ -496,6 +531,7 @@ func NewGitP4Transfer(logger *logrus.Logger, opts *GitParserOptions) (*GitP4Tran
 	return g, nil
 }
 
+// Convert a branch name to a full depot path (using global options)
 func (gf *GitFile) getDepotPath(opts GitParserOptions, mapper *BranchNameMapper, branch string, name string) string {
 	bname := mapper.branchName(branch)
 	if len(opts.config.ImportPath) == 0 {
@@ -505,6 +541,7 @@ func (gf *GitFile) getDepotPath(opts GitParserOptions, mapper *BranchNameMapper,
 	}
 }
 
+// Sets the depot path according to branch name and whether this is a branched files
 func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper, gc *GitCommit) {
 	gf.commit = gc
 	gf.p4.depotFile = gf.getDepotPath(opts, mapper, gc.branch, gf.name)
@@ -524,7 +561,7 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper
 	}
 }
 
-// Sets compression option and binary/text
+// Sets compression option and distinguishes binary/text according to mimetype or extension
 func (b *GitBlob) setCompressionDetails() {
 	b.fileType = journal.CText
 	b.compressed = true
