@@ -1202,7 +1202,20 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
 				}
 			} else {
-				g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+				// Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
+				doubleRename := false
+				var dupGf *GitFile
+				for _, dupGf = range newfiles {
+					if dupGf.name == gf.srcName {
+						doubleRename = true
+						dupGf.name = gf.name
+						g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						break
+					}
+				}
+				if !doubleRename {
+					g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+				}
 			}
 		} else if gf.action == copy {
 			if node.findFile(gf.name) {
