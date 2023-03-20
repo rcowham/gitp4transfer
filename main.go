@@ -42,6 +42,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/alitto/pond"
@@ -257,6 +258,7 @@ type GitBlob struct {
 	hasData      bool
 	dataRemoved  bool
 	saved        bool
+	lock         sync.RWMutex
 	blobDirPath  string
 	blobFileName string // Temporary storage location once read
 	gitFileIDs   []int  // list of gitfiles referring to this blob
@@ -615,19 +617,21 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 		matcher.logger.Debugf("NoBlobToSave")
 		return nil
 	}
+	b.lock.Lock()
 	b.setCompressionDetails()
 	matcher.logger.Debugf("BlobFileType: %d: %s", b.blob.Mark, b.fileType)
 	// Do the work in pool worker threads for concurrency, especially with compression
 	rootDir := path.Join(archiveRoot, b.blobDirPath)
 	if b.compressed {
 		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", b.blobFileName))
-		matcher.logger.Debugf("SavingBlob: %s", fname)
+		matcher.logger.Debugf("SavingBlobCompressed: %s", fname)
 		data := b.blob.Data
 		if dummyFlag {
 			data = fmt.Sprintf("%d", b.blob.Mark)
 		}
+		b.lock.Unlock()
 		pool.Submit(
-			func(rootDir string, fname string, data string) func() {
+			func(b *GitBlob, rootDir string, fname string, data string) func() {
 				return func() {
 					err := os.MkdirAll(rootDir, 0755)
 					if err != nil {
@@ -640,21 +644,27 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 					defer f.Close()
 					zw := gzip.NewWriter(f)
 					defer zw.Close()
+					b.lock.Lock()
+					defer b.lock.Unlock()
 					_, err = zw.Write([]byte(data))
 					if err != nil {
 						panic(err)
 					}
+					b.saved = true
+					b.blob.Data = "" // Allow contents to be GC'ed
+					b.dataRemoved = true
 				}
-			}(rootDir, fname, data))
+			}(b, rootDir, fname, data))
 	} else {
 		fname := path.Join(rootDir, b.blobFileName)
-		matcher.logger.Debugf("SavingBlob: %s", fname)
+		matcher.logger.Debugf("SavingBlobNotCompressed: %s", fname)
 		data := b.blob.Data
+		b.lock.Unlock()
 		if dummyFlag {
 			data = fmt.Sprintf("%d", b.blob.Mark)
 		}
 		pool.Submit(
-			func(rootDir string, fname string, data string) func() {
+			func(b *GitBlob, rootDir string, fname string, data string) func() {
 				return func() {
 					err := os.MkdirAll(rootDir, 0755)
 					if err != nil {
@@ -665,16 +675,18 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 						panic(err)
 					}
 					defer f.Close()
+					b.lock.Lock()
+					defer b.lock.Unlock()
 					fmt.Fprint(f, data)
 					if err != nil {
 						panic(err)
 					}
+					b.saved = true
+					b.blob.Data = "" // Allow contents to be GC'ed
+					b.dataRemoved = true
 				}
-			}(rootDir, fname, data))
+			}(b, rootDir, fname, data))
 	}
-	b.saved = true
-	b.blob.Data = "" // Allow contents to be GC'ed
-	b.dataRemoved = true
 	return nil
 }
 
@@ -705,14 +717,31 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, depotRoot string, ma
 	if !gf.duplicateArchive {
 		if pool != nil {
 			pool.Submit(
-				func(bname string, fname string) func() {
+				func(gf *GitFile, bname string, fname string) func() {
 					return func() {
+						for {
+							loopCount := 0
+							gf.blob.lock.RLock()
+							if !gf.blob.saved {
+								gf.logger.Warnf("Waiting for blob to be saved: %d", gf.blob.blob.Mark)
+								gf.blob.lock.RUnlock()
+								time.Sleep(1 * time.Second)
+								loopCount += 1
+								if loopCount > 10 {
+									gf.logger.Errorf("Rename wait failed: %d seconds", loopCount)
+									break
+								}
+							} else {
+								gf.blob.lock.RUnlock()
+								break
+							}
+						}
 						err = os.Rename(bname, fname)
 						if err != nil {
-							gf.logger.Errorf("Failed to Rename: %v", err)
+							gf.logger.Errorf("Failed to Rename after waiting: %v", err)
 						}
 					}
-				}(bname, fname))
+				}(gf, bname, fname))
 		} else {
 			err = os.Rename(bname, fname)
 			if err != nil {
@@ -1623,6 +1652,7 @@ func main() {
 		graphFile:     *outputGraph,
 		debugCommit:   *debugCommit,
 	}
+	logger.Infof("Options: %+v", opts)
 	g, err := NewGitP4Transfer(logger, opts)
 	if err != nil {
 		logger.Errorf("error loading config: %v", err)
