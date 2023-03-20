@@ -113,6 +113,12 @@ fi
 echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $MaxCommitArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 ./gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $MaxCommitArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
+if [[ $? -ne 0 ]]; then
+    echo "Server is in directory:"
+    echo "$P4Root"
+    bail "Error running gitp4transfer"
+fi
+
 pushd "$P4Root"
 curr_dir=$(pwd)
 
