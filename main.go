@@ -1058,20 +1058,24 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		}
 		srcExists := g.depotFileTypeExists(gf.p4.srcDepotFile, gf.p4.srcRev)
 		if !srcExists {
-			g.logger.Debugf("UDR4: ")
+			g.logger.Debugf("UDR4: %s", gf.p4.depotFile)
 			gf.isMerge = false
 			gf.p4.srcDepotFile = ""
 			gf.srcName = ""
 		} else {
 			gf.fileType = g.getDepotFileTypes(gf.p4.srcDepotFile, gf.p4.srcRev)
 			if !gf.blob.hasData || gf.isMerge { // Copied but changed
-				g.logger.Debugf("UDR5: ")
-				gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
-				gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
-				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
-				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
+				if g.depotFileRevs[gf.p4.srcDepotFile].action == delete {
+					g.logger.Debugf("UDR5a: %s", gf.p4.depotFile) // We don't reference a deleted revision
+				} else {
+					g.logger.Debugf("UDR5b: %s", gf.p4.depotFile)
+					gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
+					gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
+					g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+					g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
+				}
 			} else {
-				g.logger.Debugf("UDR6: ")
+				g.logger.Debugf("UDR6: %s", gf.p4.depotFile)
 				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			}
