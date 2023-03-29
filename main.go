@@ -544,7 +544,7 @@ func (gf *GitFile) getDepotPath(opts GitParserOptions, mapper *BranchNameMapper,
 }
 
 // Sets the depot path according to branch name and whether this is a branched files
-func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper, gc *GitCommit) {
+func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper, fileRevs *map[string]*RevChange, gc *GitCommit) {
 	gf.commit = gc
 	gf.p4.depotFile = gf.getDepotPath(opts, mapper, gc.branch, gf.name)
 	if gf.srcName != "" {
@@ -555,10 +555,23 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper
 		gf.p4.srcDepotFile = gf.getDepotPath(opts, mapper, gc.prevBranch, gf.srcName)
 	}
 	if gc.mergeBranch != "" && gc.mergeBranch != gc.branch {
-		gf.isMerge = true
 		if gf.srcName == "" {
-			gf.srcName = gf.name
-			gf.p4.srcDepotFile = gf.getDepotPath(opts, mapper, gc.mergeBranch, gf.srcName)
+			srcDepotFile := gf.getDepotPath(opts, mapper, gc.mergeBranch, gf.name)
+			if fr, ok := (*fileRevs)[srcDepotFile]; ok {
+				if gf.action == delete {
+					if fr.action == delete {
+						gf.isMerge = true
+					}
+				} else if fr.action != delete {
+					gf.isMerge = true
+				}
+			}
+			if gf.isMerge {
+				gf.srcName = gf.name
+				gf.p4.srcDepotFile = srcDepotFile
+			}
+		} else {
+			gf.isMerge = true
 		}
 	}
 }
@@ -768,14 +781,22 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 				action = journal.Edit
 			}
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, gf.p4.srcRev-1, gf.p4.srcRev, gf.p4.rev-1, gf.p4.rev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
+			startFromRev := gf.p4.srcRev - 1
+			endFromRev := gf.p4.srcRev
+			startToRev := gf.p4.rev - 1
+			endToRev := gf.p4.rev
+			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
 		} else {
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 		}
 	} else if gf.action == delete {
 		if gf.isMerge {
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, gf.p4.srcRev-1, gf.p4.srcRev, gf.p4.rev-1, gf.p4.rev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			startFromRev := gf.p4.srcRev - 1
+			endFromRev := gf.p4.srcRev
+			startToRev := gf.p4.rev - 1
+			endToRev := gf.p4.rev
+			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 		} else {
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 		}
@@ -783,18 +804,42 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 		if gf.isBranch { // Rename of a branched file - create integ records from parent
 			j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchDepotFile, 0, gf.p4.srcRev, 0, gf.p4.branchDepotRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
-			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, 0, gf.p4.srcRev, 0, gf.p4.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			// WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
+			//            how IntegHow, reverseHow IntegHow, chgNo int)
+			startFromRev := gf.p4.srcRev - 1
+			endFromRev := gf.p4.srcRev
+			startToRev := 0
+			endToRev := gf.p4.branchDepotRev
+			j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			startFromRev = 0
+			endFromRev = gf.p4.srcRev
+			startToRev = 0
+			endToRev = gf.p4.branchDepotRev
+			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else if gf.isMerge { // Merging a rename
 			j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchSrcDepotFile, 0, gf.p4.branchSrcDepotRev, 0, gf.p4.srcRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
-			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, 0, gf.p4.srcRev, 0, gf.p4.branchDepotRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
-		} else {
+			// Integ from source of delete - which should be a delete action
+			startFromRev := 0
+			endFromRev := gf.p4.branchSrcDepotRev
+			startToRev := gf.p4.srcRev - 1
+			endToRev := gf.p4.srcRev
+			j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+			// Integ the add
+			startFromRev = 0
+			endFromRev = gf.p4.srcRev - 1
+			startToRev = 0
+			endToRev = gf.p4.branchDepotRev
+			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+		} else { // Simple renamed file
 			j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			// TODO - don't use 0 for startfromRev, startToRev
-			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, 0, gf.p4.srcRev-1, 0, gf.p4.rev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			startFromRev := 0
+			endFromRev := gf.p4.srcRev - 1
+			startToRev := 0
+			endToRev := gf.p4.rev
+			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		}
 	} else {
 		gf.logger.Errorf("Unexpected action: %s", gf.action.String())
@@ -1331,7 +1376,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		}
 	}
 	for i := range cmt.files {
-		cmt.files[i].setDepotPaths(g.opts, g.branchNameMapper, cmt)
+		cmt.files[i].setDepotPaths(g.opts, g.branchNameMapper, &g.depotFileRevs, cmt)
 		cmt.files[i].updateFileDetails()
 	}
 }

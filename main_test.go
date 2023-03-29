@@ -1143,6 +1143,10 @@ func TestRenameOnBranchWithEdit(t *testing.T) {
 `,
 		result)
 
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/dev/file1.txt`, result)
+
 	result, err = runCmd("p4 filelog //import/dev/file1.txt")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `//import/dev/file1.txt`, result)
@@ -1167,7 +1171,7 @@ func TestRenameOnBranchWithEdit(t *testing.T) {
 	result, err = runCmd("p4 filelog //import/main/targ.txt")
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `\.\.\. #1 change 7 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/dev/targ.txt#1,#2`, result)
+	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/dev/targ.txt#1`, result)
 }
 
 func TestBranchOfDeletedFile(t *testing.T) {
@@ -2362,8 +2366,8 @@ func TestBranchMergeRename(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `(?m)//import/dev/src.txt
 \.\.\. #1 change 3 delete on .* by .*@git-client \(text\+C\).*
-\.\.\. \.\.\. delete from //import/main/src.txt#1
-\.\.\. \.\.\. delete into //import/main/src.txt#1,#2`, result)
+\.\.\. \.\.\. delete into //import/main/src.txt#2
+\.\.\. \.\.\. delete from //import/main/src.txt#1`, result)
 
 	assert.Regexp(t, `(?m)//import/dev/targ.txt
 \.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*
@@ -2378,7 +2382,7 @@ func TestBranchMergeRename(t *testing.T) {
 
 	assert.Regexp(t, `(?m)//import/main/targ.txt
 \.\.\. #1 change 4 add on .* by .*@git-client \(text\+C\).*
-\.\.\. \.\.\. branch from //import/dev/targ.txt#1,#2`, result)
+\.\.\. \.\.\. branch from //import/dev/targ.txt#1`, result)
 
 }
 
@@ -2435,8 +2439,8 @@ func TestBranchNameMapping(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.Regexp(t, `(?m)//testimport/subdir/branches/dev/src.txt
 \.\.\. #1 change 3 delete on .* by .*@git-client \(text\+C\).*
-\.\.\. \.\.\. delete from //testimport/subdir/trunk/main/src.txt#1
-\.\.\. \.\.\. delete into //testimport/subdir/trunk/main/src.txt#1,#2`, result)
+\.\.\. \.\.\. delete into //testimport/subdir/trunk/main/src.txt#2
+\.\.\. \.\.\. delete from //testimport/subdir/trunk/main/src.txt#1`, result)
 
 	assert.Regexp(t, `(?m)//testimport/subdir/branches/dev/targ.txt
 \.\.\. #1 change 3 add on .* by .*@git-client \(text\+C\).*
@@ -2451,6 +2455,6 @@ func TestBranchNameMapping(t *testing.T) {
 
 	assert.Regexp(t, `(?m)//testimport/subdir/trunk/main/targ.txt
 \.\.\. #1 change 4 add on .* by .*@git-client \(text\+C\).*
-\.\.\. \.\.\. branch from //testimport/subdir/branches/dev/targ.txt#1,#2`, result)
+\.\.\. \.\.\. branch from //testimport/subdir/branches/dev/targ.txt#1`, result)
 
 }
