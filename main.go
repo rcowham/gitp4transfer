@@ -1285,11 +1285,15 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				var dupGf *GitFile
 				for _, dupGf = range newfiles {
 					if dupGf.name == gf.srcName {
-						doubleRename = true
-						dupGf.name = gf.name
-						g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-						break
+						if dupGf.srcName == dupGf.name {
+							g.logger.Debugf("DoubleRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						} else {
+							doubleRename = true
+							dupGf.name = gf.name
+							g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						}
 					}
+					break
 				}
 				if !doubleRename {
 					g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
