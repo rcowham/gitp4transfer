@@ -305,6 +305,22 @@ func (m *BlobFileMatcher) addGitFile(gf *GitFile) {
 	gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, gf.ID) // Multiple gitFiles can reference same blob
 }
 
+func (m *BlobFileMatcher) removeGitFile(gf *GitFile) {
+	if _, ok := m.gitFileMap[gf.ID]; !ok {
+		m.logger.Errorf("Failed to find gitfile: %d", gf.ID)
+	}
+	if gf.blob == nil {
+		return
+	}
+	oldIDs := gf.blob.gitFileIDs
+	gf.blob.gitFileIDs = make([]int, 0)
+	for _, id := range oldIDs {
+		if id != gf.ID {
+			gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, id) // Multiple gitFiles can reference same blob
+		}
+	}
+}
+
 func (m *BlobFileMatcher) getBlob(blobID int) *GitBlob {
 	if b, ok := m.blobMap[blobID]; ok {
 		return b
@@ -1083,6 +1099,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 				g.recordDepotFileType(gf)
+				g.logger.Debugf("UDR7a: %s", gf.p4.depotFile)
 			}
 		}
 		if !handled {
@@ -1095,6 +1112,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 			g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			g.recordDepotFileType(gf)
+			g.logger.Debugf("UDR7b: %s", gf.p4.depotFile)
 		}
 	} else { // Copy/branch
 		gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
@@ -1261,6 +1279,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				}
 			} else {
 				g.logger.Debugf("DeleteIgnored: %s Path:%s", cmt.ref(), gf.name)
+				g.blobFileMatcher.removeGitFile(gf)
 			}
 		} else if gf.action == rename {
 			if node.findFile(gf.srcName) {
@@ -1268,7 +1287,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				continue
 			}
 			files := node.getFiles(gf.srcName)
-			if len(files) > 0 {
+			if len(files) > 0 { // Turn dir rename into multiple single file renames
 				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
 				for _, rf := range files {
 					if !hasPrefix(rf, string(gf.srcName)) {
@@ -1280,24 +1299,26 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
 				}
 			} else {
-				// Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
-				doubleRename := false
-				var dupGf *GitFile
-				for _, dupGf = range newfiles {
-					if dupGf.name == gf.srcName {
-						if dupGf.srcName == dupGf.name {
-							g.logger.Debugf("DoubleRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-						} else {
-							doubleRename = true
-							dupGf.name = gf.name
-							g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-						}
-					}
-					break
-				}
-				if !doubleRename {
-					g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
-				}
+				g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+				g.blobFileMatcher.removeGitFile(gf)
+				// // Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
+				// doubleRename := false
+				// var dupGf *GitFile
+				// for _, dupGf = range newfiles {
+				// 	if dupGf.name == gf.srcName {
+				// 		if dupGf.srcName == dupGf.name {
+				// 			g.logger.Debugf("DoubleRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+				// 		} else {
+				// 			doubleRename = true
+				// 			dupGf.name = gf.name
+				// 			g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+				// 		}
+				// 		break
+				// 	}
+				// }
+				// if !doubleRename {
+				// 	g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+				// }
 			}
 		} else if gf.action == copy {
 			if node.findFile(gf.name) {
@@ -1318,6 +1339,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				}
 			} else {
 				g.logger.Debugf("CopyIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+				g.blobFileMatcher.removeGitFile(gf)
 			}
 		} else {
 			g.logger.Errorf("Unexpected GFAction: GitFile: %s ID %d, %s, %s", cmt.ref(), gf.ID, gf.name, gf.action.String())
