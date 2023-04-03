@@ -1094,12 +1094,16 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				gf.p4.branchSrcDepotFile = srcOrigDepotPath
 				gf.p4.branchSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
 				gf.fileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
-				gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
-				gf.p4.lbrRev = g.depotFileRevs[targOrigDepotPath].lbrRev
-				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
-				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
+				if g.depotFileRevs[targOrigDepotPath].action == delete {
+					g.logger.Debugf("UDR7a: %s", gf.p4.depotFile) // We don't reference a deleted revision
+				} else {
+					g.logger.Debugf("UDR7b: %s", gf.p4.depotFile) // We don't reference a deleted revision
+					gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
+					gf.p4.lbrRev = g.depotFileRevs[targOrigDepotPath].lbrRev
+					g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+					g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
+				}
 				g.recordDepotFileType(gf)
-				g.logger.Debugf("UDR7a: %s", gf.p4.depotFile)
 			}
 		}
 		if !handled {
@@ -1112,7 +1116,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 			g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			g.recordDepotFileType(gf)
-			g.logger.Debugf("UDR7b: %s", gf.p4.depotFile)
+			g.logger.Debugf("UDR7c: %s", gf.p4.depotFile)
 		}
 	} else { // Copy/branch
 		gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
@@ -1301,24 +1305,6 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 			} else {
 				g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
 				g.blobFileMatcher.removeGitFile(gf)
-				// // Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
-				// doubleRename := false
-				// var dupGf *GitFile
-				// for _, dupGf = range newfiles {
-				// 	if dupGf.name == gf.srcName {
-				// 		if dupGf.srcName == dupGf.name {
-				// 			g.logger.Debugf("DoubleRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-				// 		} else {
-				// 			doubleRename = true
-				// 			dupGf.name = gf.name
-				// 			g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-				// 		}
-				// 		break
-				// 	}
-				// }
-				// if !doubleRename {
-				// 	g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
-				// }
 			}
 		} else if gf.action == copy {
 			if node.findFile(gf.name) {
