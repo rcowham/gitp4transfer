@@ -1303,8 +1303,25 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
 				}
 			} else {
-				g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
-				g.blobFileMatcher.removeGitFile(gf)
+				// Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
+				doubleRename := false
+				var dupGf *GitFile
+				for _, dupGf = range newfiles {
+					if dupGf.name == gf.srcName {
+						if dupGf.srcName == dupGf.name {
+							g.logger.Debugf("DoubleRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						} else {
+							doubleRename = true
+							dupGf.name = gf.name // Don't append gf to newfiles because we adjust dupGF to be the correct rename
+							g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						}
+						break
+					}
+				}
+				if !doubleRename {
+					g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+					g.blobFileMatcher.removeGitFile(gf)
+				}
 			}
 		} else if gf.action == copy {
 			if node.findFile(gf.name) {
@@ -1325,7 +1342,6 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				}
 			} else {
 				g.logger.Debugf("CopyIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
-				g.blobFileMatcher.removeGitFile(gf)
 			}
 		} else {
 			g.logger.Errorf("Unexpected GFAction: GitFile: %s ID %d, %s, %s", cmt.ref(), gf.ID, gf.name, gf.action.String())
@@ -1351,10 +1367,6 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 			}
 		} else if gf.action == rename {
 			dupGF := cmt.findGitFile(string(gf.srcName))
-			// if dupGF != nil && dupGF.action == delete {
-			// 	g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s -> %s", cmt.ref(), dupGF.ID, gf.srcName, gf.name)
-			// 	valid = false
-			// }
 			if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
 				g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
