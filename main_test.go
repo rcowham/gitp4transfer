@@ -1541,8 +1541,8 @@ func TestDoubleRename(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.2.gz$`, result)
 }
 
-func TestRenameAndEdit(t *testing.T) {
-	// Rename of a file on a branch where the same file is also added as source
+func TestPseudoRename(t *testing.T) {
+	// Rename of a file where the same file is also added as source
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
 
@@ -1610,6 +1610,93 @@ func TestRenameAndEdit(t *testing.T) {
 //import/main/targ/file2.txt
 ... #1 change 5 add on .* by .*@git-client \S* 'moved-dir '
 \.\.\. \.\.\. branch from //import/main/src/file2.txt#1
+`,
+		result)
+}
+
+func TestPseudoRenameMerge(t *testing.T) {
+	// Rename of a file where the same file is also added as source then merged
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src1 := filepath.Join("src", "file.txt")
+	src2 := filepath.Join("src", "file2.txt")
+	srcContents1 := "contents\n"
+	srcContents2 := "contents2\n"
+	runCmd("mkdir src")
+	writeToFile(src1, srcContents1)
+	writeToFile(src2, srcContents2)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+	runCmd("git switch -c dev")
+	runCmd("git mv src targ")
+	runCmd("git add .")
+	runCmd("git commit -m moved-dir")
+	runCmd("git switch main")
+	runCmd("git merge --no-ff dev")
+	runCmd("git commit -m \"merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	// fast-export with rename detection implemented - to tweak to directory rename
+	output, err := runCmd("git fast-export --all -M")
+	if err != nil {
+		t.Errorf("ERROR: Failed to git export '%s': %v\n", output, err)
+	}
+	logger.Debugf("Output: %s", output)
+	lines := strings.Split(output, "\n")
+	logger.Debugf("Len: %d", len(lines))
+	newLines := lines[:len(lines)-4]
+	logger.Debugf("Len new: %d", len(newLines))
+	newLines = append(newLines, "R src targ") // Rename dir
+	// newLines = append(newLines, "R targ/file2.txt targ/file3.txt") // Double rename of file
+	newLines = append(newLines, "M 100644 :2 src/file2.txt") // Add back source file
+	newLines = append(newLines, "")
+	newOutput := strings.Join(newLines, "\n")
+	logger.Debugf("Changed output: %s", newOutput)
+
+	r := runTransferWithDump(t, logger, newOutput, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file.txt#1 - delete change 4 (text+C)
+//import/dev/src/file2.txt#1 - delete change 4 (text+C)
+//import/dev/targ/file.txt#1 - add change 4 (text+C)
+//import/dev/targ/file2.txt#1 - add change 4 (text+C)
+//import/main/src/file.txt#2 - delete change 5 (text+C)
+//import/main/src/file2.txt#2 - edit change 5 (text+C)
+//import/main/targ/file.txt#1 - add change 5 (text+C)
+//import/main/targ/file2.txt#1 - add change 5 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/main/src/file.txt
+\.\.\. #2 change 5 delete on .* by .*@git-client \S* 'Merge branch 'dev' '
+\.\.\. \.\.\. delete from //import/dev/src/file.txt#1
+\.\.\. #1 change 3 add on .* by .*@git-client \S* 'initial '
+\.\.\. \.\.\. delete into //import/dev/src/file.txt#1
+\.\.\. \.\.\. branch into //import/dev/targ/file.txt#1
+//import/main/src/file2.txt
+\.\.\. #2 change 5 edit on .* by .*@git-client \S* 'Merge branch 'dev' '
+\.\.\. #1 change 3 add on .* by .*@git-client \S* 'initial '
+\.\.\. \.\.\. delete into //import/dev/src/file2.txt#1
+\.\.\. \.\.\. branch into //import/dev/targ/file2.txt#1
+//import/main/targ/file.txt
+\.\.\. #1 change 5 add on .* by .*@git-client \S* 'Merge branch 'dev' '
+\.\.\. \.\.\. branch from //import/dev/targ/file.txt#1
+//import/main/targ/file2.txt
+\.\.\. #1 change 5 add on .* by .*@git-client \S* 'Merge branch 'dev' '
+\.\.\. \.\.\. branch from //import/dev/targ/file2.txt#1
 `,
 		result)
 }

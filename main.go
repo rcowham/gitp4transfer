@@ -836,7 +836,14 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			endToRev := gf.p4.branchDepotRev
 			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else if gf.isMerge { // Merging a rename
-			if !gf.isPseudoRename {
+			// Integ the add
+			startFromRev := 0
+			endFromRev := gf.p4.srcRev - 1
+			startToRev := 0
+			endToRev := gf.p4.branchDepotRev
+			if gf.isPseudoRename {
+				endFromRev = gf.p4.srcRev // Not deleted for pseudo rename
+			} else {
 				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 				// Integ from source of delete - which should be a delete action
 				startFromRev := 0
@@ -846,11 +853,6 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 				j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 			}
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			// Integ the add
-			startFromRev := 0
-			endFromRev := gf.p4.srcRev - 1
-			startToRev := 0
-			endToRev := gf.p4.branchDepotRev
 			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else { // Simple renamed file
 			// TODO - don't use 0 for startfromRev, startToRev
@@ -1096,7 +1098,9 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			}
 			if targOrigDepotPath != "" && srcOrigDepotPath != "" {
 				handled = true
-				g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
+				if !gf.isPseudoRename {
+					g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
+				}
 				gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
 				gf.p4.branchDepotFile = targOrigDepotPath
 				gf.p4.branchDepotRev = g.depotFileRevs[targOrigDepotPath].rev
@@ -1227,7 +1231,7 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 			}
 		}
 	} else if len(currCommit.commit.Merge) > 1 {
-		// Potential for more than one merge, but we just log an error for now
+		// Potential for more than one merge, but we just log an error for now TODO
 		g.logger.Errorf("Commit mark %d has %d merges", currCommit.commit.Mark, len(currCommit.commit.Merge))
 	}
 }
@@ -1393,7 +1397,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 			if dupGF != nil && dupGF.action == modify {
 				valid = true
 				gf.isPseudoRename = true
-				g.logger.Warnf("RenamedOfModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+				g.logger.Warnf("PseudoRename - RenameOfModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
 			}
 		} else if gf.action == copy {
 			dupGF := cmt.findGitFile(string(gf.srcName))
