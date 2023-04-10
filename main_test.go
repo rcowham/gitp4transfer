@@ -1872,6 +1872,121 @@ func TestRenameBranchWithEdit(t *testing.T) {
 		result)
 }
 
+func TestDoubleRenameOnBranch(t *testing.T) {
+	// Same file is renamed to 2 different targets
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 9
+contents
+
+blob
+mark :2
+data 10
+contents2
+
+reset refs/heads/main
+commit refs/heads/main
+mark :3
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file.txt
+M 100644 :2 src/file2.txt
+
+commit refs/heads/dev
+mark :4
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+added-one
+from :3
+M 100644 :2 src/file1.txt
+
+reset refs/heads/main
+commit refs/heads/main
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+added-two
+from :3
+M 100644 :2 src/file1.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :6
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+moved-dir
+from :4
+merge :5
+R src/file2.txt src/file3.txt
+R src targ
+D src
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file.txt#1 - delete change 6 (text+C)
+//import/dev/src/file1.txt#2 - delete change 6 (text+C)
+//import/dev/src/file2.txt#1 - delete change 6 (text+C)
+//import/dev/targ/file.txt#1 - add change 6 (text+C)
+//import/dev/targ/file1.txt#1 - add change 6 (text+C)
+//import/dev/targ/file2.txt#1 - add change 6 (text+C)
+//import/dev/targ/file3.txt#1 - add change 6 (text+C)
+//import/main/src/file.txt#1 - add change 3 (text+C)
+//import/main/src/file1.txt#1 - add change 5 (text+C)
+//import/main/src/file2.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/dev/src/file.txt
+\.\.\. #1 change 6 delete on .* by .*@git-client \S* 'moved-dir '
+\.\.\. \.\.\. delete from //import/main/src/file.txt#1
+//import/dev/src/file1.txt
+\.\.\. #2 change 6 delete on .* by .*@git-client \S* 'moved-dir '
+\.\.\. #1 change 4 add on .* by .*@git-client \S* 'added-one '
+//import/dev/src/file2.txt
+\.\.\. #1 change 6 delete on .* by .*@git-client \S* 'moved-dir '
+\.\.\. \.\.\. delete from //import/main/src/file2.txt#1
+//import/dev/targ/file.txt
+\.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '
+\.\.\. \.\.\. branch from //import/main/src/file.txt#1
+//import/dev/targ/file1.txt
+\.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '
+//import/dev/targ/file2.txt
+\.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '
+//import/dev/targ/file3.txt
+\.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '
+\.\.\. \.\.\. branch from //import/main/src/file2.txt#1
+//import/main/src/file.txt
+\.\.\. #1 change 3 add on .* by .*@git-client \S* 'initial '
+\.\.\. \.\.\. delete into //import/dev/src/file.txt#1
+\.\.\. \.\.\. branch into //import/dev/targ/file.txt#1
+//import/main/src/file1.txt
+\.\.\. #1 change 5 add on .* by .*@git-client \S* 'added-two '
+//import/main/src/file2.txt
+\.\.\. #1 change 3 add on .* by .*@git-client \S* 'initial '
+\.\.\. \.\.\. delete into //import/dev/src/file2.txt#1
+\.\.\. \.\.\. branch into //import/dev/targ/file3.txt#1
+`,
+		result)
+}
+
 func TestDeleteDir(t *testing.T) {
 	// Git rename of a dir consisting of multiple files - expand to constituent parts
 	logger := createLogger()
