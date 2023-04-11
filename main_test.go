@@ -17,6 +17,7 @@ import (
 
 	"github.com/rcowham/gitp4transfer/config"
 	"github.com/rcowham/gitp4transfer/journal"
+	node "github.com/rcowham/gitp4transfer/node"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -2236,84 +2237,84 @@ func TestTag(t *testing.T) {
 
 func TestNode(t *testing.T) {
 	// logger := createLogger()
-	n := &Node{name: ""}
-	n.addFile("file.txt")
-	assert.Equal(t, 1, len(n.children))
-	assert.Equal(t, "file.txt", n.children[0].name)
-	f := n.getFiles("")
+	n := &node.Node{Name: ""}
+	n.AddFile("file.txt")
+	assert.Equal(t, 1, len(n.Children))
+	assert.Equal(t, "file.txt", n.Children[0].Name)
+	f := n.GetFiles("")
 	assert.Equal(t, 1, len(f))
 	assert.Equal(t, "file.txt", f[0])
 
-	f = n.getFiles("file.txt")
+	f = n.GetFiles("file.txt")
 	assert.Equal(t, 1, len(f))
 	assert.Equal(t, "file.txt", f[0])
 
 	fname := "src/file2.txt"
-	n.addFile(fname)
-	assert.Equal(t, 2, len(n.children))
-	assert.Equal(t, "src", n.children[1].name)
-	assert.Equal(t, false, n.children[1].isFile)
-	assert.Equal(t, 1, len(n.children[1].children))
-	assert.Equal(t, fname, n.children[1].children[0].path)
+	n.AddFile(fname)
+	assert.Equal(t, 2, len(n.Children))
+	assert.Equal(t, "src", n.Children[1].Name)
+	assert.Equal(t, false, n.Children[1].IsFile)
+	assert.Equal(t, 1, len(n.Children[1].Children))
+	assert.Equal(t, fname, n.Children[1].Children[0].Path)
 
-	f = n.getFiles("src")
+	f = n.GetFiles("src")
 	assert.Equal(t, 1, len(f))
 	assert.Equal(t, "src/file2.txt", f[0])
 
-	n.addFile(fname) // IF adding pre-existing file then no change
-	assert.Equal(t, 2, len(n.children))
-	assert.Equal(t, "src", n.children[1].name)
-	assert.Equal(t, false, n.children[1].isFile)
-	assert.Equal(t, 1, len(n.children[1].children))
+	n.AddFile(fname) // IF adding pre-existing file then no change
+	assert.Equal(t, 2, len(n.Children))
+	assert.Equal(t, "src", n.Children[1].Name)
+	assert.Equal(t, false, n.Children[1].IsFile)
+	assert.Equal(t, 1, len(n.Children[1].Children))
 
 	fname = "src/file3.txt"
-	n.addFile(fname)
-	assert.Equal(t, 2, len(n.children))
-	assert.Equal(t, "src", n.children[1].name)
-	assert.Equal(t, false, n.children[1].isFile)
-	assert.Equal(t, 2, len(n.children[1].children))
-	assert.Equal(t, "file2.txt", n.children[1].children[0].name)
-	assert.Equal(t, "file3.txt", n.children[1].children[1].name)
+	n.AddFile(fname)
+	assert.Equal(t, 2, len(n.Children))
+	assert.Equal(t, "src", n.Children[1].Name)
+	assert.Equal(t, false, n.Children[1].IsFile)
+	assert.Equal(t, 2, len(n.Children[1].Children))
+	assert.Equal(t, "file2.txt", n.Children[1].Children[0].Name)
+	assert.Equal(t, "file3.txt", n.Children[1].Children[1].Name)
 
-	f = n.getFiles("src")
+	f = n.GetFiles("src")
 	assert.Equal(t, 2, len(f))
 	assert.Equal(t, "src/file2.txt", f[0])
 	assert.Equal(t, "src/file3.txt", f[1])
 
-	assert.True(t, n.findFile("src/file2.txt"))
-	assert.False(t, n.findFile("src/file99.txt"))
-	assert.False(t, n.findFile("file99.txt"))
+	assert.True(t, n.FindFile("src/file2.txt"))
+	assert.False(t, n.FindFile("src/file99.txt"))
+	assert.False(t, n.FindFile("file99.txt"))
 
-	n.deleteFile("src/file2.txt")
-	f = n.getFiles("src")
+	n.DeleteFile("src/file2.txt")
+	f = n.GetFiles("src")
 	assert.Equal(t, 1, len(f))
 	assert.Equal(t, "src/file3.txt", f[0])
 
-	n.deleteFile("src/file3.txt")
-	f = n.getFiles("src")
+	n.DeleteFile("src/file3.txt")
+	f = n.GetFiles("src")
 	assert.Equal(t, 0, len(f))
 }
 
 func TestBigNode(t *testing.T) {
-	n := &Node{name: ""}
+	n := &node.Node{Name: ""}
 	files := `Env/Assets/ArtEnv/Cookies/cookie.png
 Env/Assets/ArtEnv/Cookies/cookie.png.meta
 Env/Assets/Art/Structure/Universal.meta
 Env/Assets/Art/Structure/Universal/Bunker.meta`
 
 	for _, f := range strings.Split(files, "\n") {
-		n.addFile(f)
+		n.AddFile(f)
 	}
-	assert.True(t, n.findFile("Env/Assets/Art/Structure/Universal/Bunker.meta"))
-	assert.True(t, n.findFile("Env/Assets/Art/Structure/Universal.meta"))
-	assert.False(t, n.findFile("src/file99.txt"))
-	assert.False(t, n.findFile("file99.txt"))
-	f := n.getFiles("Env/Assets/Art/Structure")
+	assert.True(t, n.FindFile("Env/Assets/Art/Structure/Universal/Bunker.meta"))
+	assert.True(t, n.FindFile("Env/Assets/Art/Structure/Universal.meta"))
+	assert.False(t, n.FindFile("src/file99.txt"))
+	assert.False(t, n.FindFile("file99.txt"))
+	f := n.GetFiles("Env/Assets/Art/Structure")
 	assert.Equal(t, 2, len(f))
 	assert.Equal(t, "Env/Assets/Art/Structure/Universal.meta", f[0])
 	assert.Equal(t, "Env/Assets/Art/Structure/Universal/Bunker.meta", f[1])
 
-	f = n.getFiles("")
+	f = n.GetFiles("")
 	assert.Equal(t, 4, len(f))
 	assert.Equal(t, "Env/Assets/ArtEnv/Cookies/cookie.png", f[0])
 	assert.Equal(t, "Env/Assets/ArtEnv/Cookies/cookie.png.meta", f[1])
@@ -2321,21 +2322,21 @@ Env/Assets/Art/Structure/Universal/Bunker.meta`
 }
 
 func TestBigNode2(t *testing.T) {
-	n := &Node{name: ""}
+	n := &node.Node{Name: ""}
 	files := `Games/Content/Heroes/Weapons/Weapons/X.txt
 Games/Content/Heroes/Weapons/Others/A.uasset
 Games/Content/Heroes/Weapons/Others/B.uasset`
 
 	for _, f := range strings.Split(files, "\n") {
-		n.addFile(f)
+		n.AddFile(f)
 	}
-	assert.True(t, n.findFile("Games/Content/Heroes/Weapons/Others/A.uasset"))
-	f := n.getFiles("")
+	assert.True(t, n.FindFile("Games/Content/Heroes/Weapons/Others/A.uasset"))
+	f := n.GetFiles("")
 	assert.Equal(t, 3, len(f))
-	f = n.getFiles("Games/Content")
+	f = n.GetFiles("Games/Content")
 	assert.Equal(t, 3, len(f))
 
-	f = n.getFiles("Games/Content/Heroes/Weapons/Weapons")
+	f = n.GetFiles("Games/Content/Heroes/Weapons/Weapons")
 	assert.Equal(t, 1, len(f))
 	assert.Equal(t, "Games/Content/Heroes/Weapons/Weapons/X.txt", f[0])
 }

@@ -50,6 +50,7 @@ import (
 	"github.com/h2non/filetype"
 	"github.com/rcowham/gitp4transfer/config"
 	journal "github.com/rcowham/gitp4transfer/journal"
+	node "github.com/rcowham/gitp4transfer/node"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
 	"github.com/perforce/p4prometheus/version"
@@ -96,129 +97,6 @@ const (
 
 func (a GitAction) String() string {
 	return [...]string{"Unknown", "Modify", "Delete", "Copy", "Rename"}[a]
-}
-
-// Node - tree structure to record directory contents for a git branch
-// This is used so that we can reconcile renames, deletes and copies and for example
-// filter out a delete of a renamed file or similar.
-// The tree is updated after every commit is processed.
-type Node struct {
-	name     string
-	path     string
-	isFile   bool
-	children []*Node
-}
-
-func (n *Node) addSubFile(fullPath string, subPath string) {
-	parts := strings.Split(subPath, "/")
-	if len(parts) == 1 {
-		for _, c := range n.children {
-			if c.name == parts[0] {
-				return // file already registered
-			}
-		}
-		n.children = append(n.children, &Node{name: parts[0], isFile: true, path: fullPath})
-	} else {
-		for _, c := range n.children {
-			if c.name == parts[0] {
-				c.addSubFile(fullPath, strings.Join(parts[1:], "/"))
-				return
-			}
-		}
-		n.children = append(n.children, &Node{name: parts[0]})
-		n.children[len(n.children)-1].addSubFile(fullPath, strings.Join(parts[1:], "/"))
-	}
-}
-
-func (n *Node) deleteSubFile(fullPath string, subPath string) {
-	parts := strings.Split(subPath, "/")
-	if len(parts) == 1 {
-		i := 0
-		var c *Node
-		for i, c = range n.children {
-			if c.name == parts[0] {
-				break
-			}
-		}
-		if i < len(n.children) {
-			n.children[i] = n.children[len(n.children)-1]
-			n.children = n.children[:len(n.children)-1]
-		}
-	} else {
-		for _, c := range n.children {
-			if c.name == parts[0] {
-				c.deleteSubFile(fullPath, strings.Join(parts[1:], "/"))
-				return
-			}
-		}
-	}
-}
-
-func (n *Node) addFile(path string) {
-	n.addSubFile(path, path)
-}
-
-func (n *Node) deleteFile(path string) {
-	n.deleteSubFile(path, path)
-}
-
-func (n *Node) getChildFiles() []string {
-	files := make([]string, 0)
-	for _, c := range n.children {
-		if c.isFile {
-			files = append(files, c.path)
-		} else {
-			files = append(files, c.getChildFiles()...)
-		}
-	}
-	return files
-}
-
-// Return a list of all files in a directory
-func (n *Node) getFiles(dirName string) []string {
-	files := make([]string, 0)
-	// Root of node tree - just get all files
-	if n.name == "" && dirName == "" {
-		files = append(files, n.getChildFiles()...)
-		return files
-	}
-	// Otherwise check directory is one of the children of current node
-	parts := strings.Split(dirName, "/")
-	if len(parts) == 1 {
-		for _, c := range n.children {
-			if c.name == parts[0] {
-				if c.isFile {
-					files = append(files, c.path)
-				} else {
-					files = append(files, c.getChildFiles()...)
-				}
-			}
-		}
-		return files
-	} else {
-		for _, c := range n.children {
-			if c.name == parts[0] {
-				return c.getFiles(strings.Join(parts[1:], "/"))
-			}
-		}
-	}
-	return files
-}
-
-// Returns true if it finds a single file with specified name
-func (n *Node) findFile(fileName string) bool {
-	parts := strings.Split(fileName, "/")
-	dir := ""
-	if len(parts) > 1 {
-		dir = strings.Join(parts[:len(parts)-1], "/")
-	}
-	files := n.getFiles(dir)
-	for _, f := range files {
-		if f == fileName {
-			return true
-		}
-	}
-	return false
 }
 
 // Performs simple hash
@@ -532,9 +410,9 @@ type GitP4Transfer struct {
 	depotFileTypes   map[string]journal.FileType // Map depotFile#rev to filetype (for renames/branching)
 	blobFileMatcher  *BlobFileMatcher            // Map between gitfile ID and record
 	commits          map[int]*GitCommit
-	testInput        string           // For testing only
-	graph            *dot.Graph       // If outputting a graph
-	filesOnBranch    map[string]*Node // Records current state of git tree per branch
+	testInput        string                // For testing only
+	graph            *dot.Graph            // If outputting a graph
+	filesOnBranch    map[string]*node.Node // Records current state of git tree per branch
 	branchNameMapper *BranchNameMapper
 }
 
@@ -546,7 +424,7 @@ func NewGitP4Transfer(logger *logrus.Logger, opts *GitParserOptions) (*GitP4Tran
 		blobFileMatcher:  newBlobFileMatcher(logger),
 		depotFileTypes:   make(map[string]journal.FileType),
 		commits:          make(map[int]*GitCommit),
-		filesOnBranch:    make(map[string]*Node),
+		filesOnBranch:    make(map[string]*node.Node),
 		branchNameMapper: newBranchNameMapper(opts.config)}
 	return g, nil
 }
@@ -1279,13 +1157,13 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		cmt.commit.Mark, len(cmt.files), cmt.commitSize, Humanize(cmt.commitSize))
 	// If a new branch, then copy files from parent
 	if _, ok := g.filesOnBranch[cmt.parentBranch]; !ok {
-		g.filesOnBranch[cmt.parentBranch] = &Node{name: ""}
+		g.filesOnBranch[cmt.parentBranch] = &node.Node{Name: ""}
 	}
 	if _, ok := g.filesOnBranch[cmt.branch]; !ok {
-		g.filesOnBranch[cmt.branch] = &Node{name: ""}
-		pfiles := g.filesOnBranch[cmt.parentBranch].getFiles("")
+		g.filesOnBranch[cmt.branch] = &node.Node{Name: ""}
+		pfiles := g.filesOnBranch[cmt.parentBranch].GetFiles("")
 		for _, f := range pfiles {
-			g.filesOnBranch[cmt.branch].addFile(f)
+			g.filesOnBranch[cmt.branch].AddFile(f)
 		}
 	}
 	newfiles := make([]*GitFile, 0)
@@ -1297,11 +1175,11 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 		if gf.action == modify {
 			newfiles = append(newfiles, gf)
 		} else if gf.action == delete {
-			if node.findFile(gf.name) { // Single file found
+			if node.FindFile(gf.name) { // Single file found
 				newfiles = append(newfiles, gf)
 				continue
 			}
-			files := node.getFiles(gf.name)
+			files := node.GetFiles(gf.name)
 			if len(files) > 0 {
 				g.logger.Debugf("DirDelete: Path:%s", gf.name)
 				for _, df := range files {
@@ -1317,11 +1195,11 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				g.blobFileMatcher.removeGitFile(gf)
 			}
 		} else if gf.action == rename {
-			if node.findFile(gf.srcName) { // Single file rename
+			if node.FindFile(gf.srcName) { // Single file rename
 				newfiles = append(newfiles, gf)
 				continue
 			}
-			files := node.getFiles(gf.srcName)
+			files := node.GetFiles(gf.srcName)
 			if len(files) > 0 { // Turn dir rename into multiple single file renames
 				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
 				// First we look for files in current commit - because a single file rename can be followed by a dir rename which overrides it
@@ -1364,11 +1242,11 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				}
 			}
 		} else if gf.action == copy {
-			if node.findFile(gf.name) {
+			if node.FindFile(gf.name) {
 				newfiles = append(newfiles, gf)
 				continue
 			}
-			files := node.getFiles(gf.name)
+			files := node.GetFiles(gf.name)
 			if len(files) > 0 {
 				g.logger.Debugf("DirCopy: Src:%s Dst:%s", gf.srcName, gf.name)
 				for _, rf := range files {
@@ -1401,7 +1279,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
 			}
-			if !g.filesOnBranch[cmt.branch].findFile(gf.name) {
+			if !g.filesOnBranch[cmt.branch].FindFile(gf.name) {
 				g.logger.Warnf("DeleteOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
 			}
@@ -1409,7 +1287,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 			// Search for all possible duplicates - there may be more than one!
 			for _, dupGF := range cmt.files {
 				if dupGF.name == gf.srcName && dupGF.ID != gf.ID {
-					if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
+					if !g.filesOnBranch[cmt.branch].FindFile(gf.srcName) {
 						g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 						valid = false
 						break
@@ -1435,7 +1313,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: %s ID %d, %s -> %s", cmt.ref(), dupGF.ID, gf.srcName, gf.name)
 				valid = false
 			}
-			if !g.filesOnBranch[cmt.branch].findFile(gf.srcName) {
+			if !g.filesOnBranch[cmt.branch].FindFile(gf.srcName) {
 				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
 				valid = false
 			}
@@ -1449,12 +1327,12 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 	for i := range cmt.files {
 		gf := cmt.files[i]
 		if gf.action == modify || gf.action == copy {
-			node.addFile(gf.name)
+			node.AddFile(gf.name)
 		} else if gf.action == delete {
-			node.deleteFile(gf.name)
+			node.DeleteFile(gf.name)
 		} else if gf.action == rename {
-			node.addFile(gf.name)
-			node.deleteFile(gf.srcName)
+			node.AddFile(gf.name)
+			node.DeleteFile(gf.srcName)
 		}
 	}
 	for i := range cmt.files {
