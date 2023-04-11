@@ -307,7 +307,7 @@ func (m *BlobFileMatcher) addGitFile(gf *GitFile) {
 
 func (m *BlobFileMatcher) removeGitFile(gf *GitFile) {
 	if _, ok := m.gitFileMap[gf.ID]; !ok {
-		m.logger.Errorf("Failed to find gitfile: %d", gf.ID)
+		return
 	}
 	if gf.blob == nil {
 		return
@@ -1234,19 +1234,16 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 	} else {
 		currCommit.branch = g.opts.config.DefaultBranch
 	}
-	if len(currCommit.commit.Merge) == 1 {
+	if len(currCommit.commit.Merge) >= 1 {
 		firstMerge := currCommit.commit.Merge[0]
 		if intVar, err := strconv.Atoi(firstMerge[1:]); err == nil {
 			mergeFrom := g.commits[intVar]
-			if mergeFrom.branch != "" {
+			if mergeFrom.branch != "" && mergeFrom.branch != currCommit.branch {
 				currCommit.mergeBranch = mergeFrom.branch
 			} else {
 				g.logger.Errorf("Merge Commit mark %d has no branch", intVar)
 			}
 		}
-	} else if len(currCommit.commit.Merge) > 1 {
-		// Potential for more than one merge, but we just log an error for now TODO
-		g.logger.Errorf("Commit mark %d has %d merges", currCommit.commit.Mark, len(currCommit.commit.Merge))
 	}
 }
 
