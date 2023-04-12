@@ -1877,6 +1877,7 @@ func TestDoubleRenameOnBranch(t *testing.T) {
 	// Same file is renamed to 2 different targets
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
+	logger.Level = logrus.DebugLevel
 
 	gitExport := `blob
 mark :1
@@ -1945,7 +1946,6 @@ D src
 //import/dev/src/file2.txt#1 - delete change 6 (text+C)
 //import/dev/targ/file.txt#1 - add change 6 (text+C)
 //import/dev/targ/file1.txt#1 - add change 6 (text+C)
-//import/dev/targ/file2.txt#1 - add change 6 (text+C)
 //import/dev/targ/file3.txt#1 - add change 6 (text+C)
 //import/main/src/file.txt#1 - add change 3 (text+C)
 //import/main/src/file1.txt#1 - add change 5 (text+C)
@@ -1968,8 +1968,6 @@ D src
 \.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '
 \.\.\. \.\.\. branch from //import/main/src/file.txt#1
 //import/dev/targ/file1.txt
-\.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '
-//import/dev/targ/file2.txt
 \.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '
 //import/dev/targ/file3.txt
 \.\.\. #1 change 6 add on .* by .*@git-client \S* 'moved-dir '

@@ -1204,11 +1204,13 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
 				// First we look for files in current commit - because a single file rename can be followed by a dir rename which overrides it
 				// src/A -> src/B followed by src -> targ, means turn it into src/A -> targ/B
+				srcDoubles := make([]string, 0)
 				for _, dupGf := range newfiles {
 					if dupGf.action == rename && hasPrefix(dupGf.name, string(gf.srcName)) {
 						dest := fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.srcName):])
 						dupGf.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
 						g.logger.Debugf("RenameOverride: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						srcDoubles = append(srcDoubles, dupGf.srcName)
 					}
 				}
 				for _, rf := range files {
@@ -1217,8 +1219,19 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 						continue
 					}
 					dest := fmt.Sprintf("%s%s", gf.name, rf[len(gf.srcName):])
-					g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
-					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
+					foundDouble := false
+					for _, double := range srcDoubles {
+						if double == rf {
+							foundDouble = true
+							break
+						}
+					}
+					if foundDouble {
+						g.logger.Debugf("DirFileRenameIgnoredAsDouble: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+					} else {
+						g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+						newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
+					}
 				}
 			} else {
 				// Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
