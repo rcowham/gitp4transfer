@@ -1877,7 +1877,6 @@ func TestDoubleRenameOnBranch(t *testing.T) {
 	// Same file is renamed to 2 different targets
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
-	logger.Level = logrus.DebugLevel
 
 	gitExport := `blob
 mark :1
