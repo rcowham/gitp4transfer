@@ -1559,7 +1559,7 @@ func main() {
 	var (
 		configFile = kingpin.Flag(
 			"config",
-			"Config file for gitp4transfer.",
+			"Config file for gitp4transfer - allows for branch renaming etc.",
 		).Default("gitp4transfer.yaml").Short('c').String()
 		gitimport = kingpin.Arg(
 			"gitimport",
@@ -1591,8 +1591,8 @@ func main() {
 		).Short('a').Bool()
 		maxCommits = kingpin.Flag(
 			"max.commits",
-			"Max no of commits to process.",
-		).Short('m').Int()
+			"Max no of commits to process (default 0 means all).",
+		).Default("0").Short('m').Int()
 		dryrun = kingpin.Flag(
 			"dryrun",
 			"Don't actually create archive files.",
@@ -1612,11 +1612,15 @@ func main() {
 		debug = kingpin.Flag(
 			"debug",
 			"Enable debugging level.",
-		).Int()
+		).Default("0").Int()
+		parallelThreads = kingpin.Flag(
+			"parallel.threads",
+			"How many parallel threads to use (default 0 means no of CPUs).",
+		).Default("0").Int()
 		debugCommit = kingpin.Flag(
 			"debug.commit",
-			"For debugging - to allow breakpoints to be set.",
-		).Int()
+			"For debugging - to allow breakpoints to be set - only valid if debug > 0.",
+		).Default("0").Int()
 	)
 	kingpin.UsageTemplate(kingpin.CompactUsageTemplate).Version(version.Print("gitp4transfer")).Author("Robert Cowham")
 	kingpin.CommandLine.Help = "Parses one or more git fast-export files to create a Perforce Helix Core import\n"
@@ -1667,8 +1671,18 @@ func main() {
 		return
 	}
 
+	var pool *pond.WorkerPool
 	pondSize := runtime.NumCPU()
-	pool := pond.New(pondSize, 0, pond.MinWorkers(10))
+	if *parallelThreads == 0 {
+		pool = pond.New(pondSize, 0, pond.MinWorkers(10))
+	} else {
+		pondSize = *parallelThreads
+		if pondSize > runtime.NumCPU() {
+			pondSize = runtime.NumCPU()
+		}
+		pool = pond.New(pondSize, pondSize)
+	}
+	logger.Infof("Parallel threads: %d", pondSize)
 
 	commitChan := g.GitParse(pool)
 

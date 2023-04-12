@@ -25,7 +25,7 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-depot <import depot>] [-graph <graphFile.dot>] [-m <max commits>]
+run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-depot <import depot>] [-graph <graphFile.dot>] [-m <max commits>] [-t <parallel threads>]
  
    or
 
@@ -36,6 +36,7 @@ run_conversion.sh -h
     -dummy      Create dummy archives as placeholders (no real content) - much faster
     -graph      Create Graphviz output showing commit structure
     -m          Max no of commits to process
+    -t          No of parallel threads to use (default is No of CPUs)
     <P4Root>    Directory to use as resulting P4Root - will default to a tmp dir
     <git_fast_export> The (input) git fast-export format file (required)
 
@@ -53,6 +54,7 @@ declare -i shiftArgs=0
 declare -i Debug=0
 declare -i Dummy=0
 declare -i MaxCommits=0
+declare -i ParallelThreads=0
 declare ConfigFile=""
 declare P4Root=""
 declare GitFile=""
@@ -71,6 +73,7 @@ while [[ $# -gt 0 ]]; do
         (-dummy) Dummy=1;;
         (-graph) GraphFile=$2; shiftArgs=1;;
         (-m) MaxCommits=$2; shiftArgs=1;;
+        (-t) ParallelThreads=$2; shiftArgs=1;;
         (-*) usage -h "Unknown command line option ($1)." && exit 1;;
         (*) GitFile=$1;;
     esac
@@ -97,6 +100,10 @@ declare MaxCommitArgs=""
 if [[ $MaxCommits -gt 0 ]]; then
     MaxCommitArgs="--max.commits=$MaxCommits"
 fi
+declare ParallelThreadArgs=""
+if [[ $ParallelThreads -gt 0 ]]; then
+    ParallelThreadArgs="--parallel.threads=$ParallelThreads"
+fi
 DummyFlag=""
 if [[ $Dummy -ne 0 ]]; then
     DummyFlag="--dummy"
@@ -110,8 +117,8 @@ if [[ ! -z $ConfigFile ]]; then
     ConfigArgs="--config=$ConfigFile"
 fi
 
-echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $MaxCommitArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
-./gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $MaxCommitArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+./gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
 if [[ $? -ne 0 ]]; then
     echo "Server is in directory:"
