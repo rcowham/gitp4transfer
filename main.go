@@ -183,22 +183,6 @@ func (m *BlobFileMatcher) addGitFile(gf *GitFile) {
 	gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, gf.ID) // Multiple gitFiles can reference same blob
 }
 
-func (m *BlobFileMatcher) removeGitFile(gf *GitFile) {
-	if _, ok := m.gitFileMap[gf.ID]; !ok {
-		return
-	}
-	if gf.blob == nil {
-		return
-	}
-	oldIDs := gf.blob.gitFileIDs
-	gf.blob.gitFileIDs = make([]int, 0)
-	for _, id := range oldIDs {
-		if id != gf.ID {
-			gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, id) // Multiple gitFiles can reference same blob
-		}
-	}
-}
-
 func (m *BlobFileMatcher) getBlob(blobID int) *GitBlob {
 	if b, ok := m.blobMap[blobID]; ok {
 		return b
@@ -1192,7 +1176,6 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				}
 			} else {
 				g.logger.Debugf("DeleteIgnored: %s Path:%s", cmt.ref(), gf.name)
-				g.blobFileMatcher.removeGitFile(gf)
 			}
 		} else if gf.action == rename {
 			if node.FindFile(gf.srcName) { // Single file rename
@@ -1251,7 +1234,6 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				}
 				if !doubleRename {
 					g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
-					g.blobFileMatcher.removeGitFile(gf)
 				}
 			}
 		} else if gf.action == copy {
