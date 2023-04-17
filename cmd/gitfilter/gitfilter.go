@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	node "github.com/rcowham/gitp4transfer/node"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
 	"github.com/perforce/p4prometheus/version"
@@ -86,9 +87,11 @@ type GitFilterOptions struct {
 
 // GitFilter - filter a git fast-export file
 type GitFilter struct {
-	logger    *logrus.Logger
-	opts      GitFilterOptions
-	testInput string // For testing only
+	logger        *logrus.Logger
+	opts          GitFilterOptions
+	filesOnBranch map[string]*node.Node
+	blobsFound    map[int]int
+	testInput     string // For testing only
 }
 
 func NewGitFilter(logger *logrus.Logger) *GitFilter {
@@ -245,6 +248,260 @@ func (g *GitFilter) findUnfilteredParent(commitMap *CommitMap, from string) stri
 	}
 }
 
+func hasPrefix(s, prefix string) bool {
+	return len(s) >= len(prefix) && s[0:len(prefix)] == prefix
+}
+
+type GitAction int
+
+const (
+	unknown GitAction = iota
+	modify
+	delete
+	copy
+	rename
+)
+
+type FileAction struct {
+	name    string
+	srcName string // For copy
+	action  GitAction
+	mode    libfastimport.Mode
+	dataRef string
+}
+
+// MyCommit - A git commit
+type MyCommit struct {
+	commit       *libfastimport.CmdCommit
+	branch       string
+	parentBranch string
+	files        []FileAction
+}
+
+func (c *MyCommit) ref() string {
+	return fmt.Sprintf("%d", c.commit.Mark)
+}
+
+// Validate the commit, expanding directory actions, and identifying/filtering out others that don't make sense
+func (g *GitFilter) validateCommit(cmt *MyCommit) {
+	if cmt == nil {
+		return
+	}
+	// If a new branch, then copy files from parent
+	if _, ok := g.filesOnBranch[cmt.parentBranch]; !ok {
+		g.filesOnBranch[cmt.parentBranch] = &node.Node{Name: ""}
+	}
+	if _, ok := g.filesOnBranch[cmt.branch]; !ok {
+		g.filesOnBranch[cmt.branch] = &node.Node{Name: ""}
+		pfiles := g.filesOnBranch[cmt.parentBranch].GetFiles("")
+		g.logger.Infof("Creating new branch %s with %d files from parent %s", cmt.branch, len(pfiles), cmt.parentBranch)
+		for _, f := range pfiles {
+			g.filesOnBranch[cmt.branch].AddFile(f)
+		}
+	}
+	newfiles := make([]FileAction, 0)
+	node := g.filesOnBranch[cmt.branch]
+	// Phase 1 - expand deletes/renames/copies of directories to individual commands
+	//    May ignore files, eg. delete of a file which doesn't exist (or an empty dir)
+	for i := range cmt.files {
+		gf := cmt.files[i]
+		if gf.action == modify {
+			newfiles = append(newfiles, gf)
+		} else if gf.action == delete {
+			if node.FindFile(gf.name) { // Single file found which we can delete
+				newfiles = append(newfiles, gf)
+				continue
+			}
+			files := node.GetFiles(gf.name)
+			if len(files) > 0 {
+				g.logger.Debugf("DirDelete: Path:%s", gf.name)
+				for _, df := range files {
+					if !hasPrefix(df, gf.name) {
+						g.logger.Errorf("Unexpected path found: %s: %s", gf.name, df)
+						continue
+					}
+					g.logger.Debugf("DirFileDelete: %s Path:%s", cmt.ref(), df)
+					newfiles = append(newfiles, FileAction{name: df, action: delete})
+				}
+			} else {
+				g.logger.Debugf("DeleteIgnored: %s Path:%s", cmt.ref(), gf.name)
+			}
+		} else if gf.action == rename {
+			if node.FindFile(gf.srcName) { // Single file rename
+				newfiles = append(newfiles, gf)
+				continue
+			}
+			files := node.GetFiles(gf.srcName)
+			if len(files) > 0 { // Turn dir rename into multiple single file renames
+				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
+				// First we look for files in current commit - because a single file rename can be followed by a dir rename which overrides it
+				// src/A -> src/B followed by src -> targ, means turn it into src/A -> targ/B
+				srcDoubles := make([]string, 0)
+				for _, dupGf := range newfiles {
+					if dupGf.action == rename && hasPrefix(dupGf.name, string(gf.srcName)) {
+						dest := fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.srcName):])
+						dupGf.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
+						g.logger.Debugf("RenameOverride: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						srcDoubles = append(srcDoubles, dupGf.srcName)
+					}
+				}
+				for _, rf := range files {
+					if !hasPrefix(rf, string(gf.srcName)) {
+						g.logger.Errorf("Unexpected src found: %s: %s", string(gf.srcName), rf)
+						continue
+					}
+					dest := fmt.Sprintf("%s%s", gf.name, rf[len(gf.srcName):])
+					foundDouble := false
+					for _, double := range srcDoubles {
+						if double == rf {
+							foundDouble = true
+							break
+						}
+					}
+					if foundDouble {
+						g.logger.Debugf("DirFileRenameIgnoredAsDouble: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+					} else {
+						g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+						newfiles = append(newfiles, FileAction{name: dest, srcName: rf, action: rename})
+					}
+				}
+			} else {
+				// Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
+				doubleRename := false
+				var dupGf FileAction
+				for _, dupGf = range newfiles {
+					if dupGf.name == gf.srcName {
+						if dupGf.srcName == dupGf.name {
+							g.logger.Debugf("DoubleRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						} else {
+							doubleRename = true
+							dupGf.name = gf.name // Don't append gf to newfiles because we adjust dupGF to be the correct rename
+							g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+						}
+						break
+					}
+				}
+				if !doubleRename {
+					g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+				}
+			}
+		} else if gf.action == copy {
+			if node.FindFile(gf.name) {
+				newfiles = append(newfiles, gf)
+				continue
+			}
+			files := node.GetFiles(gf.name)
+			if len(files) > 0 {
+				g.logger.Debugf("DirCopy: Src:%s Dst:%s", gf.srcName, gf.name)
+				for _, rf := range files {
+					if !hasPrefix(rf, string(gf.srcName)) {
+						g.logger.Errorf("Unexpected src found: %s: %s", string(gf.srcName), rf)
+						continue
+					}
+					dest := fmt.Sprintf("%s%s", gf.name, rf[len(gf.srcName):])
+					g.logger.Debugf("DirFileCopy: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+					newfiles = append(newfiles, FileAction{name: dest, srcName: rf, action: copy})
+				}
+			} else {
+				g.logger.Debugf("CopyIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+			}
+		} else {
+			g.logger.Errorf("Unexpected GFAction: GitFile: %s %v", cmt.ref(), gf.name, gf.action)
+		}
+	}
+	cmt.files = newfiles
+	for i := range cmt.files {
+		gf := cmt.files[i]
+		if gf.action == modify || gf.action == copy {
+			node.AddFile(gf.name)
+		} else if gf.action == delete {
+			node.DeleteFile(gf.name)
+		} else if gf.action == rename {
+			node.AddFile(gf.name)
+			node.DeleteFile(gf.srcName)
+		}
+	}
+}
+
+func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend, filteringPaths bool, rePathFilter regexp.Regexp) {
+	if cmt == nil {
+		return
+	}
+	for i := range cmt.files {
+		gf := cmt.files[i]
+		switch gf.action {
+		case modify:
+			if filteringPaths {
+				if rePathFilter.MatchString(string(gf.name)) {
+					g.logger.Debugf("FileModify: %+v", gf)
+					cmd := libfastimport.FileModify{Path: libfastimport.Path(gf.name), Mode: gf.mode, DataRef: gf.dataRef}
+					backend.Do(cmd)
+					if gf.dataRef != "" {
+						oid, err := getOID(gf.dataRef)
+						if err == nil {
+							g.blobsFound[oid] = 1
+						} else {
+							g.logger.Errorf("Failed to extract Dataref: %+v", gf)
+						}
+					}
+				} else {
+					g.logger.Debugf("Filtered FileModify: %+v", gf)
+				}
+			} else {
+				cmd := libfastimport.FileModify{Path: libfastimport.Path(gf.name), Mode: gf.mode, DataRef: gf.dataRef}
+				backend.Do(cmd)
+			}
+		case delete:
+			if filteringPaths {
+				if rePathFilter.MatchString(string(gf.name)) {
+					g.logger.Debugf("FileModify: %+v", gf)
+					cmd := libfastimport.FileDelete{Path: libfastimport.Path(gf.name)}
+					backend.Do(cmd)
+					if gf.dataRef != "" {
+						oid, err := getOID(gf.dataRef)
+						if err == nil {
+							g.blobsFound[oid] = 1
+						} else {
+							g.logger.Errorf("Failed to extract Dataref: %+v", gf)
+						}
+					}
+				} else {
+					g.logger.Debugf("Filtered FileModify: %+v", gf)
+				}
+			} else {
+				cmd := libfastimport.FileDelete{Path: libfastimport.Path(gf.name)}
+				backend.Do(cmd)
+			}
+		case copy:
+			if filteringPaths {
+				if rePathFilter.MatchString(gf.name) || rePathFilter.MatchString(gf.srcName) {
+					g.logger.Debugf("FileCopy: Src:%s Dst:%s", gf.srcName, gf.name)
+					cmd := libfastimport.FileCopy{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
+					backend.Do(cmd)
+				} else {
+					g.logger.Debugf("Filtered FileCopy: Src:%s Dst:%s", gf.srcName, gf.name)
+				}
+			} else {
+				cmd := libfastimport.FileCopy{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
+				backend.Do(cmd)
+			}
+		case rename:
+			if filteringPaths {
+				if rePathFilter.MatchString(gf.name) || rePathFilter.MatchString(gf.srcName) {
+					g.logger.Debugf("FileRename: Src:%s Dst:%s", gf.srcName, gf.name)
+					cmd := libfastimport.FileRename{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
+					backend.Do(cmd)
+				} else {
+					g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", gf.srcName, gf.name)
+				}
+			} else {
+				cmd := libfastimport.FileRename{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
+				backend.Do(cmd)
+			}
+		}
+	}
+}
+
 // RunGitFilter - filters git export file
 func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 	var inbuf io.Reader
@@ -287,10 +544,11 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 	defer mwc.Close()
 	defer infile.Close()
 
-	blobsFound := map[int]int{}
+	g.blobsFound = map[int]int{}
 
-	// var currCommit *FilterGitCommit
+	var currCommit *MyCommit
 
+	g.filesOnBranch = make(map[string]*node.Node) // Records current state of git tree per branch
 	frontend := libfastimport.NewFrontend(inbuf, nil, nil)
 	backend := libfastimport.NewBackend(mwc, nil, nil)
 	commitCount := 0
@@ -322,6 +580,8 @@ CmdLoop:
 			}
 
 		case libfastimport.CmdCommit:
+			g.validateCommit(currCommit)
+			g.processCommit(currCommit, backend, filteringPaths, *rePathFilter)
 			commit := cmd.(libfastimport.CmdCommit)
 			if commit.Msg[len(commit.Msg)-1] != '\n' {
 				commit.Msg += "\n"
@@ -329,6 +589,7 @@ CmdLoop:
 			if options.renameRefs {
 				commit.Ref = strings.ReplaceAll(commit.Ref, " ", "_")
 			}
+			currCommit = &MyCommit{commit: &commit, files: make([]FileAction, 0)}
 			commitFiltered = false
 			if g.opts.filterCommits {
 				if cmt, ok := (*commitMap)[commit.Mark]; ok {
@@ -371,67 +632,71 @@ CmdLoop:
 
 		case libfastimport.FileModify:
 			fm := cmd.(libfastimport.FileModify)
-			if filteringPaths {
-				if rePathFilter.MatchString(string(fm.Path)) {
-					g.logger.Debugf("FileModify: %+v", fm)
-					backend.Do(cmd)
-					if fm.DataRef != "" {
-						oid, err := getOID(fm.DataRef)
-						if err == nil {
-							blobsFound[oid] = 1
-						} else {
-							g.logger.Errorf("Failed to extract Dataref: %+v", fm)
-						}
-					}
-				} else {
-					g.logger.Debugf("Filtered FileModify: %+v", fm)
-				}
-			} else {
-				g.logger.Debugf("FileModify: %+v", fm)
-				backend.Do(cmd)
-			}
+			currCommit.files = append(currCommit.files, FileAction{action: modify, name: fm.Path.String(), mode: fm.Mode, dataRef: fm.DataRef})
+			// if filteringPaths {
+			// 	if rePathFilter.MatchString(string(fm.Path)) {
+			// 		g.logger.Debugf("FileModify: %+v", fm)
+			// 		backend.Do(cmd)
+			// 		if fm.DataRef != "" {
+			// 			oid, err := getOID(fm.DataRef)
+			// 			if err == nil {
+			// 				blobsFound[oid] = 1
+			// 			} else {
+			// 				g.logger.Errorf("Failed to extract Dataref: %+v", fm)
+			// 			}
+			// 		}
+			// 	} else {
+			// 		g.logger.Debugf("Filtered FileModify: %+v", fm)
+			// 	}
+			// } else {
+			// g.logger.Debugf("FileModify: %+v", fm)
+			// backend.Do(cmd)
+			// }
 
 		case libfastimport.FileDelete:
 			fdel := cmd.(libfastimport.FileDelete)
-			if filteringPaths {
-				if rePathFilter.MatchString(string(fdel.Path)) {
-					g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
-					backend.Do(fdel)
-				} else {
-					g.logger.Debugf("Filtered FileDelete: Path:%s", fdel.Path)
-				}
-			} else {
-				g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
-				backend.Do(fdel)
-			}
+			currCommit.files = append(currCommit.files, FileAction{action: delete, name: fdel.Path.String()})
+			// if filteringPaths {
+			// 	if rePathFilter.MatchString(string(fdel.Path)) {
+			// 		g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
+			// 		backend.Do(fdel)
+			// 	} else {
+			// 		g.logger.Debugf("Filtered FileDelete: Path:%s", fdel.Path)
+			// 	}
+			// } else {
+			// g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
+			// backend.Do(fdel)
+			// }
 
 		case libfastimport.FileCopy:
 			fc := cmd.(libfastimport.FileCopy)
-			if filteringPaths {
-				if rePathFilter.MatchString(string(fc.Src)) || rePathFilter.MatchString(string(fc.Dst)) {
-					g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
-					backend.Do(fc)
-				} else {
-					g.logger.Debugf("Filtered FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
-				}
-			} else {
-				g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
-				backend.Do(fc)
-			}
+			currCommit.files = append(currCommit.files, FileAction{action: copy, name: fc.Dst.String(), srcName: fc.Src.String()})
+			// if filteringPaths {
+			// 	if rePathFilter.MatchString(string(fc.Src)) || rePathFilter.MatchString(string(fc.Dst)) {
+			// 		g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
+			// 		backend.Do(fc)
+			// 	} else {
+			// 		g.logger.Debugf("Filtered FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
+			// 	}
+			// } else {
+			// g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
+			// backend.Do(fc)
+			// }
 
 		case libfastimport.FileRename:
 			fr := cmd.(libfastimport.FileRename)
-			if filteringPaths {
-				if rePathFilter.MatchString(string(fr.Src)) || rePathFilter.MatchString(string(fr.Dst)) {
-					g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
-					backend.Do(fr)
-				} else {
-					g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
-				}
-			} else {
-				g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
-				backend.Do(fr)
-			}
+			currCommit.files = append(currCommit.files, FileAction{action: rename, name: fr.Dst.String(), srcName: fr.Src.String()})
+			// if filteringPaths {
+			// 	if rePathFilter.MatchString(string(fr.Src)) || rePathFilter.MatchString(string(fr.Dst)) {
+			// 		g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+			// 		backend.Do(fr)
+			// 	} else {
+			// 		g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+			// 	}
+			// } else {
+			// g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
+			// backend.Do(fr)
+			// }
 
 		case libfastimport.CmdTag:
 			t := cmd.(libfastimport.CmdTag)
@@ -454,8 +719,8 @@ CmdLoop:
 		}
 		mwcBlob := &MyWriteCloser{outfile, bufio.NewWriter(outfile)}
 		defer mwcBlob.Close()
-		keys := make([]int, 0, len(blobsFound))
-		for k := range blobsFound {
+		keys := make([]int, 0, len(g.blobsFound))
+		for k := range g.blobsFound {
 			keys = append(keys, k)
 		}
 		backendBlob := libfastimport.NewBackend(mwcBlob, nil, nil)
