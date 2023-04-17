@@ -124,6 +124,7 @@ type FilterGitCommit struct {
 	mergeCount   int
 	branch       string
 	parentBranch string
+	mergeBranch  []string
 	filtered     bool // True => has been filtered out
 }
 
@@ -161,7 +162,7 @@ CmdLoop:
 
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
-			currCommit = &FilterGitCommit{commit: &commit}
+			currCommit = &FilterGitCommit{commit: &commit, mergeBranch: make([]string, 0)}
 
 		case libfastimport.CmdCommitEnd:
 			commitCount += 1
@@ -171,6 +172,7 @@ CmdLoop:
 			currCommit.fileCount = currFileCount
 			commitMap[currCommit.commit.Mark] = currCommit
 			if currCommit.commit.From != "" {
+				currCommit.branch = strings.Replace(currCommit.commit.Ref, "refs/heads/", "", 1)
 				if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
 					parent := commitMap[intVar]
 					if currCommit.branch == "" {
@@ -187,7 +189,9 @@ CmdLoop:
 			if len(currCommit.commit.Merge) > 0 {
 				for _, merge := range currCommit.commit.Merge {
 					if intVar, err := strconv.Atoi(merge[1:]); err == nil {
-						commitMap[intVar].mergeCount += 1
+						mergeCmt := commitMap[intVar]
+						mergeCmt.mergeCount += 1
+						currCommit.mergeBranch = append(currCommit.mergeBranch, mergeCmt.branch)
 					}
 				}
 			}
@@ -433,7 +437,7 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case modify:
 			if filteringPaths {
 				if rePathFilter.MatchString(string(gf.name)) {
-					g.logger.Debugf("FileModify: %+v", gf)
+					g.logger.Infof("%d branch:%s FileModify: %+v", cmt.commit.Mark, cmt.branch, gf)
 					cmd := libfastimport.FileModify{Path: libfastimport.Path(gf.name), Mode: gf.mode, DataRef: gf.dataRef}
 					backend.Do(cmd)
 					if gf.dataRef != "" {
@@ -444,8 +448,6 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 							g.logger.Errorf("Failed to extract Dataref: %+v", gf)
 						}
 					}
-				} else {
-					g.logger.Debugf("Filtered FileModify: %+v", gf)
 				}
 			} else {
 				cmd := libfastimport.FileModify{Path: libfastimport.Path(gf.name), Mode: gf.mode, DataRef: gf.dataRef}
@@ -454,7 +456,7 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case delete:
 			if filteringPaths {
 				if rePathFilter.MatchString(string(gf.name)) {
-					g.logger.Debugf("FileModify: %+v", gf)
+					g.logger.Infof("%d branch:%s FileDelete: %+v", cmt.commit.Mark, cmt.branch, gf)
 					cmd := libfastimport.FileDelete{Path: libfastimport.Path(gf.name)}
 					backend.Do(cmd)
 					if gf.dataRef != "" {
@@ -465,8 +467,6 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 							g.logger.Errorf("Failed to extract Dataref: %+v", gf)
 						}
 					}
-				} else {
-					g.logger.Debugf("Filtered FileModify: %+v", gf)
 				}
 			} else {
 				cmd := libfastimport.FileDelete{Path: libfastimport.Path(gf.name)}
@@ -475,11 +475,9 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case copy:
 			if filteringPaths {
 				if rePathFilter.MatchString(gf.name) || rePathFilter.MatchString(gf.srcName) {
-					g.logger.Debugf("FileCopy: Src:%s Dst:%s", gf.srcName, gf.name)
+					g.logger.Infof("%d branch:%s FileCopy: Src:%s Dst:%s", cmt.commit.Mark, cmt.branch, gf.srcName, gf.name)
 					cmd := libfastimport.FileCopy{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
 					backend.Do(cmd)
-				} else {
-					g.logger.Debugf("Filtered FileCopy: Src:%s Dst:%s", gf.srcName, gf.name)
 				}
 			} else {
 				cmd := libfastimport.FileCopy{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
@@ -488,11 +486,9 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case rename:
 			if filteringPaths {
 				if rePathFilter.MatchString(gf.name) || rePathFilter.MatchString(gf.srcName) {
-					g.logger.Debugf("FileRename: Src:%s Dst:%s", gf.srcName, gf.name)
+					g.logger.Infof("%d branch:%s FileRename: Src:%s Dst:%s", cmt.commit.Mark, cmt.branch, gf.srcName, gf.name)
 					cmd := libfastimport.FileRename{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
 					backend.Do(cmd)
-				} else {
-					g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", gf.srcName, gf.name)
 				}
 			} else {
 				cmd := libfastimport.FileRename{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
@@ -528,7 +524,7 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 		filteringPaths = true
 	}
 
-	if filteringPaths && g.opts.filterCommits {
+	if filteringPaths {
 		commitMap = g.filterCommits(options, rePathFilter)
 	}
 
@@ -593,6 +589,7 @@ CmdLoop:
 			commitFiltered = false
 			if g.opts.filterCommits {
 				if cmt, ok := (*commitMap)[commit.Mark]; ok {
+					currCommit.branch = cmt.branch
 					if cmt.fileCount > 0 || cmt.mergeCount > 0 || cmt.branch != cmt.parentBranch {
 						g.logger.Debugf("Reset: - %+v", currReset)
 						backend.Do(currReset)
@@ -602,7 +599,7 @@ CmdLoop:
 					} else {
 						commitFiltered = true
 						cmt.filtered = true
-						g.logger.Debugf("Filtered Commit:  %+v", commit)
+						g.logger.Debugf("FilteredCommit:  %+v", commit)
 					}
 				} else {
 					g.logger.Errorf("Couldn't find Commit: %d", commit.Mark)
@@ -619,7 +616,7 @@ CmdLoop:
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
 			if !commitFiltered {
-				g.logger.Debugf("Filtered CommitEnd: %+v", commit)
+				g.logger.Debugf("FilteredCommitEnd: %+v", commit)
 				backend.Do(cmd)
 			} else {
 				g.logger.Debugf("CommitEnd: %+v", commit)
@@ -633,70 +630,18 @@ CmdLoop:
 		case libfastimport.FileModify:
 			fm := cmd.(libfastimport.FileModify)
 			currCommit.files = append(currCommit.files, FileAction{action: modify, name: fm.Path.String(), mode: fm.Mode, dataRef: fm.DataRef})
-			// if filteringPaths {
-			// 	if rePathFilter.MatchString(string(fm.Path)) {
-			// 		g.logger.Debugf("FileModify: %+v", fm)
-			// 		backend.Do(cmd)
-			// 		if fm.DataRef != "" {
-			// 			oid, err := getOID(fm.DataRef)
-			// 			if err == nil {
-			// 				blobsFound[oid] = 1
-			// 			} else {
-			// 				g.logger.Errorf("Failed to extract Dataref: %+v", fm)
-			// 			}
-			// 		}
-			// 	} else {
-			// 		g.logger.Debugf("Filtered FileModify: %+v", fm)
-			// 	}
-			// } else {
-			// g.logger.Debugf("FileModify: %+v", fm)
-			// backend.Do(cmd)
-			// }
 
 		case libfastimport.FileDelete:
 			fdel := cmd.(libfastimport.FileDelete)
 			currCommit.files = append(currCommit.files, FileAction{action: delete, name: fdel.Path.String()})
-			// if filteringPaths {
-			// 	if rePathFilter.MatchString(string(fdel.Path)) {
-			// 		g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
-			// 		backend.Do(fdel)
-			// 	} else {
-			// 		g.logger.Debugf("Filtered FileDelete: Path:%s", fdel.Path)
-			// 	}
-			// } else {
-			// g.logger.Debugf("FileDelete: Path:%s", fdel.Path)
-			// backend.Do(fdel)
-			// }
 
 		case libfastimport.FileCopy:
 			fc := cmd.(libfastimport.FileCopy)
 			currCommit.files = append(currCommit.files, FileAction{action: copy, name: fc.Dst.String(), srcName: fc.Src.String()})
-			// if filteringPaths {
-			// 	if rePathFilter.MatchString(string(fc.Src)) || rePathFilter.MatchString(string(fc.Dst)) {
-			// 		g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
-			// 		backend.Do(fc)
-			// 	} else {
-			// 		g.logger.Debugf("Filtered FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
-			// 	}
-			// } else {
-			// g.logger.Debugf("FileCopy: Src:%s Dst:%s", fc.Src, fc.Dst)
-			// backend.Do(fc)
-			// }
 
 		case libfastimport.FileRename:
 			fr := cmd.(libfastimport.FileRename)
 			currCommit.files = append(currCommit.files, FileAction{action: rename, name: fr.Dst.String(), srcName: fr.Src.String()})
-			// if filteringPaths {
-			// 	if rePathFilter.MatchString(string(fr.Src)) || rePathFilter.MatchString(string(fr.Dst)) {
-			// 		g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
-			// 		backend.Do(fr)
-			// 	} else {
-			// 		g.logger.Debugf("Filtered FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
-			// 	}
-			// } else {
-			// g.logger.Debugf("FileRename: Src:%s Dst:%s", fr.Src, fr.Dst)
-			// backend.Do(fr)
-			// }
 
 		case libfastimport.CmdTag:
 			t := cmd.(libfastimport.CmdTag)
