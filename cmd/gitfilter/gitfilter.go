@@ -279,11 +279,17 @@ type MyCommit struct {
 	commit       *libfastimport.CmdCommit
 	branch       string
 	parentBranch string
+	mergeBranch  []string
 	files        []FileAction
 }
 
 func (c *MyCommit) ref() string {
-	return fmt.Sprintf("%d", c.commit.Mark)
+	result := strings.Split(c.commit.Msg, " ")
+	chg := "unknown"
+	if len(result) >= 2 {
+		chg = result[1]
+	}
+	return fmt.Sprintf("%d branch:%s chg:%s merge:%v", c.commit.Mark, c.branch, chg, c.mergeBranch)
 }
 
 // Validate the commit, expanding directory actions, and identifying/filtering out others that don't make sense
@@ -437,7 +443,7 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case modify:
 			if filteringPaths {
 				if rePathFilter.MatchString(string(gf.name)) {
-					g.logger.Infof("%d branch:%s FileModify: %+v", cmt.commit.Mark, cmt.branch, gf)
+					g.logger.Infof("FileModify: %s %+v", cmt.ref(), gf)
 					cmd := libfastimport.FileModify{Path: libfastimport.Path(gf.name), Mode: gf.mode, DataRef: gf.dataRef}
 					backend.Do(cmd)
 					if gf.dataRef != "" {
@@ -456,7 +462,7 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case delete:
 			if filteringPaths {
 				if rePathFilter.MatchString(string(gf.name)) {
-					g.logger.Infof("%d branch:%s FileDelete: %+v", cmt.commit.Mark, cmt.branch, gf)
+					g.logger.Infof("FileDelete: %s %+v", cmt.ref(), gf)
 					cmd := libfastimport.FileDelete{Path: libfastimport.Path(gf.name)}
 					backend.Do(cmd)
 					if gf.dataRef != "" {
@@ -475,7 +481,7 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case copy:
 			if filteringPaths {
 				if rePathFilter.MatchString(gf.name) || rePathFilter.MatchString(gf.srcName) {
-					g.logger.Infof("%d branch:%s FileCopy: Src:%s Dst:%s", cmt.commit.Mark, cmt.branch, gf.srcName, gf.name)
+					g.logger.Infof("FileCopy: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
 					cmd := libfastimport.FileCopy{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
 					backend.Do(cmd)
 				}
@@ -486,7 +492,7 @@ func (g *GitFilter) processCommit(cmt *MyCommit, backend *libfastimport.Backend,
 		case rename:
 			if filteringPaths {
 				if rePathFilter.MatchString(gf.name) || rePathFilter.MatchString(gf.srcName) {
-					g.logger.Infof("%d branch:%s FileRename: Src:%s Dst:%s", cmt.commit.Mark, cmt.branch, gf.srcName, gf.name)
+					g.logger.Infof("FileRename: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
 					cmd := libfastimport.FileRename{Src: libfastimport.Path(gf.srcName), Dst: libfastimport.Path(gf.name)}
 					backend.Do(cmd)
 				}
@@ -585,11 +591,12 @@ CmdLoop:
 			if options.renameRefs {
 				commit.Ref = strings.ReplaceAll(commit.Ref, " ", "_")
 			}
-			currCommit = &MyCommit{commit: &commit, files: make([]FileAction, 0)}
+			currCommit = &MyCommit{commit: &commit, files: make([]FileAction, 0), mergeBranch: make([]string, 0)}
 			commitFiltered = false
 			if g.opts.filterCommits {
 				if cmt, ok := (*commitMap)[commit.Mark]; ok {
 					currCommit.branch = cmt.branch
+					currCommit.mergeBranch = cmt.mergeBranch
 					if cmt.fileCount > 0 || cmt.mergeCount > 0 || cmt.branch != cmt.parentBranch {
 						g.logger.Debugf("Reset: - %+v", currReset)
 						backend.Do(currReset)
