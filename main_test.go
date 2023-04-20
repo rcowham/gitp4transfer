@@ -2229,9 +2229,9 @@ M 100644 :4 src/file3.txt
 ... ... branch into //import/main/src/file2.txt#1
 //import/dev/src/file3.txt
 ... #2 change 9 edit on \S+ by \S+ \S+ '04devedit '
+... ... branch into //import/main/src/file3.txt#1
 ... #1 change 8 add on \S+ by \S+ \S+ '03devren '
 ... ... branch from //import/dev/src/file2.txt#1
-... ... branch into //import/main/src/file3.txt#1,#2
 //import/main/src/file.txt
 ... #2 change 7 delete on \S+ by \S+ \S+ '02mainedit '
 ... ... delete from //import/dev/src/file.txt#1
