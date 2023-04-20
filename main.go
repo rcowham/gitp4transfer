@@ -741,23 +741,31 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			// Setup integ BranchFrom dev/targ -> main/targ
 			startFromRev := 0
 			endFromRev := gf.p4.origTargDepotRev
-			startToRev := minval(gf.p4.srcRev-2, 0)
-			endToRev := gf.p4.srcRev
+			startToRev := minval(gf.p4.rev-1, 0)
+			endToRev := gf.p4.rev
 			if gf.isPseudoRename || gf.isDoubleRename {
 				endFromRev = gf.p4.srcRev // Not deleted for pseudo rename
 			} else {
 				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-				// Integ DeleteFrom dev/src -> main/src
-				startFromRev := gf.p4.origSrcDepotRev - 1
-				endFromRev := maxval(gf.p4.origSrcDepotRev, 1)
-				startToRev := gf.p4.srcRev - 1
-				endToRev := gf.p4.srcRev
+				// Integ DeleteFrom dev/src -> main/src, otherwise just do a normal rename
 				if gf.p4.origSrcDepotFile != "" {
+					startFromRev := gf.p4.origSrcDepotRev - 1
+					endFromRev := maxval(gf.p4.origSrcDepotRev, 1)
+					startToRev := gf.p4.srcRev - 1
+					endToRev := gf.p4.srcRev
 					j.WriteInteg(gf.p4.srcDepotFile, gf.p4.origSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 				}
 			}
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			j.WriteInteg(gf.p4.depotFile, gf.p4.origTargDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			if gf.p4.origTargDepotFile != "" { // Merged rename
+				j.WriteInteg(gf.p4.depotFile, gf.p4.origTargDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			} else { // Simple rename
+				startFromRev := minval(gf.p4.srcRev-2, 0)
+				endFromRev := gf.p4.srcRev - 1
+				startToRev := gf.p4.rev - 1
+				endToRev := gf.p4.rev
+				j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			}
 		} else { // Simple renamed file
 			startFromRev := minval(gf.p4.srcRev-2, 0)
 			endFromRev := gf.p4.srcRev - 1
@@ -1044,7 +1052,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
 			gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
 			srcRev := gf.p4.srcRev
-			if srcRev > 1 {
+			if srcRev > 1 { // TODO why?
 				srcRev -= 1
 			}
 			gf.fileType = g.getDepotFileTypes(gf.p4.srcDepotFile, srcRev)
