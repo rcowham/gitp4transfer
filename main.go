@@ -184,9 +184,6 @@ func (m *BlobFileMatcher) addGitFile(gf *GitFile) {
 }
 
 func (m *BlobFileMatcher) removeGitFile(gf *GitFile) {
-	if _, ok := m.gitFileMap[gf.ID]; !ok {
-		return
-	}
 	if gf.blob == nil {
 		return
 	}
@@ -255,18 +252,18 @@ type GitFile struct {
 
 // Information for a P4File
 type P4File struct {
-	depotFile          string // Full depot path
-	rev                int    // Depot rev
-	lbrRev             int    // Lbr rev - usually same as Depot rev
-	lbrFile            string // Lbr file - usually same as Depot file
-	srcDepotFile       string // Depot path of source for a rename
-	srcRev             int    // Ditto for rev
-	branchDepotFile    string // For branched files
-	branchDepotRev     int
-	branchSrcDepotFile string // The source file for a merged rename
-	branchSrcDepotRev  int
-	archiveFile        string
-	p4action           journal.FileAction
+	depotFile         string // Full depot path
+	rev               int    // Depot rev
+	lbrRev            int    // Lbr rev - usually same as Depot rev
+	lbrFile           string // Lbr file - usually same as Depot file
+	srcDepotFile      string // Depot path of source for a rename or a branched file
+	srcRev            int    // Rev of source for a rename or a branched file
+	origTargDepotFile string // For branched/merged rename - Depot path of original target of the rename
+	origTargDepotRev  int    // For branched/merged rename - rev of original target of the rename
+	origSrcDepotFile  string // For branched/merged rename - Depot path of original source of the rename
+	origSrcDepotRev   int    // For branched/merged rename - rev of original target of the rename
+	archiveFile       string
+	p4action          journal.FileAction
 }
 
 func newGitFile(gf *GitFile) *GitFile {
@@ -604,7 +601,8 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, depotRoot string, ma
 		gf.blob == nil || !gf.blob.hasData {
 		return
 	}
-	depotFile := strings.ReplaceAll(gf.p4.depotFile[2:], "@", "%40")
+	// Fix wildcards
+	depotFile := journal.ReplaceWildcards(gf.p4.depotFile[2:])
 	rootDir := path.Join(depotRoot, fmt.Sprintf("%s,d", depotFile))
 	if gf.blob.blobFileName == "" {
 		gf.logger.Debugf(fmt.Sprintf("NoBlobFound: %s", depotFile))
@@ -661,6 +659,20 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, depotRoot string, ma
 	}
 }
 
+func minval(val, min int) int { // Minimum of specified val or min
+	if val < min {
+		return min
+	}
+	return val
+}
+
+func maxval(val, max int) int { // Maxiumum of specified val or max
+	if val > max {
+		return max
+	}
+	return val
+}
+
 // WriteJournal writes journal record for a GitFile
 func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	dt := int(c.commit.Author.Time.Unix())
@@ -700,54 +712,62 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	} else if gf.action == rename {
 		if gf.isBranch { // Rename of a branched file - create integ records from parent
 			if !gf.isPseudoRename && !gf.isDoubleRename {
+				// Branched rename from dev -> main
+				// Original file was dev/src
+				// Branched as main/src -> main/targ
+				// Create a delete rev for main/src
 				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 				// WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
 				//            how IntegHow, reverseHow IntegHow, chgNo int)
 				startFromRev := gf.p4.srcRev - 1
 				endFromRev := gf.p4.srcRev
 				startToRev := 0
-				endToRev := gf.p4.branchDepotRev
-				j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+				endToRev := gf.p4.origSrcDepotRev
+				// We create DeleteFrom integ between dev/src and main/src
+				j.WriteInteg(gf.p4.srcDepotFile, gf.p4.origSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 			}
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			startFromRev := 0
-			endFromRev := gf.p4.srcRev
-			startToRev := 0
-			endToRev := gf.p4.branchDepotRev
-			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			startFromRev := gf.p4.origSrcDepotRev - 1
+			endFromRev := gf.p4.origSrcDepotRev
+			startToRev := gf.p4.rev - 1
+			endToRev := gf.p4.rev
+			// We create BranchFrom integ between dev/targ and main/targ
+			j.WriteInteg(gf.p4.depotFile, gf.p4.origSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else if gf.isMerge { // Merging a rename
-			// Integ the add
+			// Merge rename from dev -> main
+			// Original rename was dev/src -> dev/targ
+			// Merged as main/src -> main/targ
+
+			// Setup integ BranchFrom dev/targ -> main/targ
 			startFromRev := 0
-			endFromRev := gf.p4.srcRev - 1
-			startToRev := 0
-			endToRev := gf.p4.branchDepotRev
+			endFromRev := gf.p4.origTargDepotRev
+			startToRev := minval(gf.p4.srcRev-2, 0)
+			endToRev := gf.p4.srcRev
 			if gf.isPseudoRename || gf.isDoubleRename {
 				endFromRev = gf.p4.srcRev // Not deleted for pseudo rename
 			} else {
 				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-				// Integ from source of delete - which should be a delete action
-				startFromRev := 0
-				endFromRev := gf.p4.branchSrcDepotRev
+				// Integ DeleteFrom dev/src -> main/src
+				startFromRev := gf.p4.origSrcDepotRev - 1
+				endFromRev := maxval(gf.p4.origSrcDepotRev, 1)
 				startToRev := gf.p4.srcRev - 1
 				endToRev := gf.p4.srcRev
-				if endFromRev == 0 {
-					endFromRev = 1
-				}
-				if gf.p4.branchSrcDepotFile != "" {
-					j.WriteInteg(gf.p4.srcDepotFile, gf.p4.branchSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
+				if gf.p4.origSrcDepotFile != "" {
+					j.WriteInteg(gf.p4.srcDepotFile, gf.p4.origSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 				}
 			}
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
-			j.WriteInteg(gf.p4.depotFile, gf.p4.branchDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
+			j.WriteInteg(gf.p4.depotFile, gf.p4.origTargDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		} else { // Simple renamed file
-			// TODO - don't use 0 for startfromRev, startToRev
-			startFromRev := 0
+			startFromRev := minval(gf.p4.srcRev-2, 0)
 			endFromRev := gf.p4.srcRev - 1
-			startToRev := 0
+			startToRev := gf.p4.rev - 1
 			endToRev := gf.p4.rev
 			if gf.isPseudoRename || gf.isDoubleRename {
-				endFromRev = gf.p4.srcRev // Not deleted for pseudo rename
+				// The src is not deleted for pseudo/double renames
+				endFromRev = gf.p4.srcRev
 			} else {
+				// Delete src record
 				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			}
 			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
@@ -916,6 +936,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		gf.p4.p4action = journal.Add
 	}
 	if _, ok := g.depotFileRevs[gf.p4.srcDepotFile]; !ok {
+		// Source file (typically rename/copy/branch) has not yet been seen
 		if gf.action == delete {
 			// A delete without a source file just becomes delete
 			g.logger.Warnf("Integ of delete becomes delete: '%s' '%s'", gf.p4.depotFile, gf.p4.srcDepotFile)
@@ -925,13 +946,14 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		} else if gf.action == rename {
 			g.logger.Debugf("Rename of branched file: '%s' <- '%s'", gf.p4.depotFile, gf.p4.srcDepotFile)
 			// Create a record for the source of the rename referring to its branched source
-			depotPathOrig := gf.getDepotPath(opts, g.branchNameMapper, gf.commit.parentBranch, gf.srcName)
-			if _, ok := g.depotFileRevs[depotPathOrig]; !ok {
-				g.logger.Errorf("Failed to find original file: '%s'", depotPathOrig)
+			// dev/src -> main/src (delete) and main/targ
+			srcOrigDepotPath := gf.getDepotPath(opts, g.branchNameMapper, gf.commit.parentBranch, gf.srcName)
+			if _, ok := g.depotFileRevs[srcOrigDepotPath]; !ok {
+				g.logger.Errorf("Failed to find original file: '%s'", srcOrigDepotPath)
 			} else {
 				gf.isBranch = true
-				lbrFileOrig := g.depotFileRevs[depotPathOrig].lbrFile
-				lbrRevOrig := g.depotFileRevs[depotPathOrig].lbrRev
+				lbrFileOrig := g.depotFileRevs[srcOrigDepotPath].lbrFile
+				lbrRevOrig := g.depotFileRevs[srcOrigDepotPath].lbrRev
 				g.depotFileRevs[gf.p4.srcDepotFile] = &RevChange{rev: 1, chgNo: chgNo, lbrRev: lbrRevOrig,
 					lbrFile: lbrFileOrig, action: delete}
 				gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
@@ -939,9 +961,9 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 					gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
 					gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
 				}
-				gf.p4.branchDepotFile = depotPathOrig
-				gf.p4.branchDepotRev = g.depotFileRevs[depotPathOrig].rev
-				gf.fileType = g.getDepotFileTypes(depotPathOrig, g.depotFileRevs[depotPathOrig].rev)
+				gf.p4.origSrcDepotFile = srcOrigDepotPath
+				gf.p4.origSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
+				gf.fileType = g.getDepotFileTypes(srcOrigDepotPath, g.depotFileRevs[srcOrigDepotPath].rev)
 				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			}
@@ -962,6 +984,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			gf.fileType)
 		return
 	}
+	// At this point we have some form of merge/branch from a source file already known to us
 	if gf.action == delete { // merge of delete
 		gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
 		gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
@@ -969,9 +992,11 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 		g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 	} else if gf.action == rename { // Rename means old file is being deleted
-		// If it is a merge of a rename then link to file on the branch
+		// If it is a merge of a rename then link to file on the branch, if we can find it!
 		handled := false
 		if gf.isMerge {
+			// Rename of src->targ on main is being merged from rename of src->targ on mergeBranch (e.g. dev)
+			// So check if we have records for //dev/src and //dev/targ
 			targOrigDepotPath := gf.getDepotPath(opts, g.branchNameMapper, gf.commit.mergeBranch, gf.name)
 			srcOrigDepotPath := gf.getDepotPath(opts, g.branchNameMapper, gf.commit.mergeBranch, gf.srcName)
 			if _, ok := g.depotFileRevs[targOrigDepotPath]; !ok {
@@ -981,15 +1006,16 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				srcOrigDepotPath = ""
 			}
 			if targOrigDepotPath != "" && srcOrigDepotPath != "" {
+				// Both //dev/src and //dev/targ exist
 				handled = true
 				if !gf.isPseudoRename && !gf.isDoubleRename {
 					g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
 				}
 				gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
-				gf.p4.branchDepotFile = targOrigDepotPath
-				gf.p4.branchDepotRev = g.depotFileRevs[targOrigDepotPath].rev
-				gf.p4.branchSrcDepotFile = srcOrigDepotPath
-				gf.p4.branchSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
+				gf.p4.origTargDepotFile = targOrigDepotPath
+				gf.p4.origTargDepotRev = g.depotFileRevs[targOrigDepotPath].rev
+				gf.p4.origSrcDepotFile = srcOrigDepotPath
+				gf.p4.origSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
 				gf.fileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
 				if g.depotFileRevs[targOrigDepotPath].action == delete {
 					g.logger.Debugf("UDR7a: %s", gf.p4.depotFile) // We don't reference a deleted revision
@@ -1008,6 +1034,8 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			}
 		}
 		if !handled {
+			// Either //dev/src or //dev/targ didn't exist
+			// So we handle as ??
 			if !gf.isPseudoRename && !gf.isDoubleRename {
 				g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
 				g.depotFileRevs[gf.p4.srcDepotFile].action = delete

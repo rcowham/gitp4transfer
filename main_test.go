@@ -616,6 +616,50 @@ func TestAddWildcard(t *testing.T) {
 	assert.Regexp(t, `lbrRev 1.4`, result)
 }
 
+func TestAllWildcards(t *testing.T) {
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	file1 := "wild@.txt"
+	file2 := "wild%.txt"
+	file3 := "wild#.txt"
+	file4 := "wild*.txt"
+	file5 := "wild%@#*.txt"
+	files := []string{file1, file2, file3, file4, file5}
+	contents1 := "contents\n"
+	for _, f := range files {
+		writeToFile(f, contents1)
+	}
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	r := runTransfer(t, logger)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/wild%23.txt#1 - add change 2 (text+C)
+//import/main/wild%25%40%23%2A.txt#1 - add change 2 (text+C)
+//import/main/wild%25.txt#1 - add change 2 (text+C)
+//import/main/wild%2A.txt#1 - add change 2 (text+C)
+//import/main/wild%40.txt#1 - add change 2 (text+C)
+`, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	for _, f := range files {
+		result, err = runCmd(fmt.Sprintf("p4 print -q //import/main/%s#1", journal.ReplaceWildcards(f)))
+		assert.Equal(t, nil, err)
+		assert.Equal(t, contents1, result)
+	}
+
+}
+
 func TestDeleteFile(t *testing.T) {
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
@@ -875,8 +919,9 @@ func TestRenameOnBranch(t *testing.T) {
 
 	result, err = runCmd("p4 filelog -i //import/dev/src.txt")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `\.\.\. #1 change 5 delete on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. delete from //import/main/src.txt#1`, result)
+	assert.Regexp(t, `//import/dev/src.txt
+... #1 change 5 delete on .* by .* \S+ 'renamed '
+... ... delete from //import/main/src.txt#1`, result)
 
 	result, err = runCmd("p4 filelog -i //import/dev/targ.txt")
 	assert.Equal(t, nil, err)
@@ -1077,22 +1122,22 @@ func TestRenameBack(t *testing.T) {
 
 	result, err = runCmd("p4 filelog //import/main/src.txt")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `//import/main/src.txt`, result)
-	assert.Regexp(t, `\.\.\. #3 change 4 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/targ.txt#1`, result)
-	assert.Regexp(t, `\.\.\. #2 change 3 delete on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/main/targ.txt#1`, result)
-	assert.Regexp(t, `\.\.\. #1 change 2 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/targ.txt#1`, result)
+	assert.Regexp(t, `//import/main/src.txt
+... #3 change 4 add on .* by \S+ \S+ 'renamed-back '
+... ... branch from //import/main/targ.txt#1
+... #2 change 3 delete on .* by \S+ \S+ 'renamed '
+... #1 change 2 add on .* by \S+ \S+ 'initial '
+... ... branch into //import/main/targ.txt#1
+`, result)
 
 	result, err = runCmd("p4 filelog //import/main/targ.txt")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `//import/main/targ.txt`, result)
-	assert.Regexp(t, `\.\.\. #2 change 4 delete on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch into //import/main/src.txt#1,#3`, result)
-	assert.Regexp(t, `\.\.\. #1 change 3 add on .* by .* \(text\+C\)`, result)
-	assert.Regexp(t, `\.\.\. \.\.\. branch from //import/main/src.txt#1`, result)
-
+	assert.Regexp(t, `//import/main/targ.txt
+... #2 change 4 delete on \S+ by \S+ \S+ 'renamed-back '
+... #1 change 3 add on \S+ by \S+ \S+ 'renamed '
+... ... branch into //import/main/src.txt#3
+... ... branch from //import/main/src.txt#1
+`, result)
 }
 
 func TestRenameOnBranchWithEdit(t *testing.T) {
@@ -1681,25 +1726,40 @@ func TestPseudoRenameMerge(t *testing.T) {
 
 	result, err = runCmd("p4 filelog //...")
 	assert.Equal(t, nil, err)
-	assert.Regexp(t, `//import/main/src/file.txt
-\.\.\. #2 change 5 delete on .* by .*@git-client \S* 'Merge branch 'dev' '
-\.\.\. \.\.\. delete from //import/dev/src/file.txt#1
-\.\.\. #1 change 3 add on .* by .*@git-client \S* 'initial '
-\.\.\. \.\.\. delete into //import/dev/src/file.txt#1
-\.\.\. \.\.\. branch into //import/dev/targ/file.txt#1
+	assert.Regexp(t, `//import/dev/src/file.txt
+... #1 change 4 delete on .* by \S+ \S+ 'moved-dir '
+... ... delete into //import/main/src/file.txt#2
+... ... delete from //import/main/src/file.txt#1
+//import/dev/src/file2.txt
+... #1 change 4 delete on .* by \S+ \S+ 'moved-dir '
+... ... delete from //import/main/src/file2.txt#1
+//import/dev/targ/file.txt
+... #1 change 4 add on .* by \S+ \S+ 'moved-dir '
+... ... branch from //import/main/src/file.txt#1
+... ... branch into //import/main/targ/file.txt#1,#2
+//import/dev/targ/file2.txt
+... #1 change 4 add on .* by \S+ \S+ 'moved-dir '
+... ... branch from //import/main/src/file2.txt#1
+... ... branch into //import/main/targ/file2.txt#1
+//import/main/src/file.txt
+... #2 change 5 delete on .* by \S+ \S+ 'Merge branch 'dev' '
+... ... delete from //import/dev/src/file.txt#1
+... #1 change 3 add on .* by \S+ \S+ 'initial '
+... ... delete into //import/dev/src/file.txt#1
+... ... branch into //import/dev/targ/file.txt#1
 //import/main/src/file2.txt
-\.\.\. #2 change 5 edit on .* by .*@git-client \S* 'Merge branch 'dev' '
-\.\.\. #1 change 3 add on .* by .*@git-client \S* 'initial '
-\.\.\. \.\.\. delete into //import/dev/src/file2.txt#1
-\.\.\. \.\.\. branch into //import/dev/targ/file2.txt#1
+... #2 change 5 edit on .* by \S+ \S+ 'Merge branch 'dev' '
+... #1 change 3 add on .* by \S+ \S+ 'initial '
+... ... delete into //import/dev/src/file2.txt#1
+... ... branch into //import/dev/targ/file2.txt#1
 //import/main/targ/file.txt
-\.\.\. #1 change 5 add on .* by .*@git-client \S* 'Merge branch 'dev' '
-\.\.\. \.\.\. branch from //import/dev/targ/file.txt#1
+... #1 change 5 add on .* by \S+ \S+ 'Merge branch 'dev' '
 //import/main/targ/file2.txt
-\.\.\. #1 change 5 add on .* by .*@git-client \S* 'Merge branch 'dev' '
-\.\.\. \.\.\. branch from //import/dev/targ/file2.txt#1
+... #1 change 5 add on .* by \S+ \S+ 'Merge branch 'dev' '
+... ... branch from //import/dev/targ/file2.txt#1
 `,
 		result)
+
 }
 
 func TestPseudoRenameBranch(t *testing.T) {
@@ -1983,6 +2043,151 @@ D src
 \.\.\. \.\.\. branch into //import/dev/targ/file3.txt#1
 `,
 		result)
+}
+
+func TestMergeRenameEditFromBranch(t *testing.T) {
+	// Same file is renamed and then edited and merged back
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 11
+contents01
+
+blob
+mark :2
+data 11
+contents02
+
+blob
+mark :3
+data 11
+contents03
+
+blob
+mark :4
+data 11
+contents04
+
+reset refs/heads/main
+commit refs/heads/main
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :6
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+01devedit
+from :5
+R src/file.txt src/file2.txt
+M 100644 :2 src/file2.txt
+
+reset refs/heads/main
+commit refs/heads/main
+mark :7
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 11
+02mainedit
+from :5
+merge :6
+R src/file.txt src/file2.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :8
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 9
+03devren
+from :6
+R src/file2.txt src/file3.txt
+
+commit refs/heads/dev
+mark :9
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+04devedit
+from :8
+M 100644 :4 src/file3.txt
+
+reset refs/heads/main
+commit refs/heads/main
+mark :10
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+05mainmrg
+from :7
+merge :9
+R src/file2.txt src/file3.txt
+M 100644 :4 src/file3.txt
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file.txt#1 - delete change 6 (text+C)
+//import/dev/src/file2.txt#2 - delete change 8 (text+C)
+//import/dev/src/file3.txt#2 - edit change 9 (text+C)
+//import/main/src/file.txt#2 - delete change 7 (text+C)
+//import/main/src/file2.txt#2 - delete change 10 (text+C)
+//import/main/src/file3.txt#1 - add change 10 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `//import/dev/src/file.txt
+... #1 change 6 delete on .* by .*@git-client \S* '01devedit '
+... ... delete into //import/main/src/file.txt#2
+... ... delete from //import/main/src/file.txt#1
+//import/dev/src/file2.txt
+... #2 change 8 delete on .* by .*@git-client \S* '03devren '
+... ... delete into //import/main/src/file2.txt#2
+... #1 change 6 add on .* by .*@git-client \S* '01devedit '
+... ... branch into //import/dev/src/file3.txt#1
+... ... branch from //import/main/src/file.txt#1
+... ... branch into //import/main/src/file2.txt#1
+//import/dev/src/file3.txt
+... #2 change 9 edit on .* by .*@git-client \S* '04devedit '
+... #1 change 8 add on .* by .*@git-client \S* '03devren '
+... ... branch from //import/dev/src/file2.txt#1
+... ... branch into //import/main/src/file3.txt#1,#2
+//import/main/src/file.txt
+... #2 change 7 delete on .* by .*@git-client \S* '02mainedit '
+... ... delete from //import/dev/src/file.txt#1
+... #1 change 5 add on .* by .*@git-client \S* 'initial '
+... ... delete into //import/dev/src/file.txt#1
+... ... branch into //import/dev/src/file2.txt#1
+//import/main/src/file2.txt
+... #2 change 10 delete on .* by .*@git-client \S* '05mainmrg '
+... ... delete from //import/dev/src/file2.txt#1,#2
+... #1 change 7 add on .* by .*@git-client \S* '02mainedit '
+... ... branch from //import/dev/src/file2.txt#1
+//import/main/src/file3.txt
+... #1 change 10 add on .* by .*@git-client \S* '05mainmrg '
+`,
+		result)
+
+	result, err = runCmd("p4 print -q //import/main/src/file3.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "contents04\n", result)
 }
 
 func TestDeleteDir(t *testing.T) {

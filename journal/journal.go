@@ -201,6 +201,15 @@ const (
 	DirtyMergeInto
 )
 
+// ReplaceWildcards - convert wildcards in pathnames to their ASCII expansion
+func ReplaceWildcards(filename string) string {
+	filename = strings.ReplaceAll(filename, "%", "%25") // Must do % first!
+	filename = strings.ReplaceAll(filename, "@", "%40")
+	filename = strings.ReplaceAll(filename, "#", "%23")
+	filename = strings.ReplaceAll(filename, "*", "%2A")
+	return filename
+}
+
 type Journal struct {
 	filename string
 	w        io.Writer
@@ -299,8 +308,8 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 	}
 	lbrType := fileType
 
-	depotFile = strings.ReplaceAll(depotFile, "@", "%40")
-	lbrFile = strings.ReplaceAll(lbrFile, "@", "%40")
+	depotFile = ReplaceWildcards(depotFile)
+	lbrFile = ReplaceWildcards(lbrFile)
 
 	// @pv@ 3 @db.rev@ @//import/trunk/src/file.txt@ 1 1 0 1 1363872228 1363872228 00000000000000000000000000000000 @//import/trunk/src/file.txt@ @1.1@ 1
 	_, err := fmt.Fprintf(j.w,
@@ -348,8 +357,8 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 func (j *Journal) WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
 	how IntegHow, reverseHow IntegHow, chgNo int) {
 
-	toFile = strings.ReplaceAll(toFile, "@", "%40")
-	fromFile = strings.ReplaceAll(fromFile, "@", "%40")
+	toFile = ReplaceWildcards(toFile)
+	fromFile = ReplaceWildcards(fromFile)
 
 	// @pv@ 0 @db.integed@ @//stream/dev/fred.txt@ @//stream/main/fred.txt@ 0 1 0 1 2 2
 	// @pv@ 0 @db.integed@ @//stream/main/fred.txt@ @//stream/dev/fred.txt@ 0 1 0 1 3 2
