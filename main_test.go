@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
@@ -243,12 +244,12 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opt
 
 	j := journal.Journal{}
 	j.SetWriter(buf)
-	j.WriteHeader(opts.config.ImportDepot)
+	j.WriteHeader(opts.config.ImportDepot, opts.caseInsensitive)
 
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.CreateArchiveFile(nil, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
+			f.CreateArchiveFile(nil, opts.caseInsensitive, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 			f.WriteJournal(&j, &c)
 		}
 	}
@@ -341,7 +342,7 @@ func TestAdd(t *testing.T) {
 	buf := new(bytes.Buffer)
 	j := journal.Journal{}
 	j.SetWriter(buf)
-	j.WriteHeader(opts.config.ImportDepot)
+	j.WriteHeader(opts.config.ImportDepot, opts.caseInsensitive)
 	c = commits[0]
 	j.WriteChange(c.commit.Mark, defaultP4user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
@@ -365,7 +366,7 @@ func TestAdd(t *testing.T) {
 
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
-	f.CreateArchiveFile(nil, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
+	f.CreateArchiveFile(nil, opts.caseInsensitive, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 	runCmd("p4 storage -r")
@@ -496,6 +497,109 @@ func TestMaxCommits(t *testing.T) {
 	assert.Equal(t, nil, err)
 	assert.NotRegexp(t, fmt.Sprintf(`Change 4 on .* by %s@git\-client`, user), result)
 	assert.Regexp(t, fmt.Sprintf(`Change 2 on .* by %s@git\-client`, user), result)
+}
+
+func TestCaseInsensitive(t *testing.T) { // Check case sensitive flag set
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	src := "SRC.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	r := runTransferOpts(t, logger, &GitParserOptions{
+		caseInsensitive: true,
+		config:          &config.Config{ImportDepot: "IMPORT", DefaultBranch: "main"},
+	})
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//IMPORT/main/SRC.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 print -q //IMPORT/main/SRC.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents1, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //IMPORT/main/SRC.txt")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType text\+C`, result)
+	assert.Regexp(t, `lbrType text\+C`, result)
+	assert.Regexp(t, `lbrPath .*/import/main/src.txt,d/1.2.gz`, result)
+
+	files, err := ioutil.ReadDir(r)
+	if err != nil {
+		log.Fatal(err)
+	}
+	foundUpper := false
+	foundLower := false
+	for _, f := range files {
+		if f.Name() == "IMPORT" {
+			foundUpper = true
+		} else if f.Name() == "import" {
+			foundLower = true
+		}
+	}
+	assert.False(t, foundUpper)
+	assert.True(t, foundLower)
+}
+
+func TestCaseSensitive(t *testing.T) { // Test when case sensitive is specified
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+	src := "SRC.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	r := runTransferOpts(t, logger, &GitParserOptions{
+		caseInsensitive: false,
+		config:          &config.Config{ImportDepot: "IMPORT", DefaultBranch: "main"},
+	})
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//IMPORT/main/SRC.txt#1 - add change 2 (text+C)\n", result)
+
+	result, err = runCmd("p4 print -q //IMPORT/main/SRC.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, srcContents1, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	files, err := ioutil.ReadDir(r)
+	if err != nil {
+		log.Fatal(err)
+	}
+	foundUpper := false
+	foundLower := false
+	for _, f := range files {
+		if f.Name() == "IMPORT" {
+			foundUpper = true
+		} else if f.Name() == "import" {
+			foundLower = true
+		}
+	}
+	assert.True(t, foundUpper)
+	assert.False(t, foundLower)
+
 }
 
 func TestAddSameFile(t *testing.T) {

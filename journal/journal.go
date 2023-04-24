@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 )
 
 // Example of journal records written for 2004.1
@@ -211,30 +212,39 @@ func ReplaceWildcards(filename string) string {
 }
 
 type Journal struct {
-	filename string
-	w        io.Writer
+	filename        string
+	w               io.Writer
+	caseInsensitive bool
 }
 
 var p4client = "git-client"
 var p4user = "git-user"
 var statusSubmitted = "1"
 
-func (j *Journal) CreateJournal() {
+func (j *Journal) CreateJournal(caseInsensitive bool) {
 
 	f, err := os.Create(j.filename)
 	if err != nil {
 		panic(err)
 	}
 	j.w = f
+	j.caseInsensitive = caseInsensitive
 }
 
 func (j *Journal) SetWriter(w io.Writer) {
 	j.w = w
 }
 
-func (j *Journal) WriteHeader(depot string) {
+func (j *Journal) WriteHeader(depot string, caseInsensitive bool) {
 
-	hdr := `@pv@ 0 @db.depot@ @%s@ 0 @subdir@ @%s/...@ 
+	hdr := ""
+	if caseInsensitive {
+		// If case insensitive then write the appropriate header
+		// Otherwise we leave this unset, and the user can choose by restoring jnl/ckp with p4d and appropriate flag/default value.
+		// Set server version = 18 - see https://www.perforce.com/perforce/doc.current/schema/index.html#releases
+		hdr = fmt.Sprintf("@nx@ 0 %d @18@ 2 0 0 0 0 @@ @@ @@ @@ @@\n", time.Now().Unix())
+	}
+	hdr = hdr + `@pv@ 0 @db.depot@ @%s@ 0 @subdir@ @%s/...@ 
 @pv@ 3 @db.domain@ @%s@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
 @pv@ 3 @db.user@ @git-user@ @git-user@@git-client@ @@ 0 0 @git-user@ @@ 0 @@ 0 
 @pv@ 0 @db.view@ @git-client@ 0 0 @//git-client/...@ @//import/...@ 
@@ -310,6 +320,9 @@ func (j *Journal) WriteRev(depotFile string, depotRev int, action FileAction, fi
 
 	depotFile = ReplaceWildcards(depotFile)
 	lbrFile = ReplaceWildcards(lbrFile)
+	if j.caseInsensitive {
+		lbrFile = strings.ToLower(lbrFile)
+	}
 
 	// @pv@ 3 @db.rev@ @//import/trunk/src/file.txt@ 1 1 0 1 1363872228 1363872228 00000000000000000000000000000000 @//import/trunk/src/file.txt@ @1.1@ 1
 	_, err := fmt.Fprintf(j.w,

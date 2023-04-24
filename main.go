@@ -75,14 +75,15 @@ func Humanize(b int) string {
 }
 
 type GitParserOptions struct {
-	config        *config.Config
-	gitImportFile string
-	archiveRoot   string
-	dryRun        bool
-	dummyArchives bool
-	graphFile     string
-	maxCommits    int
-	debugCommit   int // For debug breakpoint
+	config          *config.Config
+	gitImportFile   string
+	archiveRoot     string
+	dryRun          bool
+	dummyArchives   bool
+	caseInsensitive bool // If true then create case insensitive checkpoint for Linux and lowercase archive files
+	graphFile       string
+	maxCommits      int
+	debugCommit     int // For debug breakpoint
 }
 
 type GitAction int
@@ -596,13 +597,16 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 	return nil
 }
 
-func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, depotRoot string, matcher *BlobFileMatcher, changeNo int) {
+func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, caseInsensitive bool, depotRoot string, matcher *BlobFileMatcher, changeNo int) {
 	if gf.action == delete || (gf.action == rename && !gf.isDirtyRename && !gf.isPseudoRename && !gf.isDoubleRename) ||
 		gf.blob == nil || !gf.blob.hasData {
 		return
 	}
 	// Fix wildcards
 	depotFile := journal.ReplaceWildcards(gf.p4.depotFile[2:])
+	if caseInsensitive {
+		depotFile = strings.ToLower(depotFile)
+	}
 	rootDir := path.Join(depotRoot, fmt.Sprintf("%s,d", depotFile))
 	if gf.blob.blobFileName == "" {
 		gf.logger.Debugf(fmt.Sprintf("NoBlobFound: %s", depotFile))
@@ -1631,6 +1635,10 @@ func main() {
 			"default.branch",
 			"Name of default git branch (overrides config).",
 		).Default(config.DefaultBranch).Short('b').String()
+		caseInsensitive = kingpin.Flag(
+			"case.insensitive",
+			"Create checkpoint case-insensitive mode (for Linux) and lowercase archive files. If not set, then OS default applies.",
+		).Bool()
 		dummyArchives = kingpin.Flag(
 			"dummy",
 			"Create dummy (small) archive files - for quick analysis of large repos.",
@@ -1705,14 +1713,15 @@ func main() {
 	logger.Infof("Starting %s, gitimport: %v", startTime, *gitimport)
 
 	opts := &GitParserOptions{
-		config:        cfg,
-		gitImportFile: *gitimport,
-		archiveRoot:   *archive,
-		dryRun:        *dryrun,
-		dummyArchives: *dummyArchives,
-		maxCommits:    *maxCommits,
-		graphFile:     *outputGraph,
-		debugCommit:   *debugCommit,
+		config:          cfg,
+		gitImportFile:   *gitimport,
+		archiveRoot:     *archive,
+		dryRun:          *dryrun,
+		dummyArchives:   *dummyArchives,
+		caseInsensitive: *caseInsensitive,
+		maxCommits:      *maxCommits,
+		graphFile:       *outputGraph,
+		debugCommit:     *debugCommit,
 	}
 	logger.Infof("Options: %+v", opts)
 	g, err := NewGitP4Transfer(logger, opts)
@@ -1748,13 +1757,13 @@ func main() {
 	defer f.Close()
 
 	j.SetWriter(f)
-	j.WriteHeader(opts.config.ImportDepot)
+	j.WriteHeader(opts.config.ImportDepot, opts.caseInsensitive)
 
 	for c := range commitChan {
 		j.WriteChange(c.commit.Mark, c.user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
-				f.CreateArchiveFile(pool, opts.archiveRoot, g.blobFileMatcher, c.commit.Mark)
+				f.CreateArchiveFile(pool, opts.caseInsensitive, opts.archiveRoot, g.blobFileMatcher, c.commit.Mark)
 			} else if f.blob != nil && f.blob.hasData && !f.blob.dataRemoved {
 				f.blob.blob.Data = "" // Allow contents to be GC'ed
 				f.blob.dataRemoved = true
