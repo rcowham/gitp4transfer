@@ -71,7 +71,7 @@ while [[ $# -gt 0 ]]; do
         (-c) ConfigFile=$2; shiftArgs=1;;
         (-p) P4Root=$2; shiftArgs=1;;
         (-d) Debug=1;;
-        (-depot) ImportDepot=1;;
+        (-depot) ImportDepot=$2; shiftArgs=1;;
         (-dummy) Dummy=1;;
         (-insensitive) CaseInsensitive=1;;
         (-graph) GraphFile=$2; shiftArgs=1;;
@@ -89,6 +89,9 @@ while [[ $# -gt 0 ]]; do
     done
 done
 set -u
+
+which gitp4transfer
+[[ $? -eq 0 ]] || bail "Failed to find gitp4transfer in path"
 
 if [[ -z $P4Root ]]; then
     P4Root=$(mktemp -d 2>/dev/null || mktemp -d -t 'myP4Root')
@@ -126,8 +129,8 @@ if [[ ! -z $ConfigFile ]]; then
     ConfigArgs="--config=$ConfigFile"
 fi
 
-echo ./gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $CaseInsensitiveFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
-./gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+echo gitp4transfer --archive.root="$P4Root" $DebugFlag $DummyFlag $CaseInsensitiveFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
 if [[ $? -ne 0 ]]; then
     echo "Server is in directory:"
@@ -144,6 +147,8 @@ p4d $P4DCaseFlag -r . -J journal -xu
 p4 -p "$P4PORT" storage -r
 p4 -p "$P4PORT" storage -w
 p4 -p "$P4PORT" configure set monitor=1
+p4 -p "$P4PORT" configure set lbr.bufsize=1M
+p4 -p "$P4PORT" configure set filesys.bufsize=1M
 
 echo "P4PORT=$P4PORT" > .p4config
 export P4CONFIG=.p4config
