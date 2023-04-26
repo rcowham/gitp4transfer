@@ -2359,6 +2359,134 @@ M 100644 :4 src/file3.txt
 	assert.Equal(t, "contents04\n", result)
 }
 
+func TestDeleteOfRenamedDir(t *testing.T) {
+	// Same file is renamed and then edited and merged back
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 11
+contents01
+
+blob
+mark :2
+data 11
+contents02
+
+reset refs/heads/main
+commit refs/heads/main
+mark :3
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+M 100644 :2 src/file2.txt
+M 100644 :2 targ/file3.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :4
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+01devdele
+from :3
+R src targ
+D targ
+
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/targ/file3.txt#1 - delete change 4 (text+C)
+//import/main/src/file1.txt#1 - add change 3 (text+C)
+//import/main/src/file2.txt#1 - add change 3 (text+C)
+//import/main/targ/file3.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	reExpected := `//import/dev/targ/file3.txt
+... #1 change 4 delete on \S+ by \S+ \S+ '01devdele '
+//import/main/src/file1.txt
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+//import/main/src/file2.txt
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+//import/main/targ/file3.txt
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+`
+	assert.Regexp(t, reExpected, result)
+	compareFilelog(t, reExpected, result)
+}
+
+func TestModifyOfDeletedFile(t *testing.T) {
+	// Same file is both deleted and modified in same changelist
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 11
+contents01
+
+blob
+mark :2
+data 11
+contents02
+
+reset refs/heads/main
+commit refs/heads/main
+mark :3
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+
+commit refs/heads/main
+mark :4
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 9
+01moddel
+from :3
+D src/file1.txt
+M 100644 :2 src/file1.txt
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/src/file1.txt#2 - edit change 4 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	reExpected := `//import/main/src/file1.txt
+... #2 change 4 edit on \S+ by \S+ \S+ '01moddel '
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+`
+	assert.Regexp(t, reExpected, result)
+	compareFilelog(t, reExpected, result)
+}
+
 func TestDeleteDir(t *testing.T) {
 	// Git rename of a dir consisting of multiple files - expand to constituent parts
 	logger := createLogger()

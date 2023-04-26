@@ -239,6 +239,7 @@ type GitFile struct {
 	p4               *P4File
 	duplicateArchive bool
 	action           GitAction
+	actionInvalid    bool // Set to true if this is overriden by a later action in same commit
 	isBranch         bool
 	isMerge          bool
 	isDirtyRename    bool // Rename where content changed in same commit
@@ -333,20 +334,6 @@ func (gc *GitCommit) findGitFileRename(fromName string) *GitFile {
 		}
 	}
 	return nil
-}
-
-func (gc *GitCommit) removeGitFile(ID int) {
-	i := 0
-	var gf *GitFile
-	for i, gf = range gc.files {
-		if gf.ID == ID {
-			break
-		}
-	}
-	if gf.ID != ID {
-		return
-	}
-	gc.files = append(gc.files[:i], gc.files[i+1:]...)
 }
 
 func (gc *GitCommit) ref() string {
@@ -931,8 +918,10 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 	}
 	if gf.duplicateArchive {
 		g.blobFileMatcher.updateDuplicateGitFile(gf)
-		g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
-		g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
+		if !gf.isDirtyRename {
+			g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
+			g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
+		}
 	}
 	if gf.srcName == "" { // Simple modify or delete
 		g.recordDepotFileType(gf)
@@ -1188,6 +1177,7 @@ func (g *GitP4Transfer) createGraphEdges(cmt *GitCommit) {
 }
 
 // Validate that all collected GitFiles make sense - remove any that don't!
+// Note that we need to process things in order - later actions can override earlier ones
 func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 	if cmt == nil {
 		return
@@ -1212,6 +1202,9 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 	//    May ignore files, eg. delete of a file which doesn't exist (or an empty dir)
 	for i := range cmt.files {
 		gf := cmt.files[i]
+		if gf.actionInvalid {
+			continue
+		}
 		if gf.action == modify {
 			newfiles = append(newfiles, gf)
 		} else if gf.action == delete {
@@ -1219,6 +1212,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				newfiles = append(newfiles, gf)
 				continue
 			}
+			filesDeleted := 0
 			files := node.GetFiles(gf.name)
 			if len(files) > 0 {
 				g.logger.Debugf("DirDelete: Path:%s", gf.name)
@@ -1228,9 +1222,23 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 						continue
 					}
 					g.logger.Debugf("DirFileDelete: %s Path:%s", cmt.ref(), df)
+					filesDeleted += 1
 					newfiles = append(newfiles, newGitFile(&GitFile{name: df, action: delete, logger: g.logger}))
 				}
-			} else {
+			}
+			// Now we search to see if we are deleting the targets of any renames (previously) in current commit
+			deleteLogged := false
+			for _, dupGf := range newfiles {
+				if dupGf.action == rename && hasPrefix(dupGf.name, string(gf.name)) {
+					if !deleteLogged && len(files) == 0 {
+						g.logger.Debugf("DirDelete: Path:%s", gf.name)
+					}
+					g.logger.Debugf("DeleteOverridesRename: %s Src: %s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					dupGf.actionInvalid = true
+					filesDeleted += 1
+				}
+			}
+			if filesDeleted == 0 {
 				g.logger.Debugf("DeleteIgnored: %s Path:%s", cmt.ref(), gf.name)
 				g.blobFileMatcher.removeGitFile(gf)
 			}
@@ -1371,7 +1379,7 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 				valid = false
 			}
 		}
-		if valid {
+		if valid && !gf.actionInvalid {
 			newfiles = append(newfiles, gf)
 		}
 	}
@@ -1535,7 +1543,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 						// Having a modify with a delete doesn't make sense - we discard the delete!
 						g.logger.Warnf("ModifyOfDeletedFile: %s GitFile: ID %d, %s, blobID %d, filetype: %s",
 							currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
-						currCommit.removeGitFile(gf.ID)
+						dupGF.actionInvalid = true
 						g.blobFileMatcher.addGitFile(gf)
 						g.logger.Debugf("GitFile: ID %d, %s, blobID %d, filetype: %s", gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
 						currCommit.files = append(currCommit.files, gf)
