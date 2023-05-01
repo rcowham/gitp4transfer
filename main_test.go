@@ -19,6 +19,7 @@ import (
 	"github.com/rcowham/gitp4transfer/config"
 	"github.com/rcowham/gitp4transfer/journal"
 	node "github.com/rcowham/gitp4transfer/node"
+	libfastimport "github.com/rcowham/go-libgitfastimport"
 	"github.com/sirupsen/logrus"
 	"github.com/stretchr/testify/assert"
 )
@@ -292,6 +293,77 @@ func runTransferOpts(t *testing.T, logger *logrus.Logger, opts *GitParserOptions
 	}
 	return runTransferWithDump(t, logger, output, opts)
 }
+
+// ------------------------------------------------------------------
+// Set of tests for validation logic, detecting delets of renames etc
+
+type testFile struct {
+	name    string
+	srcName string
+	action  GitAction
+}
+
+func newCommit(g *GitP4Transfer, tf []testFile) *GitCommit {
+	gc := &GitCommit{commit: &libfastimport.CmdCommit{Mark: 10}, branch: "main", files: make([]*GitFile, 0)}
+	for _, f := range tf {
+		gc.files = append(gc.files, &GitFile{name: f.name, srcName: f.srcName, action: f.action})
+	}
+	g.ValidateCommit(gc)
+	return gc
+}
+
+func TestCommitValid1(t *testing.T) {
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Simple add
+	gc := &GitCommit{commit: &libfastimport.CmdCommit{Mark: 10}, branch: "main", files: make([]*GitFile, 0)}
+	gc.files = append(gc.files, &GitFile{name: "file.txt", action: modify})
+	g.ValidateCommit(gc)
+	assert.Equal(t, 1, len(gc.files))
+	files := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(files))
+	assert.Equal(t, "file.txt", files[0])
+
+	// Now delete the added file in new commit
+	gc = &GitCommit{commit: &libfastimport.CmdCommit{Mark: 10}, branch: "main", files: make([]*GitFile, 0)}
+	gc.files = append(gc.files, &GitFile{name: "file.txt", action: delete})
+	g.ValidateCommit(gc)
+	assert.Equal(t, 1, len(gc.files))
+	files = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 0, len(files))
+
+	// Add file and rename it
+	gc = newCommit(g, []testFile{{name: "file.txt", srcName: "", action: modify}})
+	assert.Equal(t, 1, len(gc.files))
+	files = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(files))
+	assert.Equal(t, "file.txt", files[0])
+
+	gc = newCommit(g, []testFile{{name: "file2.txt", srcName: "file.txt", action: rename}})
+	assert.Equal(t, 1, len(gc.files))
+	files = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(files))
+	assert.Equal(t, "file2.txt", files[0])
+
+	// Rename again - dirty this time
+	// gc = newCommit(g, []testFile{{name: "file3.txt", srcName: "file2.txt", action: rename},
+	// 	{name: "file3.txt", srcName: "", action: modify}})
+	// assert.Equal(t, 1, len(gc.files))
+	// assert.True(t, gc.files[0].isDirtyRename)
+	// files = g.filesOnBranch["main"].GetFiles("")
+	// assert.Equal(t, 1, len(files))
+	// assert.Equal(t, "file3.txt", files[0])
+
+}
+
+// ------------------------------------------------------------------
 
 func TestAdd(t *testing.T) {
 	logger := createLogger()
