@@ -240,6 +240,8 @@ type GitFile struct {
 	duplicateArchive bool
 	action           GitAction
 	actionInvalid    bool // Set to true if this is overriden by a later action in same commit
+	isDirAction      bool // Set to true for deletes/renames if they apply to a directory
+	deleteCount      int  // Count of deletes for potential dir deletes
 	isBranch         bool
 	isMerge          bool
 	isDirtyRename    bool // Rename where content changed in same commit
@@ -1403,7 +1405,46 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 	}
 }
 
-// Validate that all collected GitFiles make sense - remove any that don't!
+func findName(files []*GitFile, name string) *GitFile {
+	for _, gf := range files {
+		if gf.name == name || gf.srcName == name {
+			return gf
+		}
+	}
+	return nil
+}
+
+func findNames(files []*GitFile, name string) []*GitFile {
+	result := make([]*GitFile, 0)
+	for _, gf := range files {
+		if gf.name == name || gf.srcName == name {
+			result = append(result, gf)
+		}
+	}
+	return result
+}
+
+// Files which are a rename
+func findRenameSources(files []*GitFile, name string) []*GitFile {
+	result := make([]*GitFile, 0)
+	for _, gf := range files {
+		if gf.action == rename && gf.srcName == name {
+			result = append(result, gf)
+		}
+	}
+	return result
+}
+
+// func findSrcName(files []*GitFile, name string) *GitFile {
+// 	for _, gf := range files {
+// 		if gf.srcName == name {
+// 			return gf
+// 		}
+// 	}
+// 	return nil
+// }
+
+// Validate that all collected GitFiles in commit make sense - remove any that don't!
 // Note that we need to process things in order - later actions can override earlier ones
 func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 	if cmt == nil {
@@ -1425,50 +1466,37 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 	}
 	newfiles := make([]*GitFile, 0)
 	node := g.filesOnBranch[cmt.branch]
+	// Algorithm is multi-pass since some actions can be expanded and/or override earlier ones
 	// Phase 1 - expand deletes/renames/copies of directories to individual commands
-	//    May ignore files, eg. delete of a file which doesn't exist (or an empty dir)
+	// Note we keep the directory rename/delete as a later phase may find it applies to other actions earlier in same commit
 	for i := range cmt.files {
 		gf := cmt.files[i]
 		if gf.actionInvalid {
 			g.logger.Debugf("IgnoringInvalidAction: Path: %s %s", gf.name, gf.action)
 			continue
 		}
-		if gf.action == modify {
+		if gf.action == modify { // Assume modifies are OK for now - more detailed processing in Phase 2
 			newfiles = append(newfiles, gf)
+			continue
 		} else if gf.action == delete {
 			if node.FindFile(gf.name) { // Single file found
 				newfiles = append(newfiles, gf)
 				continue
 			}
-			filesDeleted := 0
 			files := node.GetFiles(gf.name)
 			if len(files) > 0 {
 				g.logger.Debugf("DirDelete: Path:%s", gf.name)
+				gf.isDirAction = true
+				newfiles = append(newfiles, gf)
 				for _, df := range files {
 					if !hasPrefix(df, gf.name) {
-						g.logger.Errorf("Unexpected path found: %s: %s", gf.name, df)
+						g.logger.Errorf("Unexpected DirFileDelete path found: %s: %s", gf.name, df)
 						continue
 					}
 					g.logger.Debugf("DirFileDelete: %s Path:%s", cmt.ref(), df)
-					filesDeleted += 1
-					newfiles = append(newfiles, newGitFile(&GitFile{name: df, action: delete, logger: g.logger}))
+					gf.deleteCount += 1
+					newfiles = append(newfiles, newGitFile(&GitFile{name: df, action: delete, deleteCount: 1, logger: g.logger}))
 				}
-			}
-			// Now we search to see if we are deleting the targets of any renames (previously) in current commit
-			deleteLogged := false
-			for _, dupGf := range newfiles {
-				if dupGf.action == rename && hasPrefix(dupGf.name, string(gf.name)) {
-					if !deleteLogged && len(files) == 0 {
-						g.logger.Debugf("DirDelete: Path:%s", gf.name)
-					}
-					g.logger.Debugf("DeleteOverridesRename: %s Src: %s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-					dupGf.actionInvalid = true
-					filesDeleted += 1
-				}
-			}
-			if filesDeleted == 0 {
-				g.logger.Debugf("DeleteIgnored: %s Path:%s", cmt.ref(), gf.name)
-				g.blobFileMatcher.removeGitFile(gf)
 			}
 		} else if gf.action == rename {
 			if node.FindFile(gf.srcName) { // Single file rename
@@ -1478,56 +1506,16 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			files := node.GetFiles(gf.srcName)
 			if len(files) > 0 { // Turn dir rename into multiple single file renames
 				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
-				// First we look for files in current commit - because a single file rename can be followed by a dir rename which overrides it
-				// src/A -> src/B followed by src -> targ, means turn it into src/A -> targ/B
-				srcDoubles := make([]string, 0)
-				for _, dupGf := range newfiles {
-					if dupGf.action == rename && hasPrefix(dupGf.name, string(gf.srcName)) {
-						dest := fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.srcName):])
-						dupGf.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
-						g.logger.Debugf("RenameOverride: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-						srcDoubles = append(srcDoubles, dupGf.srcName)
-					}
-				}
+				gf.isDirAction = true
+				newfiles = append(newfiles, gf)
 				for _, rf := range files {
 					if !hasPrefix(rf, string(gf.srcName)) {
 						g.logger.Errorf("Unexpected src found: %s: %s", string(gf.srcName), rf)
 						continue
 					}
 					dest := fmt.Sprintf("%s%s", gf.name, rf[len(gf.srcName):])
-					foundDouble := false
-					for _, double := range srcDoubles {
-						if double == rf {
-							foundDouble = true
-							break
-						}
-					}
-					if foundDouble {
-						g.logger.Debugf("DirFileRenameIgnoredAsDouble: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
-					} else {
-						g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
-						newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
-					}
-				}
-			} else {
-				// Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
-				doubleRename := false
-				var dupGf *GitFile
-				for _, dupGf = range newfiles {
-					if dupGf.name == gf.srcName {
-						if dupGf.srcName == dupGf.name {
-							g.logger.Debugf("DoubleRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-						} else {
-							doubleRename = true
-							dupGf.name = gf.name // Don't append gf to newfiles because we adjust dupGF to be the correct rename
-							g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
-						}
-						break
-					}
-				}
-				if !doubleRename {
-					g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
-					g.blobFileMatcher.removeGitFile(gf)
+					g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger}))
 				}
 			}
 		} else if gf.action == copy {
@@ -1538,6 +1526,8 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			files := node.GetFiles(gf.name)
 			if len(files) > 0 {
 				g.logger.Debugf("DirCopy: Src:%s Dst:%s", gf.srcName, gf.name)
+				gf.isDirAction = true
+				newfiles = append(newfiles, gf)
 				for _, rf := range files {
 					if !hasPrefix(rf, string(gf.srcName)) {
 						g.logger.Errorf("Unexpected src found: %s: %s", string(gf.srcName), rf)
@@ -1547,56 +1537,173 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 					g.logger.Debugf("DirFileCopy: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
 					newfiles = append(newfiles, newGitFile(&GitFile{name: dest, srcName: rf, action: copy, logger: g.logger}))
 				}
-			} else {
-				g.logger.Debugf("CopyIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
 			}
 		} else {
 			g.logger.Errorf("Unexpected GFAction: GitFile: %s ID %d, %s, %s", cmt.ref(), gf.ID, gf.name, gf.action.String())
 		}
 	}
 	// Phase 2 - remove actions which do not make sense, e.g. delete of a renamed file or rename/copy of a deleted file
+	// Also we may find things like a directory rename of an earlier individual rename
 	cmt.files = newfiles
 	newfiles = make([]*GitFile, 0)
 	for i := range cmt.files {
 		valid := true
 		gf := cmt.files[i]
 		if gf.action == modify {
+			// Search for renames or deletes of same file in current commit and note if found.
+			dupGf := findName(newfiles, gf.name)
+			if dupGf != nil {
+				if dupGf.action == rename {
+					dupGf.isDirtyRename = true
+					dupGf.blob = gf.blob
+					dupGf.compressed = gf.compressed
+					dupGf.duplicateArchive = gf.duplicateArchive
+					dupGf.fileType = gf.fileType
+					g.blobFileMatcher.addGitFile(dupGf)
+					g.logger.Debugf("DirtyRenameFound: %s %s, GitFile: ID %d, %s",
+						cmt.ref(), dupGf.name, dupGf.ID, dupGf.name)
+					gf.actionInvalid = true
+				} else if dupGf.action == delete {
+					// Having a modify with a delete doesn't make sense - we discard the delete!
+					g.logger.Warnf("ModifyOfDeletedFile: %s GitFile: ID %d, %s",
+						cmt.ref(), gf.ID, gf.name)
+					dupGf.actionInvalid = true
+					g.blobFileMatcher.addGitFile(gf)
+					g.logger.Debugf("GitFile: ID %d, %s", gf.ID, gf.name)
+				}
+			} else {
+				// g.blobFileMatcher.addGitFile(gf)
+				// g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
+				// 	cmt.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+			}
 			valid = true
 		} else if gf.action == delete {
-			dupGF := cmt.findGitFileRename(string(gf.name))
-			if dupGF != nil && dupGF.action == rename {
-				g.logger.Warnf("DeleteOfRenamedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
-				valid = false
+			processed := false
+			dups := findNames(newfiles, gf.name) // Search for exact matches
+			if len(dups) > 0 {
+				for _, dupGf := range dups {
+					if dupGf.action == modify {
+						g.logger.Debugf("DeleteOverridesModify: GitFile: %s ID %d, %s", cmt.ref(), dupGf.ID, gf.name)
+						dupGf.actionInvalid = true
+						processed = true
+					} else if dupGf.action == rename {
+						g.logger.Debugf("DeleteOverridesRename: GitFile: %s ID %d, %s Src:%s", cmt.ref(), dupGf.ID, gf.name, dupGf.srcName)
+						dupGf.actionInvalid = true
+						processed = true
+					} else if dupGf.action == delete {
+						g.logger.Debugf("DeleteOfDelete: GitFile: %s ID %d, %s", cmt.ref(), dupGf.ID, gf.name)
+						dupGf.actionInvalid = true
+						processed = true
+					}
+				}
 			}
-			if !g.filesOnBranch[cmt.branch].FindFile(gf.name) {
-				g.logger.Warnf("DeleteOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
+			dups = findRenameSources(newfiles, gf.name)
+			if len(dups) > 0 {
+				for _, dupGF := range dups {
+					g.logger.Debugf("DeleteOfRenamedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
+					dupGF.actionInvalid = true
+					processed = true
+				}
+			}
+			if !gf.isDirAction && !g.filesOnBranch[cmt.branch].FindFile(gf.name) {
+				g.logger.Warnf("DeleteOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
 				valid = false
+				processed = true
+			}
+			if processed {
+				if valid && !gf.actionInvalid {
+					newfiles = append(newfiles, gf)
+				}
+				continue
+			}
+			// Now we search to see if we are directory deleting the targets of any renames (previously) in current commit
+			deleteLogged := false
+			filesDeleted := 0
+			for _, dupGf := range newfiles {
+				if dupGf.action == rename && hasPrefix(dupGf.name, string(gf.name)) {
+					if !deleteLogged && !gf.isDirAction {
+						g.logger.Debugf("DirDelete: Path:%s", gf.name)
+					}
+					g.logger.Debugf("DeleteOverridesRename: %s Src: %s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					dupGf.actionInvalid = true
+					// TODO - what if pseudoRename?
+					filesDeleted += 1
+				}
+			}
+			if filesDeleted == 0 && gf.deleteCount == 0 {
+				g.logger.Debugf("DeleteIgnored: %s Path:%s", cmt.ref(), gf.name)
+				g.blobFileMatcher.removeGitFile(gf)
 			}
 		} else if gf.action == rename {
-			// Search for all possible duplicates - there may be more than one!
-			for _, dupGF := range cmt.files {
-				if dupGF.name == gf.srcName && dupGF.ID != gf.ID {
+			// Search for individual matching files
+			processed := false
+			for _, dupGf := range newfiles {
+				if !dupGf.actionInvalid {
+					continue
+				}
+				if dupGf.name == gf.srcName {
+					// Renaming another file in commit
 					if !g.filesOnBranch[cmt.branch].FindFile(gf.srcName) {
-						g.logger.Warnf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGF.ID, gf.name)
+						g.logger.Debugf("RenameOfDeletedFile ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGf.ID, gf.name)
+						gf.actionInvalid = true
 						valid = false
-						break
-					} else if dupGF.action == modify {
+						processed = true
+					} else if dupGf.action == modify {
 						// Look for case where there is a modify for the source of a file being renamed:
 						//   - if so mark this rename as a pseudo one - so that delete of source won't happen
 						valid = true
 						gf.isPseudoRename = true
-						g.logger.Warnf("PseudoRename - RenameOfModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
-					} else if dupGF.action == rename {
-						g.logger.Warnf("DoubleRename: GitFile: %s ID %d, ID2 %d, %s", cmt.ref(), gf.ID, dupGF.ID, gf.name)
+						g.logger.Debugf("PseudoRename - RenameOfModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+						processed = true
+					} else if dupGf.action == rename {
+						if dupGf.srcName == gf.srcName && dupGf.action == rename {
+							dupGf.isDoubleRename = true
+							dupGf.name = gf.name // Don't append gf to newfiles because we adjust dupGF to be the correct rename
+							g.logger.Debugf("DoubleRename: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+							gf.actionInvalid = true
+							processed = true
+						}
+						g.logger.Debugf("DoubleRename: GitFile: %s ID %d, ID2 %d, %s", cmt.ref(), gf.ID, dupGf.ID, gf.name)
 					}
 				}
-				if dupGF.srcName == gf.srcName && dupGF.ID != gf.ID && dupGF.action == rename && !dupGF.isDoubleRename {
-					gf.isDoubleRename = true
-					g.logger.Warnf("DoubleRename2: GitFile: %s ID %d, ID2 %d, %s", cmt.ref(), gf.ID, dupGF.ID, gf.name)
+			}
+			if processed {
+				if valid && !gf.actionInvalid {
+					newfiles = append(newfiles, gf)
+				}
+				continue
+			}
+			// Now we are looking to process dir renames
+			// First we look for files in current commit - because a single file rename can be followed by a dir rename which overrides it
+			// src/A -> src/B followed by src -> targ, means turn it into src/A -> targ/B
+			for _, dupGf := range newfiles {
+				if hasPrefix(dupGf.name, string(gf.srcName)) {
+					gf.isDirAction = true
+				} else {
+					continue
+				}
+				if dupGf.isDirAction {
+					continue
+				}
+				if dupGf.action == rename {
+					dest := fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.srcName):])
+					dupGf.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
+					g.logger.Debugf("RenameOverride: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+				} else if dupGf.action == delete {
+					g.logger.Debugf("RenameOfDeletedFile ignored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					dupGf.actionInvalid = true
+				} else if dupGf.action == modify {
+					g.logger.Debugf("RenameOfModifiedFile ignored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					dupGf.actionInvalid = true
 				}
 			}
-			// Look for double rename - a->b and b->c
+			// TODO Handle the rare case where a directory rename is followed by individual file renames (so a double rename!)
+			// if !doubleRename {
+			// 	g.logger.Debugf("RenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+			// 	g.blobFileMatcher.removeGitFile(gf)
+			// }
 		} else if gf.action == copy {
+			// TODO - similar to rename processing - but rarely encountered
 			dupGF := cmt.findGitFile(string(gf.srcName))
 			if dupGF != nil && dupGF.action == delete {
 				g.logger.Warnf("CopyOfDeletedFile ignored: GitFile: %s ID %d, %s -> %s", cmt.ref(), dupGF.ID, gf.srcName, gf.name)
@@ -1607,12 +1714,17 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 				valid = false
 			}
 		}
-		if valid && !gf.actionInvalid {
+		if valid && !gf.actionInvalid && !gf.isDirAction {
 			newfiles = append(newfiles, gf)
 		}
 	}
 	// Phase 3 - update our list of files for validation of future commits
-	cmt.files = newfiles
+	cmt.files = make([]*GitFile, 0)
+	for _, gf := range newfiles {
+		if !gf.actionInvalid {
+			cmt.files = append(cmt.files, gf)
+		}
+	}
 	for i := range cmt.files {
 		gf := cmt.files[i]
 		if gf.action == modify || gf.action == copy {
@@ -1621,7 +1733,9 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			node.DeleteFile(gf.name)
 		} else if gf.action == rename {
 			node.AddFile(gf.name)
-			node.DeleteFile(gf.srcName)
+			if !gf.isPseudoRename {
+				node.DeleteFile(gf.srcName)
+			}
 		}
 	}
 }
