@@ -312,7 +312,7 @@ func newValidatedCommit(g *GitP4Transfer, tf []testFile) *GitCommit {
 	return gc
 }
 
-func TestCommitValid1(t *testing.T) {
+func TestCommitValidAddDelete(t *testing.T) {
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
 
@@ -334,11 +334,22 @@ func TestCommitValid1(t *testing.T) {
 	assert.Equal(t, 1, len(gc.files))
 	nfiles = g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 0, len(nfiles))
+}
+
+func TestCommitValidAddRename(t *testing.T) {
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
 
 	// Add file and rename it
-	gc = newValidatedCommit(g, []testFile{{name: "file.txt", srcName: "", action: modify}})
+	gc := newValidatedCommit(g, []testFile{{name: "file.txt", srcName: "", action: modify}})
 	assert.Equal(t, 1, len(gc.files))
-	nfiles = g.filesOnBranch["main"].GetFiles("")
+	nfiles := g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 1, len(nfiles))
 	assert.Equal(t, "file.txt", nfiles[0])
 
@@ -356,18 +367,23 @@ func TestCommitValid1(t *testing.T) {
 	nfiles = g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 1, len(nfiles))
 	assert.Equal(t, "file3.txt", nfiles[0])
+}
 
-	// Directory rename - reset
-	g, err = NewGitP4Transfer(logger, opts)
+func TestCommitValidDirRename(t *testing.T) {
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
 	if err != nil {
 		logger.Fatalf("Failed to create GitP4Transfer")
 	}
 
 	// Add dir
-	gc = newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
 		{name: "src/file2.txt", srcName: "", action: modify}})
 	assert.Equal(t, 2, len(gc.files))
-	nfiles = g.filesOnBranch["main"].GetFiles("")
+	nfiles := g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 2, len(nfiles))
 	assert.Equal(t, "src/file1.txt", nfiles[0])
 	assert.Equal(t, "src/file2.txt", nfiles[1])
@@ -380,11 +396,25 @@ func TestCommitValid1(t *testing.T) {
 	assert.Equal(t, "targ/file1.txt", nfiles[0])
 	assert.Equal(t, "targ/file2.txt", nfiles[1])
 
+	// Rename dir again - should be ignored
+	gc = newValidatedCommit(g, []testFile{{name: "targ", srcName: "src", action: rename}})
+	assert.Equal(t, 0, len(gc.files))
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "targ/file1.txt", nfiles[0])
+	assert.Equal(t, "targ/file2.txt", nfiles[1])
+
 	// Delete dir
 	gc = newValidatedCommit(g, []testFile{{name: "targ", srcName: "", action: delete}})
 	assert.Equal(t, 2, len(gc.files))
 	assert.Equal(t, "targ/file1.txt", gc.files[0].name)
 	assert.Equal(t, "targ/file2.txt", gc.files[1].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 0, len(nfiles))
+
+	// Delete dir again - should be ignored
+	gc = newValidatedCommit(g, []testFile{{name: "targ", srcName: "", action: delete}})
+	assert.Equal(t, 0, len(gc.files))
 	nfiles = g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 0, len(nfiles))
 }
@@ -461,12 +491,12 @@ func TestCommitValidDoubleRename(t *testing.T) {
 	gc = newValidatedCommit(g, []testFile{{name: "targ", srcName: "src", action: rename},
 		{name: "targ/file3.txt", srcName: "targ/file1.txt", action: rename}})
 	assert.Equal(t, 2, len(gc.files))
-	assert.Equal(t, "targ/file2.txt", gc.files[1].name)
-	assert.Equal(t, "targ/file3.txt", gc.files[0].name)
+	assert.Equal(t, "targ/file2.txt", gc.files[0].name)
+	assert.Equal(t, "targ/file3.txt", gc.files[1].name)
 	nfiles = g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 2, len(nfiles))
-	assert.Equal(t, "targ/file3.txt", nfiles[0])
-	assert.Equal(t, "targ/file2.txt", nfiles[1])
+	assert.Equal(t, "targ/file2.txt", nfiles[0])
+	assert.Equal(t, "targ/file3.txt", nfiles[1])
 }
 
 func TestCommitValidDoubleRename2(t *testing.T) {
