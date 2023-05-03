@@ -435,44 +435,70 @@ func TestCommitValid2(t *testing.T) {
 	assert.Equal(t, delete, gc.files[0].action)
 	nfiles = g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 0, len(nfiles))
+}
 
-	// // Rename again - dirty this time
-	// gc = newValidatedCommit(g, []testFile{{name: "file3.txt", srcName: "file2.txt", action: rename},
-	// 	{name: "file3.txt", srcName: "", action: modify}})
-	// assert.Equal(t, 1, len(gc.files))
-	// assert.True(t, gc.files[0].isDirtyRename)
-	// files = g.filesOnBranch["main"].GetFiles("")
-	// assert.Equal(t, 1, len(files))
-	// assert.Equal(t, "file3.txt", files[0])
+func TestCommitValidDoubleRename(t *testing.T) {
+	// More complex scenarios
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
 
-	// // Directory rename - reset
-	// g, err = NewGitP4Transfer(logger, opts)
-	// if err != nil {
-	// 	logger.Fatalf("Failed to create GitP4Transfer")
-	// }
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
 
-	// // Add dir
-	// gc = newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
-	// 	{name: "src/file2.txt", srcName: "", action: modify}})
-	// assert.Equal(t, 2, len(gc.files))
-	// files = g.filesOnBranch["main"].GetFiles("")
-	// assert.Equal(t, 2, len(files))
-	// assert.Equal(t, "src/file1.txt", files[0])
-	// assert.Equal(t, "src/file2.txt", files[1])
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file2.txt", srcName: "", action: modify}})
+	assert.Equal(t, 2, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
 
-	// // Rename dir
-	// gc = newValidatedCommit(g, []testFile{{name: "targ", srcName: "src", action: rename}})
-	// assert.Equal(t, 2, len(gc.files))
-	// files = g.filesOnBranch["main"].GetFiles("")
-	// assert.Equal(t, 2, len(files))
-	// assert.Equal(t, "targ/file1.txt", files[0])
-	// assert.Equal(t, "targ/file2.txt", files[1])
+	// Rename directory and then override rename of one file
+	gc = newValidatedCommit(g, []testFile{{name: "targ", srcName: "src", action: rename},
+		{name: "targ/file3.txt", srcName: "targ/file1.txt", action: rename}})
+	assert.Equal(t, 2, len(gc.files))
+	assert.Equal(t, "targ/file2.txt", gc.files[1].name)
+	assert.Equal(t, "targ/file3.txt", gc.files[0].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "targ/file3.txt", nfiles[0])
+	assert.Equal(t, "targ/file2.txt", nfiles[1])
+}
 
-	// // Delete dir
-	// gc = newValidatedCommit(g, []testFile{{name: "targ", srcName: "", action: delete}})
-	// assert.Equal(t, 2, len(gc.files))
-	// files = g.filesOnBranch["main"].GetFiles("")
-	// assert.Equal(t, 0, len(files))
+func TestCommitValidDoubleRename2(t *testing.T) {
+	// Rename a file and override with directory rename
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file2.txt", srcName: "", action: modify}})
+	assert.Equal(t, 2, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
+
+	// Rename directory and then override rename of one file
+	gc = newValidatedCommit(g, []testFile{{name: "src/file3.txt", srcName: "src/file1.txt", action: rename},
+		{name: "targ", srcName: "src", action: rename}})
+	assert.Equal(t, 2, len(gc.files))
+	assert.Equal(t, "targ/file2.txt", gc.files[1].name)
+	assert.Equal(t, "targ/file3.txt", gc.files[0].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "targ/file3.txt", nfiles[0])
+	assert.Equal(t, "targ/file2.txt", nfiles[1])
 }
 
 // ------------------------------------------------------------------
