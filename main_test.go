@@ -419,7 +419,7 @@ func TestCommitValidDirRename(t *testing.T) {
 	assert.Equal(t, 0, len(nfiles))
 }
 
-func TestCommitValid2(t *testing.T) {
+func TestCommitValidPseudoRename(t *testing.T) {
 	// More complex scenarios
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
@@ -440,12 +440,14 @@ func TestCommitValid2(t *testing.T) {
 	// Pseudo rename we modify the supposedly deleted file
 	gc = newValidatedCommit(g, []testFile{{name: "file2.txt", srcName: "file1.txt", action: rename},
 		{name: "file1.txt", srcName: "", action: modify}})
-	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, 2, len(gc.files))
 	assert.Equal(t, "file2.txt", gc.files[0].name)
-	assert.True(t, gc.files[0].isDirtyRename)
+	assert.Equal(t, "file1.txt", gc.files[1].name)
+	assert.True(t, gc.files[0].isPseudoRename)
 	nfiles = g.filesOnBranch["main"].GetFiles("")
-	assert.Equal(t, 1, len(nfiles))
-	assert.Equal(t, "file2.txt", nfiles[0])
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "file1.txt", nfiles[0])
+	assert.Equal(t, "file2.txt", nfiles[1])
 
 	// Modification of a deleted file
 	gc = newValidatedCommit(g, []testFile{{name: "file2.txt", srcName: "", action: delete},
@@ -454,8 +456,9 @@ func TestCommitValid2(t *testing.T) {
 	assert.Equal(t, "file2.txt", gc.files[0].name)
 	assert.Equal(t, modify, gc.files[0].action)
 	nfiles = g.filesOnBranch["main"].GetFiles("")
-	assert.Equal(t, 1, len(nfiles))
-	assert.Equal(t, "file2.txt", nfiles[0])
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "file1.txt", nfiles[0])
+	assert.Equal(t, "file2.txt", nfiles[1])
 
 	// Delete of a modified file
 	gc = newValidatedCommit(g, []testFile{{name: "file2.txt", srcName: "", action: modify},
@@ -464,7 +467,8 @@ func TestCommitValid2(t *testing.T) {
 	assert.Equal(t, "file2.txt", gc.files[0].name)
 	assert.Equal(t, delete, gc.files[0].action)
 	nfiles = g.filesOnBranch["main"].GetFiles("")
-	assert.Equal(t, 0, len(nfiles))
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "file1.txt", nfiles[0])
 }
 
 func TestCommitValidDoubleRename(t *testing.T) {
@@ -529,6 +533,76 @@ func TestCommitValidDoubleRename2(t *testing.T) {
 	assert.Equal(t, 2, len(nfiles))
 	assert.Equal(t, "targ/file3.txt", nfiles[0])
 	assert.Equal(t, "targ/file2.txt", nfiles[1])
+}
+
+func TestCommitValidDoubleRenameAndDelete(t *testing.T) {
+	// Rename a file and override with directory rename
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file2.txt", srcName: "", action: modify}})
+	assert.Equal(t, 2, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
+
+	// Rename file then whole directory and then delete soruce dir
+	gc = newValidatedCommit(g, []testFile{{name: "src/file3.txt", srcName: "src/file1.txt", action: rename},
+		{name: "targ", srcName: "src", action: rename},
+		{name: "src", srcName: "", action: delete},
+	})
+	assert.Equal(t, 2, len(gc.files))
+	assert.Equal(t, "targ/file3.txt", gc.files[0].name)
+	assert.Equal(t, "targ/file2.txt", gc.files[1].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "targ/file3.txt", nfiles[0])
+	assert.Equal(t, "targ/file2.txt", nfiles[1])
+}
+
+func TestCommitValidDeleteRenamedDir(t *testing.T) {
+	// Rename a dir and override with directory delete of target
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file2.txt", srcName: "", action: modify},
+		{name: "targ/file3.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 3, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 3, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
+	assert.Equal(t, "targ/file3.txt", nfiles[2])
+
+	// Rename dir then delete target - result is no files!
+	gc = newValidatedCommit(g, []testFile{
+		{name: "targ", srcName: "src", action: rename},
+		{name: "targ", srcName: "", action: delete},
+	})
+	assert.Equal(t, 3, len(gc.files))
+	assert.Equal(t, "src/file1.txt", gc.files[0].name)
+	assert.Equal(t, "src/file2.txt", gc.files[1].name)
+	assert.Equal(t, "targ/file3.txt", gc.files[2].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 0, len(nfiles))
 }
 
 // ------------------------------------------------------------------
@@ -2600,7 +2674,7 @@ M 100644 :4 src/file3.txt
 }
 
 func TestDeleteOfRenamedDir(t *testing.T) {
-	// Same file is renamed and then edited and merged back
+	// Dir renamed and target deleted
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
 
@@ -2647,7 +2721,9 @@ D targ
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/dev/targ/file3.txt#1 - delete change 4 (text+C)
+	assert.Equal(t, `//import/dev/src/file1.txt#1 - delete change 4 (text+C)
+//import/dev/src/file2.txt#1 - delete change 4 (text+C)
+//import/dev/targ/file3.txt#1 - delete change 4 (text+C)
 //import/main/src/file1.txt#1 - add change 3 (text+C)
 //import/main/src/file2.txt#1 - add change 3 (text+C)
 //import/main/targ/file3.txt#1 - add change 3 (text+C)
@@ -2656,7 +2732,11 @@ D targ
 
 	result, err = runCmd("p4 filelog //...")
 	assert.Equal(t, nil, err)
-	reExpected := `//import/dev/targ/file3.txt
+	reExpected := `//import/dev/src/file1.txt
+... #1 change 4 delete on \S+ by \S+ \S+ '01devdele '
+//import/dev/src/file2.txt
+... #1 change 4 delete on \S+ by \S+ \S+ '01devdele '
+//import/dev/targ/file3.txt
 ... #1 change 4 delete on \S+ by \S+ \S+ '01devdele '
 //import/main/src/file1.txt
 ... #1 change 3 add on \S+ by \S+ \S+ 'initial '
