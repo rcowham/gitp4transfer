@@ -1738,7 +1738,20 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			if len(dups) > 0 {
 				for _, dupGf := range dups {
 					if dupGf.action == rename {
-						if dupGf.name == gf.name && !dupGf.isDirtyRename {
+						if dupGf.name == gf.name && dupGf.isPseudoRename {
+							// A dirty rename on top of a pseudo rename - so nullify rename!
+							dupGf.isPseudoRename = false
+							dupGf.action = modify
+							dupGf.blob = gf.blob
+							dupGf.compressed = gf.compressed
+							dupGf.duplicateArchive = gf.duplicateArchive
+							dupGf.fileType = gf.fileType
+							gf.actionInvalid = true
+							g.blobFileMatcher.addGitFile(dupGf)
+							g.logger.Debugf("RenameDemotedToModify1: %s %s, GitFile: ID %d, %s",
+								cmt.ref(), dupGf.name, dupGf.ID, dupGf.name)
+							gf.actionInvalid = true
+						} else if dupGf.name == gf.name && !dupGf.isDirtyRename {
 							dupGf.isDirtyRename = true
 							dupGf.blob = gf.blob
 							dupGf.compressed = gf.compressed
@@ -1751,9 +1764,19 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 						} else if dupGf.srcName == gf.name {
 							// Look for case where there is a modify for the source of a file being renamed:
 							//   - if so mark rename as a pseudo one - so that delete of source won't happen
-							valid = true
-							dupGf.isPseudoRename = true
-							g.logger.Warnf("PseudoRename - RenameOfModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+							//   - if a pseudo rename on top of a dirty rename - nullify rename!
+							if dupGf.isDirtyRename {
+								dupGf.actionInvalid = false
+								dupGf.isDirtyRename = false
+								dupGf.action = modify
+								g.blobFileMatcher.addGitFile(dupGf)
+								g.logger.Debugf("RenameDemotedToModify2: %s %s, GitFile: ID %d, %s",
+									cmt.ref(), dupGf.name, dupGf.ID, dupGf.name)
+							} else {
+								valid = true
+								dupGf.isPseudoRename = true
+								g.logger.Warnf("PseudoRename - RenameOfModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+							}
 						}
 					} else if dupGf.action == delete && !dupGf.actionInvalid {
 						// Having a modify with a delete doesn't make sense - we discard the delete!
