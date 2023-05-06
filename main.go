@@ -1292,7 +1292,7 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 					g.logger.Warnf("DoubleRenameTargetIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
 				} else { // dupGf.srcName
 					dupGf.isPseudoRename = true
-					g.logger.Warnf("DoubleRenameToSrc - pseudoRename set: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					g.logger.Warnf("CascadeRename: %s Src:%s Med:%s Dst:%s", cmt.ref(), gf.srcName, dupGf.srcName, dupGf.name)
 				}
 			}
 		}
