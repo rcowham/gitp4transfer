@@ -181,6 +181,16 @@ func (m *BlobFileMatcher) addGitFile(gf *GitFile) {
 	} else {
 		m.logger.Errorf("Found duplicate gitfile: %d", gf.ID)
 	}
+	found := false
+	for _, id := range gf.blob.gitFileIDs {
+		if id == gf.ID {
+			found = true
+			break
+		}
+	}
+	if found {
+		return
+	}
 	gf.blob.gitFileIDs = append(gf.blob.gitFileIDs, gf.ID) // Multiple gitFiles can reference same blob
 	if len(gf.blob.gitFileIDs) > 1 {
 		gf.duplicateArchive = true
@@ -1532,6 +1542,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 							dupGf.duplicateArchive = gf.duplicateArchive
 							dupGf.fileType = gf.fileType
 							gf.actionInvalid = true
+							g.blobFileMatcher.removeGitFile(gf)
 							g.blobFileMatcher.addGitFile(dupGf)
 							g.logger.Debugf("RenameDemotedToModify1: %s %s, GitFile: ID %d, %s",
 								cmt.ref(), dupGf.name, dupGf.ID, dupGf.name)
@@ -1542,6 +1553,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 							dupGf.compressed = gf.compressed
 							dupGf.duplicateArchive = gf.duplicateArchive
 							dupGf.fileType = gf.fileType
+							g.blobFileMatcher.removeGitFile(gf)
 							g.blobFileMatcher.addGitFile(dupGf)
 							g.logger.Debugf("DirtyRenameFound: %s %s, GitFile: ID %d, %s",
 								cmt.ref(), dupGf.name, dupGf.ID, dupGf.name)
@@ -1555,7 +1567,8 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 								dupGf.isDirtyRename = false
 								dupGf.srcName = ""
 								dupGf.action = modify
-								g.blobFileMatcher.addGitFile(dupGf)
+								g.blobFileMatcher.removeGitFile(gf)
+								// g.blobFileMatcher.addGitFile(dupGf) // Don't need to add as will have been added by dirtyRename
 								g.logger.Debugf("RenameDemotedToModify2: %s %s, GitFile: ID %d, %s",
 									cmt.ref(), dupGf.name, dupGf.ID, dupGf.name)
 							} else {
@@ -1569,20 +1582,8 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 						g.logger.Warnf("ModifyOfDeletedFile: %s GitFile: ID %d, %s",
 							cmt.ref(), gf.ID, gf.name)
 						dupGf.actionInvalid = true
-						g.blobFileMatcher.addGitFile(gf)
-						g.logger.Debugf("GitFile: ID %d, %s", gf.ID, gf.name)
 					}
 				}
-			} else {
-				g.blobFileMatcher.addGitFile(gf)
-				mark := 0
-				fileType := journal.CText
-				if gf.blob != nil && gf.blob.blob != nil {
-					mark = gf.blob.blob.Mark
-					fileType = gf.blob.fileType
-				}
-				g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
-					cmt.ref(), gf.ID, gf.name, mark, fileType)
 			}
 			valid = true
 		} else if gf.action == delete {
@@ -1752,6 +1753,10 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				} else {
 					g.logger.Errorf("Failed to find blob: %d", oid)
 				}
+				g.blobFileMatcher.addGitFile(gf)
+				g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
+					currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+
 				currCommit.files = append(currCommit.files, gf)
 
 			case libfastimport.FileDelete:
