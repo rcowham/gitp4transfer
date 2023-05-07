@@ -1125,9 +1125,11 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 func (g *GitP4Transfer) recordDepotFileType(gf *GitFile) {
 	k := fmt.Sprintf("%s#%d", gf.p4.depotFile, gf.p4.rev)
 	g.depotFileTypes[k] = gf.fileType
-	if gf.isBranch && gf.action == rename {
+	if gf.action == rename && (gf.isBranch || gf.isMerge) {
 		k := fmt.Sprintf("%s#%d", gf.p4.srcDepotFile, gf.p4.srcRev)
-		g.depotFileTypes[k] = gf.fileType
+		if _, ok := g.depotFileTypes[k]; !ok {
+			g.depotFileTypes[k] = gf.fileType
+		}
 	}
 }
 
@@ -1173,10 +1175,12 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 		firstMerge := currCommit.commit.Merge[0]
 		if intVar, err := strconv.Atoi(firstMerge[1:]); err == nil {
 			mergeFrom := g.commits[intVar]
-			if mergeFrom.branch != "" && mergeFrom.branch != currCommit.branch {
+			if mergeFrom.branch == "" {
+				g.logger.Errorf("Merge Commit mark %d has no branch", intVar)
+			} else if mergeFrom.branch != currCommit.branch {
 				currCommit.mergeBranch = mergeFrom.branch
 			} else {
-				g.logger.Errorf("Merge Commit mark %d has no branch", intVar)
+				g.logger.Warnf("Ignoring Merge Commit mark %d as same branch %s", intVar, mergeFrom.branch)
 			}
 		}
 	}
@@ -1317,11 +1321,12 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 					g.logger.Warnf("UnexpectedModifySrcName: GitFile: %s ID %d, %s Src:%s", cmt.ref(), dupGf.ID, dupGf.name, dupGf.srcName)
 				}
 			} else if dupGf.action == delete {
-				dupGf.actionInvalid = true // Unexpected
 				if dupGf.name == gf.name {
+					dupGf.actionInvalid = true
 					g.logger.Warnf("RenameOfDeletedFile: GitFile: %s ID %d, %s Src:%s", cmt.ref(), gf.ID, gf.name, gf.srcName)
 				} else {
-					g.logger.Warnf("UnexpectedDeleteSrcName2: GitFile: %s ID %d, %s Src:%s", cmt.ref(), gf.ID, gf.name, gf.srcName)
+					gf.actionInvalid = true
+					g.logger.Warnf("RenameDeletedSrc: GitFile: %s ID %d, %s Src:%s", cmt.ref(), gf.ID, gf.name, gf.srcName)
 				}
 			} else if dupGf.action == rename {
 				if dupGf.name == gf.srcName {

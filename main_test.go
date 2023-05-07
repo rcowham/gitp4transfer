@@ -700,6 +700,40 @@ func TestCommitValidDeleteRenamedDir(t *testing.T) {
 	assert.Equal(t, 0, len(nfiles))
 }
 
+func TestCommitValidDeleteFollowedByRenameDir(t *testing.T) {
+	// Delete source file and then rename dir
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file2.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 2, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
+
+	// Rename dir then delete target - result is no files!
+	gc = newValidatedCommit(g, []testFile{
+		{name: "src/file1.txt", srcName: "", action: delete},
+		{name: "targ", srcName: "src", action: rename},
+	})
+	assert.Equal(t, 2, len(gc.files))
+	assert.Equal(t, "src/file1.txt", gc.files[0].name)
+	assert.Equal(t, "targ/file2.txt", gc.files[1].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "targ/file2.txt", nfiles[0])
+}
+
 // ------------------------------------------------------------------
 
 func TestAdd(t *testing.T) {
