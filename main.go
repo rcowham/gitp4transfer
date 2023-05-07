@@ -363,7 +363,7 @@ type CommitMap map[int]*GitCommit
 type RevChange struct { // Struct to remember revs and changes per depotFile
 	rev     int
 	chgNo   int
-	lbrRev  int    // Normally same as chgNo but not for renames/copies
+	lbrRev  int    // Normally same as chgNo but not for renames/copies, and for deletes is of previous version
 	lbrFile string // Normally same as depotFile byt not for renames/copies
 	action  GitAction
 }
@@ -923,7 +923,9 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		prevAction = g.depotFileRevs[gf.p4.depotFile].action
 	}
 	g.depotFileRevs[gf.p4.depotFile].action = gf.action
-	g.depotFileRevs[gf.p4.depotFile].lbrRev = chgNo
+	if gf.action != delete {
+		g.depotFileRevs[gf.p4.depotFile].lbrRev = chgNo
+	}
 	g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.depotFile
 	gf.p4.lbrRev = chgNo
 	gf.p4.lbrFile = gf.p4.depotFile
@@ -981,8 +983,16 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 					gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
 				}
 				gf.p4.origSrcDepotFile = srcOrigDepotPath
-				gf.p4.origSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
-				gf.fileType = g.getDepotFileTypes(srcOrigDepotPath, g.depotFileRevs[srcOrigDepotPath].rev)
+				origSrcDepotRev := g.depotFileRevs[srcOrigDepotPath].rev
+				if g.depotFileRevs[srcOrigDepotPath].action == delete {
+					origSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev - 1
+					if origSrcDepotRev == 0 {
+						g.logger.Errorf("Original file was deleted: '%s'", srcOrigDepotPath)
+						origSrcDepotRev = 1
+					}
+				}
+				gf.p4.origSrcDepotRev = origSrcDepotRev
+				gf.fileType = g.getDepotFileTypes(srcOrigDepotPath, origSrcDepotRev)
 				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			}

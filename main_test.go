@@ -1710,6 +1710,113 @@ func TestRenameBack(t *testing.T) {
 `, result)
 }
 
+func TestRenameOnBranchOriginalDeleted(t *testing.T) {
+	// Rename of a file on a branch where original file is deleted and a merge is created
+	debug = true
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 9
+contents
+
+blob
+mark :2
+data 10
+contents2
+
+blob
+mark :3
+data 10
+contents3
+
+reset refs/heads/main
+commit refs/heads/main
+mark :3
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+M 100644 :2 src/file2.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :4
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+added-one
+from :3
+M 100644 :3 src/file2.txt
+
+reset refs/heads/main
+commit refs/heads/main
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+delet-two
+from :3
+D src/file1.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :6
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+renamed00
+from :4
+merge :5
+R src/file1.txt targ/file1.txt
+
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file1.txt#1 - delete change 6 (text+C)
+//import/dev/src/file2.txt#1 - add change 4 (text+C)
+//import/dev/targ/file1.txt#1 - add change 6 (text+C)
+//import/main/src/file1.txt#2 - delete change 5 (text+C)
+//import/main/src/file2.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //import/...")
+	reExpected := `//import/dev/src/file1.txt
+... #1 change 6 delete on \S+ by \S+ \S+ 'renamed00 '
+... ... delete from //import/main/src/file1.txt#1
+//import/dev/src/file2.txt
+... #1 change 4 add on \S+ by \S+ \S+ 'added-one '
+... ... branch from //import/main/src/file2.txt#1
+//import/dev/targ/file1.txt
+... #1 change 6 add on \S+ by \S+ \S+ 'renamed00 '
+... ... branch from //import/main/src/file1.txt#1
+//import/main/src/file1.txt
+... #2 change 5 delete on \S+ by \S+ \S+ 'delet-two '
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+... ... delete into //import/dev/src/file1.txt#1
+... ... branch into //import/dev/targ/file1.txt#1
+//import/main/src/file2.txt
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+... ... edit into //import/dev/src/file2.txt#1
+`
+
+	assert.Equal(t, nil, err)
+	compareFilelog(t, reExpected, result)
+	assert.Regexp(t, reExpected, result)
+
+}
+
 func TestRenameOnBranchWithEdit(t *testing.T) {
 	// Rename of a file on a branch with edited contents so R and M records, then merge back to main
 	debug = true
