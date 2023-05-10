@@ -25,7 +25,8 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-insensitive] [-depot <import depot>] [-graph <graphFile.dot>] [-m <max commits>] [-t <parallel threads>]
+run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-crlf] [-insensitive] 
+    [-depot <import depot>] [-graph <graphFile.dot>] [-m <max commits>] [-t <parallel threads>]
 
    or
 
@@ -33,6 +34,7 @@ run_conversion.sh -h
 
     -d           Debug
     -depot       Depot to use for this import (default is 'import')
+    -crlf        Cionvert CRLF to just LF for text files
     -dummy       Create dummy archives as placeholders (no real content) - much faster
     -graph       Create Graphviz output showing commit structure
     -insensitive Specify case insensitive checkpoint (and lowercase archive files) - for Linux servers
@@ -55,6 +57,7 @@ declare -i shiftArgs=0
 declare -i Debug=0
 declare -i Dummy=0
 declare -i CaseInsensitive=0
+declare -i ConvertCRLF=0
 declare -i MaxCommits=0
 declare -i ParallelThreads=0
 declare ConfigFile=""
@@ -69,6 +72,7 @@ while [[ $# -gt 0 ]]; do
         (-h) usage -h  && exit 1;;
         # (-man) usage -man;;
         (-c) ConfigFile=$2; shiftArgs=1;;
+        (-crlf) ConvertCRLF=1;;
         (-p) P4Root=$2; shiftArgs=1;;
         (-d) Debug=1;;
         (-depot) ImportDepot=$2; shiftArgs=1;;
@@ -120,6 +124,10 @@ if [[ $CaseInsensitive -ne 0 ]]; then
     CaseInsensitiveFlag="--case.insensitive"
     P4DCaseFlag="-C1"
 fi
+CRLFFlag=""
+if [[ $ConvertCRLF -ne 0 ]]; then
+    CRLFFlag="--convert.crlf"
+fi
 GraphArgs=""
 if [[ ! -z $GraphFile ]]; then
     GraphArgs="--graphfile=$GraphFile"
@@ -129,8 +137,8 @@ if [[ ! -z $ConfigFile ]]; then
     ConfigArgs="--config=$ConfigFile"
 fi
 
-echo gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
-gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+echo gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
 
 if [[ $? -ne 0 ]]; then
     echo "Server is in directory:"

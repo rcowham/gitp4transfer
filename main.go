@@ -81,6 +81,7 @@ type GitParserOptions struct {
 	dryRun          bool
 	dummyArchives   bool
 	caseInsensitive bool // If true then create case insensitive checkpoint for Linux and lowercase archive files
+	convertCRLF     bool // If true then convert CRLF to just LF
 	graphFile       string
 	maxCommits      int
 	debugCommit     int // For debug breakpoint
@@ -524,7 +525,8 @@ func getOID(dataref string) (int, error) {
 // Later the file will be moved to the required depot location
 // Uses a provided pool to get concurrency
 // Allow for dummy data to be saved (used to speed up large conversions to check structure)
-func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag bool, matcher *BlobFileMatcher) error {
+func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag bool, convertCRLF bool,
+	matcher *BlobFileMatcher) error {
 	if b.blob == nil || !b.hasData {
 		matcher.logger.Debugf("NoBlobToSave")
 		return nil
@@ -537,7 +539,12 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 	if b.compressed {
 		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", b.blobFileName))
 		matcher.logger.Debugf("SavingBlobCompressed: %s", fname)
-		data := b.blob.Data
+		var data string
+		if convertCRLF && (b.fileType == journal.CText || b.fileType == journal.UText) {
+			data = strings.ReplaceAll(b.blob.Data, "\r\n", "\n")
+		} else {
+			data = b.blob.Data
+		}
 		if dummyFlag {
 			data = fmt.Sprintf("%d", b.blob.Mark)
 		}
@@ -1717,7 +1724,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				b := newGitBlob(&blob)
 				g.blobFileMatcher.addBlob(b)
 				commitSize += len(blob.Data)
-				b.SaveBlob(pool, g.opts.archiveRoot, g.opts.dummyArchives, g.blobFileMatcher)
+				b.SaveBlob(pool, g.opts.archiveRoot, g.opts.dummyArchives, g.opts.convertCRLF, g.blobFileMatcher)
 
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
@@ -1866,6 +1873,10 @@ func main() {
 			"case.insensitive",
 			"Create checkpoint case-insensitive mode (for Linux) and lowercase archive files. If not set, then OS default applies.",
 		).Bool()
+		convertCRLF = kingpin.Flag(
+			"convert.crlf",
+			"Convert CRLF in text files to just LF.",
+		).Bool()
 		dummyArchives = kingpin.Flag(
 			"dummy",
 			"Create dummy (small) archive files - for quick analysis of large repos.",
@@ -1946,6 +1957,7 @@ func main() {
 		dryRun:          *dryrun,
 		dummyArchives:   *dummyArchives,
 		caseInsensitive: *caseInsensitive,
+		convertCRLF:     *convertCRLF,
 		maxCommits:      *maxCommits,
 		graphFile:       *outputGraph,
 		debugCommit:     *debugCommit,

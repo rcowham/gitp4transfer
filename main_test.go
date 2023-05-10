@@ -1123,6 +1123,85 @@ func TestAddBinary(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.2$`, result)
 }
 
+func TestAddCRLF1(t *testing.T) {
+	// Test where CRLF should be converted to LF - but only for text files!
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	file1 := "file1.txt"
+	srcContents1 := "contents\n"
+	contents2 := "contents1\r\ncontents2\r\ncontents3\n"
+	writeToFile(src, srcContents1)
+	writeToFile(file1, contents2)
+	runCmd("gzip " + src)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	runTransfer(t, logger)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/file1.txt#1 - add change 3 (text+C)
+//import/main/src.txt.gz#1 - add change 3 (binary+F)
+`, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt.gz#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType binary\+F`, result)
+	assert.Regexp(t, `lbrType binary\+F`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.3$`, result)
+
+	result, err = runCmd("p4 print -q //import/main/file1.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents2, result)
+}
+
+func TestAddCRLF2(t *testing.T) {
+	// Test where CRLF should be converted to LF - but only for text files!
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	file1 := "file1.txt"
+	srcContents1 := "contents\n"
+	contents2 := "contents1\r\ncontents2\r\ncontents3\n"
+	writeToFile(src, srcContents1)
+	writeToFile(file1, contents2)
+	runCmd("gzip " + src)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}, convertCRLF: true}
+	runTransferOpts(t, logger, opts)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/main/file1.txt#1 - add change 3 (text+C)
+//import/main/src.txt.gz#1 - add change 3 (binary+F)
+`, result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 print -q //import/main/file1.txt#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, strings.ReplaceAll(contents2, "\r\n", "\n"), result)
+}
+
 func TestAddEmpty(t *testing.T) {
 	logger := createLogger()
 	logger.Debugf("======== Test: %s", t.Name())
