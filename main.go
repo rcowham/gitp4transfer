@@ -22,7 +22,7 @@ package main
 // * Hash of GitFile action records
 //
 // Notes:
-// * Plastic SCM writes git -fast-export files that are invalid for git! Thus we have to filter records
+// * Plastic SCM writes git fast-export files that are invalid for git! Thus we have to filter records
 //   and handle anomalies, e.g.
 //   - rename of a file already renamed
 //   - delete of a file which has been renamed already
@@ -545,11 +545,13 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 				return func() {
 					err := os.MkdirAll(rootDir, 0755)
 					if err != nil {
-						panic(err)
+						matcher.logger.Errorf("failed mkdir: %s %v", rootDir, err)
+						return
 					}
 					f, err := os.Create(fname)
 					if err != nil {
-						panic(err)
+						matcher.logger.Errorf("failed create: %s %v", fname, err)
+						return
 					}
 					defer f.Close()
 					zw := gzip.NewWriter(f)
@@ -558,7 +560,8 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 					defer b.lock.Unlock()
 					_, err = zw.Write([]byte(data))
 					if err != nil {
-						panic(err)
+						matcher.logger.Errorf("failed write: %s %v", fname, err)
+						return
 					}
 					b.saved = true
 					b.blob.Data = "" // Allow contents to be GC'ed
@@ -578,18 +581,21 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 				return func() {
 					err := os.MkdirAll(rootDir, 0755)
 					if err != nil {
-						panic(err)
+						matcher.logger.Errorf("failed mkdir: %s %v", rootDir, err)
+						return
 					}
 					f, err := os.Create(fname)
 					if err != nil {
-						panic(err)
+						matcher.logger.Errorf("failed create: %s %v", fname, err)
+						return
 					}
 					defer f.Close()
 					b.lock.Lock()
 					defer b.lock.Unlock()
 					fmt.Fprint(f, data)
 					if err != nil {
-						panic(err)
+						matcher.logger.Errorf("failed write: %s %v", fname, err)
+						return
 					}
 					b.saved = true
 					b.blob.Data = "" // Allow contents to be GC'ed
@@ -600,52 +606,53 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 	return nil
 }
 
-func readZipFile(fname string) string {
+func readZipFile(fname string) (string, error) {
 	f, err := os.Open(fname)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	defer f.Close()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	buf, err := io.ReadAll(gz)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	if err := gz.Close(); err != nil {
 		log.Fatal(err)
 	}
-	return string(buf)
+	return string(buf), err
 }
 
-func writeToFile(fname, contents string) {
+func writeToFile(fname, contents string) error {
 	f, err := os.Create(fname)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer f.Close()
 	fmt.Fprint(f, contents)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
-func readFile(fname string) string {
+func readFile(fname string) (string, error) {
 	f, err := os.Open(fname)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 	defer f.Close()
 	buf, err := io.ReadAll(f)
 	if err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	if err := f.Close(); err != nil {
-		log.Fatal(err)
+		return "", err
 	}
-	return string(buf)
+	return string(buf), nil
 }
 
 // CreateArchiveFile - Rename the saved blob to appropriate archive file as required
@@ -713,7 +720,11 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 						} else {
 							// Instead of renaming them we have to rewrite the CRLF, optionally unzipping and zipping again
 							if gf.compressed {
-								data := readZipFile(bname)
+								data, err := readZipFile(bname)
+								if err != nil {
+									gf.logger.Errorf("Failed to readZipFile: %s %v", bname, err)
+									return
+								}
 								f, err := os.Create(fname)
 								if err != nil {
 									gf.logger.Errorf("Failed to create: %s %v", fname, err)
@@ -727,9 +738,19 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 									gf.logger.Errorf("Failed to write: %s %v", fname, err)
 								}
 							} else {
-								data := readFile(fname)
-								writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
+								data, err := readFile(bname)
+								if err != nil {
+									gf.logger.Errorf("Failed to read: %s %v", fname, err)
+								} else {
+									err = writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
+									gf.logger.Errorf("Failed to write: %s %v", fname, err)
+								}
 							}
+						}
+						// As we copied the file, lets's delete the original
+						err = os.Remove(bname)
+						if err != nil {
+							gf.logger.Errorf("Failed to remove: %s %v", bname, err)
 						}
 					}
 				}(gf, bname, fname, convertCRLF))
@@ -742,10 +763,15 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 			} else {
 				// Instead of renaming them we have to rewrite the CRLF, optionally unzipping and zipping again
 				if gf.compressed {
-					data := readZipFile(bname)
+					data, err := readZipFile(bname)
+					if err != nil {
+						gf.logger.Errorf("Failed to readZipFile: %s %v", bname, err)
+						return
+					}
 					f, err := os.Create(fname)
 					if err != nil {
 						gf.logger.Errorf("Failed to create: %s %v", fname, err)
+						return
 					}
 					defer f.Close()
 					zw := gzip.NewWriter(f)
@@ -755,8 +781,20 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 						gf.logger.Errorf("Failed to write: %s %v", fname, err)
 					}
 				} else {
-					data := readFile(fname)
-					writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
+					data, err := readFile(bname)
+					if err != nil {
+						gf.logger.Errorf("Failed to readFile: %s %v", bname, err)
+						return
+					}
+					err = writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
+					if err != nil {
+						gf.logger.Errorf("Failed to write: %s %v", fname, err)
+					}
+				}
+				// As we copied the file, lets's delete the original
+				err = os.Remove(bname)
+				if err != nil {
+					gf.logger.Errorf("Failed to remove: %s %v", bname, err)
 				}
 			}
 		}
