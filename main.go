@@ -349,15 +349,6 @@ func (gc *GitCommit) findGitFile(name string) *GitFile {
 	return nil
 }
 
-func (gc *GitCommit) findGitFileRename(fromName string) *GitFile {
-	for _, gf := range gc.files {
-		if gf.srcName == fromName {
-			return gf
-		}
-	}
-	return nil
-}
-
 func (gc *GitCommit) ref() string {
 	return fmt.Sprintf("%s:%d", gc.branch, gc.commit.Mark)
 }
@@ -779,12 +770,12 @@ func minval(val, min int) int { // Minimum of specified val or min
 	return val
 }
 
-func maxval(val, max int) int { // Maxiumum of specified val or max
-	if val > max {
-		return max
-	}
-	return val
-}
+// func maxval(val, max int) int { // Maxiumum of specified val or max
+// 	if val > max {
+// 		return max
+// 	}
+// 	return val
+// }
 
 // WriteJournal writes journal record for a GitFile
 func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
@@ -1348,37 +1339,6 @@ func findExactNameMatches(files []*GitFile, name string) []*GitFile {
 	result := make([]*GitFile, 0)
 	for _, gf := range files {
 		if !gf.actionInvalid && (gf.name == name || gf.srcName == name) {
-			result = append(result, gf)
-		}
-	}
-	return result
-}
-
-func findDirMatches(files []*GitFile, name string) []*GitFile {
-	result := make([]*GitFile, 0)
-	for _, gf := range files {
-		if hasDirPrefix(gf.name, name) || hasDirPrefix(gf.srcName, name) {
-			result = append(result, gf)
-		}
-	}
-	return result
-}
-
-// Files which are a rename
-func findRenameSources(files []*GitFile, name string) []*GitFile {
-	result := make([]*GitFile, 0)
-	for _, gf := range files {
-		if gf.action == rename && gf.srcName == name {
-			result = append(result, gf)
-		}
-	}
-	return result
-}
-
-func findDirRenameSources(files []*GitFile, name string) []*GitFile {
-	result := make([]*GitFile, 0)
-	for _, gf := range files {
-		if gf.action == rename && hasDirPrefix(gf.srcName, name) {
 			result = append(result, gf)
 		}
 	}
