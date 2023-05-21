@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -105,18 +106,6 @@ func (p4t *P4Test) ensureDirectories() {
 // 		fmt.Fprintf(os.Stderr, "Failed to remove %s: %v", p4t.startDir, err)
 // 	}
 // }
-
-func writeToFile(fname, contents string) {
-	f, err := os.Create(fname)
-	if err != nil {
-		panic(err)
-	}
-	defer f.Close()
-	fmt.Fprint(f, contents)
-	if err != nil {
-		panic(err)
-	}
-}
 
 func appendToFile(fname, contents string) {
 	f, err := os.OpenFile(fname, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -250,7 +239,8 @@ func runTransferWithDump(t *testing.T, logger *logrus.Logger, output string, opt
 	for _, c := range commits {
 		j.WriteChange(c.commit.Mark, user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
-			f.CreateArchiveFile(nil, opts.caseInsensitive, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
+			opts.archiveRoot = p4t.serverRoot
+			f.CreateArchiveFile(nil, opts, g.blobFileMatcher, c.commit.Mark)
 			f.WriteJournal(&j, &c)
 		}
 	}
@@ -789,7 +779,7 @@ func TestAdd(t *testing.T) {
 	c = commits[0]
 	j.WriteChange(c.commit.Mark, defaultP4user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 	f = c.files[0]
-	j.WriteRev(f.p4.depotFile, f.p4.rev, f.p4.p4action, f.fileType, c.commit.Mark,
+	j.WriteRev(f.p4.depotFile, f.p4.rev, f.p4.p4action, f.baseFileType, c.commit.Mark,
 		f.p4.depotFile, c.commit.Mark, int(c.commit.Author.Time.Unix()))
 	dt := c.commit.Author.Time.Unix()
 	expectedJournal := fmt.Sprintf(`@pv@ 0 @db.depot@ @import@ 0 @subdir@ @import/...@ 
@@ -809,7 +799,8 @@ func TestAdd(t *testing.T) {
 
 	jnl := filepath.Join(p4t.serverRoot, "jnl.0")
 	writeToFile(jnl, expectedJournal)
-	f.CreateArchiveFile(nil, opts.caseInsensitive, p4t.serverRoot, g.blobFileMatcher, c.commit.Mark)
+	opts.archiveRoot = p4t.serverRoot
+	f.CreateArchiveFile(nil, opts, g.blobFileMatcher, c.commit.Mark)
 	runCmd("p4d -r . -jr jnl.0")
 	runCmd("p4d -r . -J journal -xu")
 	runCmd("p4 storage -r")
@@ -1184,7 +1175,14 @@ func TestAddCRLF2(t *testing.T) {
 	runCmd("git add .")
 	runCmd("git commit -m initial")
 
-	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}, convertCRLF: true}
+	c := &config.Config{
+		ImportDepot: "import", DefaultBranch: "main",
+		ReTypeMaps: make([]config.RegexpTypeMap, 0),
+	}
+	rePath := regexp.MustCompile("//.*.txt$") // Go version of typemap
+	c.ReTypeMaps = append(c.ReTypeMaps, config.RegexpTypeMap{Filetype: journal.CText, RePath: rePath})
+
+	opts := &GitParserOptions{config: c, convertCRLF: true}
 	runTransferOpts(t, logger, opts)
 
 	result, err := runCmd("p4 files //...")

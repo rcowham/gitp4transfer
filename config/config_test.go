@@ -11,6 +11,7 @@ import_depot:		import
 import_path:		path
 default_branch:		main
 branch_mappings:
+typemaps:
 `
 
 const map1Config = `
@@ -80,6 +81,44 @@ branch_mappings:
 	assert.Equal(t, 1, len(cfg.BranchMappings))
 	assert.Equal(t, "main.*", cfg.BranchMappings[0].Name)
 	assert.Equal(t, "fred", cfg.BranchMappings[0].Prefix)
+}
+
+func TestTypeMap1(t *testing.T) {
+	const config = `
+typemaps:
+- text  //....txt
+- binary  //....bin
+`
+	cfg := loadOrFail(t, config)
+	checkValue(t, "ImportDepot", cfg.ImportDepot, "import")
+	checkValue(t, "ImportPath", cfg.ImportPath, "")
+	checkValue(t, "DefaultBranch", cfg.DefaultBranch, "main")
+	assert.Equal(t, 0, len(cfg.BranchMappings))
+	assert.Equal(t, 2, len(cfg.TypeMaps))
+	assert.Equal(t, "text  //....txt", cfg.TypeMaps[0])
+	assert.Equal(t, "binary  //....bin", cfg.TypeMaps[1])
+	assert.True(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/file.txt"))
+	assert.True(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/fredtxt"))
+	assert.False(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/fred.txt1"))
+	assert.False(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/fred.bin"))
+	assert.True(t, cfg.ReTypeMaps[1].RePath.MatchString("//file.bin"))
+	assert.True(t, cfg.ReTypeMaps[1].RePath.MatchString("//some/file.bin"))
+}
+
+func TestTypeMap2(t *testing.T) {
+	const config = `
+typemaps:
+- text	//....txt
+- binary	"//....bin"
+`
+	cfg := loadOrFail(t, config)
+	checkValue(t, "ImportDepot", cfg.ImportDepot, "import")
+	checkValue(t, "ImportPath", cfg.ImportPath, "")
+	checkValue(t, "DefaultBranch", cfg.DefaultBranch, "main")
+	assert.Equal(t, 0, len(cfg.BranchMappings))
+	assert.Equal(t, 2, len(cfg.TypeMaps))
+	assert.Equal(t, "text	//....txt", cfg.TypeMaps[0])
+	assert.Equal(t, "binary	\"//....bin\"", cfg.TypeMaps[1])
 }
 
 func TestRegex(t *testing.T) {

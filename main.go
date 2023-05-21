@@ -33,7 +33,8 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
-	"io"               // profiling only
+	"io" // profiling only
+	"log"
 	_ "net/http/pprof" // profiling only
 	"os"
 	"path"
@@ -48,6 +49,7 @@ import (
 	"github.com/alitto/pond"
 	"github.com/emicklei/dot"
 	"github.com/h2non/filetype"
+	"github.com/h2non/filetype/types"
 	"github.com/rcowham/gitp4transfer/config"
 	journal "github.com/rcowham/gitp4transfer/journal"
 	node "github.com/rcowham/gitp4transfer/node"
@@ -134,7 +136,7 @@ var gitFileID = 0 // Unique ID - set by newGitFile
 type GitBlob struct {
 	blob         *libfastimport.CmdBlob
 	compressed   bool
-	fileType     journal.FileType
+	baseFileType journal.FileType // Base type when file is only known as a Blob
 	hasData      bool
 	dataRemoved  bool
 	saved        bool
@@ -145,7 +147,7 @@ type GitBlob struct {
 }
 
 func newGitBlob(blob *libfastimport.CmdBlob) *GitBlob {
-	b := &GitBlob{blob: blob, hasData: true, gitFileIDs: make([]int, 0), fileType: journal.CText}
+	b := &GitBlob{blob: blob, hasData: true, gitFileIDs: make([]int, 0), baseFileType: journal.CText}
 	if blob != nil { // Construct a suitable filename
 		filename := fmt.Sprintf("%07d", b.blob.Mark)
 		b.blobFileName = filename
@@ -256,10 +258,11 @@ type GitFile struct {
 	actionInvalid    bool // Set to true if this is overriden by a later action in same commit
 	isBranch         bool
 	isMerge          bool
-	isDirtyRename    bool // Rename where content changed in same commit
-	isPseudoRename   bool // Rename where source file should not be deleted as updated in same commit
-	isDoubleRename   bool // Second rename of same source file in same commit
-	fileType         journal.FileType
+	isDirtyRename    bool             // Rename where content changed in same commit
+	isPseudoRename   bool             // Rename where source file should not be deleted as updated in same commit
+	isDoubleRename   bool             // Second rename of same source file in same commit
+	baseFileType     journal.FileType // baseFileType means Text or Binary
+	fileType         journal.FileType // fileType includes typemap matching
 	compressed       bool
 	blob             *GitBlob
 	logger           *logrus.Logger
@@ -285,8 +288,8 @@ type P4File struct {
 func newGitFile(gf *GitFile) *GitFile {
 	gitFileID += 1
 	gf.ID = gitFileID
-	if gf.fileType == 0 {
-		gf.fileType = journal.CText // Default - may be overwritten later
+	if gf.baseFileType == 0 {
+		gf.baseFileType = journal.CText // Default - may be overwritten later
 	}
 	gf.p4 = &P4File{}
 	gf.updateFileDetails()
@@ -477,27 +480,29 @@ func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper
 }
 
 // Sets compression option and distinguishes binary/text according to mimetype or extension
-func (b *GitBlob) setCompressionDetails() {
-	b.fileType = journal.CText
+func (b *GitBlob) setCompressionDetails() types.Type {
+	b.baseFileType = journal.CText
 	b.compressed = true
 	l := len(b.blob.Data)
 	if l > 261 {
 		l = 261
 	}
 	head := []byte(b.blob.Data[:l])
+	kind, _ := filetype.Match(head)
 	if filetype.IsImage(head) || filetype.IsVideo(head) || filetype.IsArchive(head) || filetype.IsAudio(head) {
-		b.fileType = journal.UBinary
+		b.baseFileType = journal.UBinary
 		b.compressed = false
-		return
+		return kind
 	}
 	if filetype.IsDocument(head) {
-		b.fileType = journal.Binary
+		b.baseFileType = journal.Binary
 		kind, _ := filetype.Match(head)
 		switch kind.Extension {
 		case "docx", "dotx", "potx", "ppsx", "pptx", "vsdx", "vstx", "xlsx", "xltx":
 			b.compressed = false
 		}
 	}
+	return kind
 }
 
 // Sets p4 action
@@ -525,27 +530,22 @@ func getOID(dataref string) (int, error) {
 // Later the file will be moved to the required depot location
 // Uses a provided pool to get concurrency
 // Allow for dummy data to be saved (used to speed up large conversions to check structure)
-func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag bool, convertCRLF bool,
-	matcher *BlobFileMatcher) error {
+func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher *BlobFileMatcher) error {
 	if b.blob == nil || !b.hasData {
 		matcher.logger.Debugf("NoBlobToSave")
 		return nil
 	}
 	b.lock.Lock()
-	b.setCompressionDetails()
-	matcher.logger.Debugf("BlobFileType: %d: %s", b.blob.Mark, b.fileType)
+	kind := b.setCompressionDetails()
+	matcher.logger.Debugf("BlobFileType: %d: %s MIME:%s", b.blob.Mark, b.baseFileType, kind.MIME.Value)
 	// Do the work in pool worker threads for concurrency, especially with compression
-	rootDir := path.Join(archiveRoot, b.blobDirPath)
+	rootDir := path.Join(opts.archiveRoot, b.blobDirPath)
 	if b.compressed {
 		fname := path.Join(rootDir, fmt.Sprintf("%s.gz", b.blobFileName))
 		matcher.logger.Debugf("SavingBlobCompressed: %s", fname)
 		var data string
-		if convertCRLF && (b.fileType == journal.CText || b.fileType == journal.UText) {
-			data = strings.ReplaceAll(b.blob.Data, "\r\n", "\n")
-		} else {
-			data = b.blob.Data
-		}
-		if dummyFlag {
+		data = b.blob.Data
+		if opts.dummyArchives {
 			data = fmt.Sprintf("%d", b.blob.Mark)
 		}
 		b.lock.Unlock()
@@ -579,7 +579,7 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 		matcher.logger.Debugf("SavingBlobNotCompressed: %s", fname)
 		data := b.blob.Data
 		b.lock.Unlock()
-		if dummyFlag {
+		if opts.dummyArchives {
 			data = fmt.Sprintf("%d", b.blob.Mark)
 		}
 		pool.Submit(
@@ -609,16 +609,66 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, archiveRoot string, dummyFlag 
 	return nil
 }
 
-func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, caseInsensitive bool, depotRoot string, matcher *BlobFileMatcher, changeNo int) {
+func readZipFile(fname string) string {
+	f, err := os.Open(fname)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	buf, err := io.ReadAll(gz)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		log.Fatal(err)
+	}
+	return string(buf)
+}
+
+func writeToFile(fname, contents string) {
+	f, err := os.Create(fname)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	fmt.Fprint(f, contents)
+	if err != nil {
+		panic(err)
+	}
+}
+
+func readFile(fname string) string {
+	f, err := os.Open(fname)
+	if err != nil {
+		panic(err)
+	}
+	defer f.Close()
+	buf, err := io.ReadAll(f)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		log.Fatal(err)
+	}
+	return string(buf)
+}
+
+// CreateArchiveFile - Rename the saved blob to appropriate archive file as required
+func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptions, matcher *BlobFileMatcher, changeNo int) {
 	if gf.action == delete || (gf.action == rename && !gf.isDirtyRename && !gf.isPseudoRename && !gf.isDoubleRename) ||
 		gf.blob == nil || !gf.blob.hasData {
 		return
 	}
 	// Fix wildcards
 	depotFile := journal.ReplaceWildcards(gf.p4.depotFile[2:])
-	if caseInsensitive {
+	if opts.caseInsensitive {
 		depotFile = strings.ToLower(depotFile)
 	}
+	depotRoot := opts.archiveRoot
 	rootDir := path.Join(depotRoot, fmt.Sprintf("%s,d", depotFile))
 	if gf.blob.blobFileName == "" {
 		gf.logger.Debugf(fmt.Sprintf("NoBlobFound: %s", depotFile))
@@ -630,7 +680,11 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, caseInsensitive bool
 		bname = path.Join(depotRoot, gf.blob.blobDirPath, fmt.Sprintf("%s.gz", gf.blob.blobFileName))
 		fname = path.Join(rootDir, fmt.Sprintf("1.%d.gz", changeNo))
 	}
-	gf.logger.Debugf("CreateArchiveFile: %s -> %s", bname, fname)
+	convertCRLF := false
+	if opts.convertCRLF && (gf.fileType == journal.UText || gf.fileType == journal.CText) {
+		convertCRLF = true
+	}
+	gf.logger.Debugf("CreateArchiveFile: %s -> %s, %v", bname, fname, convertCRLF)
 	err := os.MkdirAll(rootDir, 0755)
 	if err != nil {
 		gf.logger.Errorf("Failed to Mkdir: %s - %v", rootDir, err)
@@ -641,7 +695,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, caseInsensitive bool
 	if !gf.duplicateArchive {
 		if pool != nil {
 			pool.Submit(
-				func(gf *GitFile, bname string, fname string) func() {
+				func(gf *GitFile, bname string, fname string, convertCRLF bool) func() {
 					return func() {
 						for {
 							loopCount := 0
@@ -651,7 +705,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, caseInsensitive bool
 								gf.blob.lock.RUnlock()
 								time.Sleep(1 * time.Second)
 								loopCount += 1
-								if loopCount > 10 {
+								if loopCount > 60 {
 									gf.logger.Errorf("Rename wait failed: %d seconds", loopCount)
 									break
 								}
@@ -660,16 +714,59 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, caseInsensitive bool
 								break
 							}
 						}
-						err = os.Rename(bname, fname)
-						if err != nil {
-							gf.logger.Errorf("Failed to Rename after waiting: %v", err)
+						if !convertCRLF {
+							err = os.Rename(bname, fname)
+							if err != nil {
+								gf.logger.Errorf("Failed to Rename after waiting: %v", err)
+							}
+						} else {
+							// Instead of renaming them we have to rewrite the CRLF, optionally unzipping and zipping again
+							if gf.compressed {
+								data := readZipFile(bname)
+								f, err := os.Create(fname)
+								if err != nil {
+									gf.logger.Errorf("Failed to create: %s %v", fname, err)
+									return
+								}
+								defer f.Close()
+								zw := gzip.NewWriter(f)
+								defer zw.Close()
+								_, err = zw.Write([]byte(strings.ReplaceAll(data, "\r\n", "\n")))
+								if err != nil {
+									gf.logger.Errorf("Failed to write: %s %v", fname, err)
+								}
+							} else {
+								data := readFile(fname)
+								writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
+							}
 						}
 					}
-				}(gf, bname, fname))
+				}(gf, bname, fname, convertCRLF))
 		} else {
-			err = os.Rename(bname, fname)
-			if err != nil {
-				gf.logger.Errorf("Failed to Rename: %v", err)
+			if !convertCRLF {
+				err = os.Rename(bname, fname)
+				if err != nil {
+					gf.logger.Errorf("Failed to Rename: %v", err)
+				}
+			} else {
+				// Instead of renaming them we have to rewrite the CRLF, optionally unzipping and zipping again
+				if gf.compressed {
+					data := readZipFile(bname)
+					f, err := os.Create(fname)
+					if err != nil {
+						gf.logger.Errorf("Failed to create: %s %v", fname, err)
+					}
+					defer f.Close()
+					zw := gzip.NewWriter(f)
+					defer zw.Close()
+					_, err = zw.Write([]byte(strings.ReplaceAll(data, "\r\n", "\n")))
+					if err != nil {
+						gf.logger.Errorf("Failed to write: %s %v", fname, err)
+					}
+				} else {
+					data := readFile(fname)
+					writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
+				}
 			}
 		}
 	}
@@ -695,8 +792,11 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 	chgNo := c.commit.Mark
 	fileType := gf.fileType
 	if fileType == 0 {
-		gf.logger.Errorf("Unexpected filetype text: %s#%d", gf.p4.depotFile, gf.p4.rev)
-		fileType = journal.CText
+		fileType = gf.baseFileType
+		if fileType == 0 {
+			gf.logger.Errorf("Unexpected filetype text: %s#%d", gf.p4.depotFile, gf.p4.rev)
+			fileType = journal.CText
+		}
 	}
 	if gf.action == modify {
 		if gf.isBranch || gf.isMerge {
@@ -705,25 +805,25 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			if gf.p4.rev > 1 { // TODO
 				action = journal.Edit
 			}
-			j.WriteRev(gf.p4.depotFile, gf.p4.rev, action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, action, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			startFromRev := gf.p4.srcRev - 1
 			endFromRev := gf.p4.srcRev
 			startToRev := gf.p4.rev - 1
 			endToRev := gf.p4.rev
 			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.DirtyBranchInto, c.commit.Mark)
 		} else {
-			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 		}
 	} else if gf.action == delete {
 		if gf.isMerge {
-			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			startFromRev := gf.p4.srcRev - 1
 			endFromRev := gf.p4.srcRev
 			startToRev := gf.p4.rev - 1
 			endToRev := gf.p4.rev
 			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 		} else {
-			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, gf.p4.p4action, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 		}
 	} else if gf.action == rename {
 		if gf.isBranch { // Rename of a branched file - create integ records from parent
@@ -732,7 +832,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 				// Original file was dev/src
 				// Branched as main/src -> main/targ
 				// Create a delete rev for main/src
-				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 				// WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
 				//            how IntegHow, reverseHow IntegHow, chgNo int)
 				startFromRev := 0
@@ -742,7 +842,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 				// We create DeleteFrom integ between dev/src and main/src
 				j.WriteInteg(gf.p4.srcDepotFile, gf.p4.origSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 			}
-			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			startFromRev := gf.p4.origSrcDepotRev - 1
 			endFromRev := gf.p4.origSrcDepotRev
 			startToRev := gf.p4.rev - 1
@@ -762,7 +862,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			if gf.isPseudoRename || gf.isDoubleRename {
 				endFromRev = gf.p4.srcRev // Not deleted for pseudo rename
 			} else {
-				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 				// Integ DeleteFrom dev/src -> main/src, otherwise just do a normal rename
 				if gf.p4.origSrcDepotFile != "" {
 					startFromRev := 0
@@ -772,7 +872,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 					j.WriteInteg(gf.p4.srcDepotFile, gf.p4.origSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 				}
 			}
-			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			if gf.p4.origTargDepotFile != "" { // Merged rename
 				j.WriteInteg(gf.p4.depotFile, gf.p4.origTargDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 			} else { // Simple rename
@@ -792,9 +892,9 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 				endFromRev = gf.p4.srcRev
 			} else {
 				// Delete src record
-				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			}
-			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, gf.fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
+			j.WriteRev(gf.p4.depotFile, gf.p4.rev, journal.Add, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
 			j.WriteInteg(gf.p4.depotFile, gf.p4.srcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.BranchFrom, journal.BranchInto, c.commit.Mark)
 		}
 	} else {
@@ -923,7 +1023,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			lbrFile: gf.p4.depotFile, action: gf.action}
 	}
 	if gf.action == delete && gf.srcName == "" && g.depotFileRevs[gf.p4.depotFile].rev != 0 {
-		gf.fileType = g.getDepotFileTypes(gf.p4.depotFile, g.depotFileRevs[gf.p4.depotFile].rev)
+		gf.baseFileType = g.getDepotFileTypes(gf.p4.depotFile, g.depotFileRevs[gf.p4.depotFile].rev)
 	}
 	g.depotFileRevs[gf.p4.depotFile].rev += 1
 	if g.depotFileRevs[gf.p4.depotFile].rev > 1 {
@@ -941,6 +1041,12 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		// modify defaults to edit, except when first rev or previously deleted
 		if gf.p4.rev == 1 || prevAction == delete {
 			gf.p4.p4action = journal.Add
+			// Determine filetype based on Typemap (if specified) - only on file add
+			for _, r := range opts.config.ReTypeMaps {
+				if r.RePath.MatchString(gf.p4.depotFile) {
+					gf.fileType = r.Filetype
+				}
+			}
 		}
 	}
 	if gf.duplicateArchive {
@@ -957,7 +1063,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			g.depotFileRevs[gf.p4.depotFile].action,
 			g.depotFileRevs[gf.p4.depotFile].lbrFile,
 			g.depotFileRevs[gf.p4.depotFile].lbrRev,
-			gf.fileType)
+			gf.baseFileType)
 		return
 	}
 	if gf.action != delete {
@@ -999,7 +1105,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 					}
 				}
 				gf.p4.origSrcDepotRev = origSrcDepotRev
-				gf.fileType = g.getDepotFileTypes(srcOrigDepotPath, origSrcDepotRev)
+				gf.baseFileType = g.getDepotFileTypes(srcOrigDepotPath, origSrcDepotRev)
 				g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 				g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			}
@@ -1017,7 +1123,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			g.depotFileRevs[gf.p4.depotFile].action,
 			g.depotFileRevs[gf.p4.depotFile].lbrFile,
 			g.depotFileRevs[gf.p4.depotFile].lbrRev,
-			gf.fileType)
+			gf.baseFileType)
 		return
 	}
 	// At this point we have some form of merge/branch from a source file already known to us
@@ -1052,7 +1158,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				gf.p4.origTargDepotRev = g.depotFileRevs[targOrigDepotPath].rev
 				gf.p4.origSrcDepotFile = srcOrigDepotPath
 				gf.p4.origSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
-				gf.fileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
+				gf.baseFileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
 				if g.depotFileRevs[targOrigDepotPath].action == delete {
 					g.logger.Debugf("UDR7a: %s", gf.p4.depotFile) // We don't reference a deleted revision
 					gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
@@ -1083,7 +1189,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			if srcRev > 1 { // TODO why?
 				srcRev -= 1
 			}
-			gf.fileType = g.getDepotFileTypes(gf.p4.srcDepotFile, srcRev)
+			gf.baseFileType = g.getDepotFileTypes(gf.p4.srcDepotFile, srcRev)
 			g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 			g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 			g.recordDepotFileType(gf)
@@ -1101,7 +1207,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			gf.p4.srcDepotFile = ""
 			gf.srcName = ""
 		} else {
-			gf.fileType = g.getDepotFileTypes(gf.p4.srcDepotFile, gf.p4.srcRev)
+			gf.baseFileType = g.getDepotFileTypes(gf.p4.srcDepotFile, gf.p4.srcRev)
 			if !gf.blob.hasData || gf.isMerge { // Copied but changed
 				if g.depotFileRevs[gf.p4.srcDepotFile].action == delete {
 					g.logger.Debugf("UDR5a: %s", gf.p4.depotFile) // We don't reference a deleted revision
@@ -1125,17 +1231,17 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		g.depotFileRevs[gf.p4.depotFile].action,
 		g.depotFileRevs[gf.p4.depotFile].lbrFile,
 		g.depotFileRevs[gf.p4.depotFile].lbrRev,
-		gf.fileType)
+		gf.baseFileType)
 }
 
 // Maintain a list of latest revision counters indexed by depotFile/rev
 func (g *GitP4Transfer) recordDepotFileType(gf *GitFile) {
 	k := fmt.Sprintf("%s#%d", gf.p4.depotFile, gf.p4.rev)
-	g.depotFileTypes[k] = gf.fileType
+	g.depotFileTypes[k] = gf.baseFileType
 	if gf.action == rename && (gf.isBranch || gf.isMerge) {
 		k := fmt.Sprintf("%s#%d", gf.p4.srcDepotFile, gf.p4.srcRev)
 		if _, ok := g.depotFileTypes[k]; !ok {
-			g.depotFileTypes[k] = gf.fileType
+			g.depotFileTypes[k] = gf.baseFileType
 		}
 	}
 }
@@ -1562,7 +1668,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 							dupGf.blob = gf.blob
 							dupGf.compressed = gf.compressed
 							dupGf.duplicateArchive = gf.duplicateArchive
-							dupGf.fileType = gf.fileType
+							dupGf.baseFileType = gf.baseFileType
 							gf.actionInvalid = true
 							g.blobFileMatcher.removeGitFile(gf)
 							g.blobFileMatcher.addGitFile(dupGf)
@@ -1574,7 +1680,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 							dupGf.blob = gf.blob
 							dupGf.compressed = gf.compressed
 							dupGf.duplicateArchive = gf.duplicateArchive
-							dupGf.fileType = gf.fileType
+							dupGf.baseFileType = gf.baseFileType
 							g.blobFileMatcher.removeGitFile(gf)
 							g.blobFileMatcher.addGitFile(dupGf)
 							g.logger.Debugf("DirtyRenameFound: %s %s, GitFile: ID %d, %s",
@@ -1724,7 +1830,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				b := newGitBlob(&blob)
 				g.blobFileMatcher.addBlob(b)
 				commitSize += len(blob.Data)
-				b.SaveBlob(pool, g.opts.archiveRoot, g.opts.dummyArchives, g.opts.convertCRLF, g.blobFileMatcher)
+				b.SaveBlob(pool, g.opts, g.blobFileMatcher)
 
 			case libfastimport.CmdReset:
 				reset := cmd.(libfastimport.CmdReset)
@@ -1765,11 +1871,11 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				if b != nil {
 					if len(b.gitFileIDs) == 0 { // First ref to this blob
 						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
-							blob: b, fileType: b.fileType, compressed: b.compressed,
+							blob: b, baseFileType: b.baseFileType, compressed: b.compressed,
 							logger: g.logger})
 					} else { // Duplicate ref
 						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
-							blob: b, fileType: b.fileType, compressed: b.compressed,
+							blob: b, baseFileType: b.baseFileType, compressed: b.compressed,
 							duplicateArchive: true, logger: g.logger})
 					}
 				} else {
@@ -1777,7 +1883,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				}
 				g.blobFileMatcher.addGitFile(gf)
 				g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
-					currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.fileType)
+					currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.baseFileType)
 
 				currCommit.files = append(currCommit.files, gf)
 
@@ -2002,7 +2108,7 @@ func main() {
 		j.WriteChange(c.commit.Mark, c.user, c.commit.Msg, int(c.commit.Author.Time.Unix()))
 		for _, f := range c.files {
 			if !*dryrun {
-				f.CreateArchiveFile(pool, opts.caseInsensitive, opts.archiveRoot, g.blobFileMatcher, c.commit.Mark)
+				f.CreateArchiveFile(pool, opts, g.blobFileMatcher, c.commit.Mark)
 			} else if f.blob != nil && f.blob.hasData && !f.blob.dataRemoved {
 				f.blob.blob.Data = "" // Allow contents to be GC'ed
 				f.blob.dataRemoved = true
