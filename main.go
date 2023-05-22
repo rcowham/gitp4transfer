@@ -606,6 +606,7 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 	return nil
 }
 
+// readZipFile - assume text files small enough to be read into memory
 func readZipFile(fname string) (string, error) {
 	f, err := os.Open(fname)
 	if err != nil {
@@ -639,6 +640,7 @@ func writeToFile(fname, contents string) error {
 	return nil
 }
 
+// readFile - assume text feils small enough to be read into memory
 func readFile(fname string) (string, error) {
 	f, err := os.Open(fname)
 	if err != nil {

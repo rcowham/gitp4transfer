@@ -1167,10 +1167,13 @@ func TestAddCRLF2(t *testing.T) {
 
 	src := "src.txt"
 	file1 := "file1.txt"
+	file2 := "file2.dat"
 	srcContents1 := "contents\n"
-	contents2 := "contents1\r\ncontents2\r\ncontents3\n"
+	contents1 := "contents1\r\ncontents2\r\ncontents3\n"
+	contents2 := "contents1a\r\ncontents2a\r\ncontents3a\n"
 	writeToFile(src, srcContents1)
-	writeToFile(file1, contents2)
+	writeToFile(file1, contents1)
+	writeToFile(file2, contents2)
 	runCmd("gzip " + src)
 	runCmd("git add .")
 	runCmd("git commit -m initial")
@@ -1181,14 +1184,17 @@ func TestAddCRLF2(t *testing.T) {
 	}
 	rePath := regexp.MustCompile("//.*.txt$") // Go version of typemap
 	c.ReTypeMaps = append(c.ReTypeMaps, config.RegexpTypeMap{Filetype: journal.CText, RePath: rePath})
+	rePath = regexp.MustCompile("//.*.dat$") // Go version of typemap
+	c.ReTypeMaps = append(c.ReTypeMaps, config.RegexpTypeMap{Filetype: journal.Binary, RePath: rePath})
 
 	opts := &GitParserOptions{config: c, convertCRLF: true}
 	runTransferOpts(t, logger, opts)
 
 	result, err := runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/main/file1.txt#1 - add change 3 (text+C)
-//import/main/src.txt.gz#1 - add change 3 (binary+F)
+	assert.Equal(t, `//import/main/file1.txt#1 - add change 4 (text+C)
+//import/main/file2.dat#1 - add change 4 (binary)
+//import/main/src.txt.gz#1 - add change 4 (binary+F)
 `, result)
 
 	result, err = runCmd("p4 verify -qu //...")
@@ -1197,7 +1203,11 @@ func TestAddCRLF2(t *testing.T) {
 
 	result, err = runCmd("p4 print -q //import/main/file1.txt#1")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, strings.ReplaceAll(contents2, "\r\n", "\n"), result)
+	assert.Equal(t, strings.ReplaceAll(contents1, "\r\n", "\n"), result)
+
+	result, err = runCmd("p4 print -q //import/main/file2.dat#1")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, contents2, result)
 }
 
 func TestAddEmpty(t *testing.T) {
