@@ -1168,15 +1168,26 @@ func TestAddCRLF2(t *testing.T) {
 	src := "src.txt"
 	file1 := "file1.txt"
 	file2 := "file2.dat"
+	file3 := "file3.dat"
 	srcContents1 := "contents\n"
 	contents1 := "contents1\r\ncontents2\r\ncontents3\n"
 	contents2 := "contents1a\r\ncontents2a\r\ncontents3a\n"
+	contents3 := "contents1b\r\ncontents2b\r\ncontents3b\n"
 	writeToFile(src, srcContents1)
 	writeToFile(file1, contents1)
 	writeToFile(file2, contents2)
 	runCmd("gzip " + src)
 	runCmd("git add .")
 	runCmd("git commit -m initial")
+	writeToFile(file2, contents3)
+	runCmd("git add .")
+	runCmd("git commit -m modified")
+	writeToFile(file3, contents3)
+	runCmd("git add .")
+	runCmd("git commit -m added2")
+	runCmd(fmt.Sprintf("rm %s", file3))
+	runCmd("git add .")
+	runCmd("git commit -m deleted")
 
 	c := &config.Config{
 		ImportDepot: "import", DefaultBranch: "main",
@@ -1193,7 +1204,8 @@ func TestAddCRLF2(t *testing.T) {
 	result, err := runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
 	assert.Equal(t, `//import/main/file1.txt#1 - add change 4 (text+C)
-//import/main/file2.dat#1 - add change 4 (binary)
+//import/main/file2.dat#2 - edit change 6 (binary)
+//import/main/file3.dat#2 - delete change 8 (binary)
 //import/main/src.txt.gz#1 - add change 4 (binary+F)
 `, result)
 
@@ -3913,6 +3925,79 @@ func TestBranchDelete(t *testing.T) {
 	// assert.Regexp(t, `lbrType text\+C`, result)
 	// assert.Regexp(t, `lbrFile //import/branch1/file1.txt`, result)
 	// assert.Regexp(t, `(?m)lbrPath .*/1.6.gz$`, result)
+
+}
+
+func TestBranchDeleteFiletype(t *testing.T) {
+	// Merge branches with deleted files
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	file1 := "file1.txt"
+	file2 := "file2.txt"
+	contents1 := "Contents\n"
+	contents2 := "Test content2\n"
+	writeToFile(file1, contents1)
+	writeToFile(file2, contents2)
+	runCmd("git add .")
+	runCmd("git commit -m \"1: first change\"")
+	runCmd("git checkout -b branch1")
+	runCmd("git add .")
+	bcontents1 := "branch change\n"
+	appendToFile(file1, bcontents1)
+	runCmd("git add .")
+	runCmd("git commit -m \"2: branch edit change\"")
+	runCmd("git rm " + file1)
+	runCmd("git add .")
+	runCmd("git commit -m \"3: delete file\"")
+	runCmd("git checkout main")
+	runCmd("git merge --no-ff branch1")
+	runCmd("git commit -m \"4: merged change\"")
+	runCmd("git log --graph --abbrev-commit --oneline")
+
+	c := &config.Config{
+		ImportDepot: "import", DefaultBranch: "main",
+		ReTypeMaps: make([]config.RegexpTypeMap, 0),
+	}
+	rePath := regexp.MustCompile("//.*.txt$") // Go version of typemap
+	c.ReTypeMaps = append(c.ReTypeMaps, config.RegexpTypeMap{Filetype: journal.Binary, RePath: rePath})
+
+	opts := &GitParserOptions{config: c, convertCRLF: true}
+	r := runTransferOpts(t, logger, opts)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/branch1/file1.txt#2 - delete change 6 (binary)
+//import/main/file1.txt#2 - delete change 7 (binary)
+//import/main/file2.txt#1 - add change 3 (binary)
+`,
+		result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 filelog //import/...")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `(?m)//import/branch1/file1.txt
+... #2 change 6 delete on .* by .*@git-client \(binary\).*
+... ... delete into //import/main/file1.txt#2
+... #1 change 5 add on .* by .*@git-client \(binary\).*
+... ... branch from //import/main/file1.txt#1`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file1.txt
+... #2 change 7 delete on .* by .*@git-client \(binary\).*
+... ... delete from //import/branch1/file1.txt#2
+... #1 change 3 add on .* by .*@git-client \(binary\).*
+... ... edit into //import/branch1/file1.txt#1`, result)
+
+	assert.Regexp(t, `(?m)//import/main/file2.txt
+... #1 change 3 add on .* by .*@git-client \(binary\).*`, result)
 
 }
 

@@ -748,11 +748,11 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 									gf.logger.Errorf("Failed to write: %s %v", fname, err)
 								}
 							}
-						}
-						// As we copied the file, lets's delete the original
-						err = os.Remove(bname)
-						if err != nil {
-							gf.logger.Errorf("Failed to remove: %s %v", bname, err)
+							// As we copied the file, lets's delete the original
+							err = os.Remove(bname)
+							if err != nil {
+								gf.logger.Errorf("Failed to remove: %v", err)
+							}
 						}
 					}
 				}(gf, bname, fname, convertCRLF))
@@ -796,7 +796,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 				// As we copied the file, lets's delete the original
 				err = os.Remove(bname)
 				if err != nil {
-					gf.logger.Errorf("Failed to remove: %s %v", bname, err)
+					gf.logger.Errorf("Failed to remove: %v", err)
 				}
 			}
 		}
@@ -1072,11 +1072,12 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		// modify defaults to edit, except when first rev or previously deleted
 		if gf.p4.rev == 1 || prevAction == delete {
 			gf.p4.p4action = journal.Add
-			// Determine filetype based on Typemap (if specified) - only on file add
-			for _, r := range opts.config.ReTypeMaps {
-				if r.RePath.MatchString(gf.p4.depotFile) {
-					gf.fileType = r.Filetype
-				}
+		}
+		// Determine filetype based on Typemap (if specified)
+		for _, r := range opts.config.ReTypeMaps {
+			if r.RePath.MatchString(gf.p4.depotFile) {
+				gf.fileType = r.Filetype
+				gf.baseFileType = gf.fileType
 			}
 		}
 	}
@@ -1162,6 +1163,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
 		gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
 		gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
+		gf.baseFileType = g.getDepotFileTypes(gf.p4.srcDepotFile, g.depotFileRevs[gf.p4.srcDepotFile].rev)
 		g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 		g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 	} else if gf.action == rename { // Rename means old file is being deleted
