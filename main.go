@@ -1166,6 +1166,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		gf.baseFileType = g.getDepotFileTypes(gf.p4.srcDepotFile, g.depotFileRevs[gf.p4.srcDepotFile].rev)
 		g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 		g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
+		g.recordDepotFileType(gf)
 	} else if gf.action == rename { // Rename means old file is being deleted
 		// If it is a merge of a rename then link to file on the branch, if we can find it!
 		handled := false
@@ -1527,7 +1528,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			continue
 		} else if gf.action == delete {
 			singleFile := false
-			if node.FindFile(gf.srcName) { // Single file rename
+			if node.FindFile(gf.name) { // Single file delete
 				singleFile = true
 			}
 			singleFile = g.singleFileDelete(newfiles, gf, cmt, singleFile)
