@@ -1211,14 +1211,16 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		}
 		if !handled {
 			// Either //dev/src or //dev/targ didn't exist
-			// So we handle as ??
+			// So we handle as straight rename
 			if !gf.isPseudoRename && !gf.isDoubleRename {
 				g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
 				g.depotFileRevs[gf.p4.srcDepotFile].action = delete
 			}
 			gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
-			gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
-			gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
+			if !gf.isDirtyRename {
+				gf.p4.lbrFile = g.depotFileRevs[gf.p4.srcDepotFile].lbrFile
+				gf.p4.lbrRev = g.depotFileRevs[gf.p4.srcDepotFile].lbrRev
+			}
 			srcRev := gf.p4.srcRev
 			if srcRev > 1 { // TODO why?
 				srcRev -= 1
