@@ -2037,6 +2037,97 @@ M 100644 :3 file2.txt
 	assert.Equal(t, "contents3\n", result)
 }
 
+func TestDirtyRenameOnBranch(t *testing.T) {
+	// Rename of a file on a branch where target has new contents
+	debug = true
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 9
+contents
+
+blob
+mark :2
+data 10
+contents2
+
+blob
+mark :3
+data 10
+contents3
+
+reset refs/heads/main
+commit refs/heads/main
+mark :4
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 file1.txt
+
+reset refs/heads/main
+commit refs/heads/main
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 5
+edit
+from :4
+M 100644 :2 file1.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :6
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 7
+rename
+from :5
+R file1.txt file2.txt
+M 100644 :3 file2.txt
+
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/file1.txt#1 - delete change 6 (text+C)
+//import/dev/file2.txt#1 - add change 6 (text+C)
+//import/main/file1.txt#2 - edit change 5 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //import/...")
+	reExpected := `//import/dev/file1.txt
+... #1 change 6 delete on \S+ by \S+ \S+ 'rename '
+... ... delete from //import/main/file1.txt#1,#2
+//import/dev/file2.txt
+... #1 change 6 add on \S+ by \S+ \S+ 'rename '
+... ... branch from //import/main/file1.txt#2
+//import/main/file1.txt
+... #2 change 5 edit on \S+ by \S+ \S+ 'edit '
+... ... delete into //import/dev/file1.txt#1
+... ... branch into //import/dev/file2.txt#1
+... #1 change 4 add on \S+ by \S+ \S+ 'initial '
+`
+
+	assert.Equal(t, nil, err)
+	compareFilelog(t, reExpected, result)
+	assert.Regexp(t, reExpected, result)
+
+	result, err = runCmd("p4 print -q //import/dev/file2.txt")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "contents3\n", result)
+}
+
 func TestRenameOnBranchWithEdit(t *testing.T) {
 	// Rename of a file on a branch with edited contents so R and M records, then merge back to main
 	debug = true

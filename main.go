@@ -867,9 +867,9 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 				// WriteInteg(toFile string, fromFile string, startFromRev int, endFromRev int, startToRev int, endToRev int,
 				//            how IntegHow, reverseHow IntegHow, chgNo int)
 				startFromRev := 0
-				endFromRev := gf.p4.srcRev
+				endFromRev := gf.p4.origSrcDepotRev
 				startToRev := 0
-				endToRev := gf.p4.origSrcDepotRev
+				endToRev := gf.p4.rev
 				// We create DeleteFrom integ between dev/src and main/src
 				j.WriteInteg(gf.p4.srcDepotFile, gf.p4.origSrcDepotFile, startFromRev, endFromRev, startToRev, endToRev, journal.DeleteFrom, journal.DeleteInto, c.commit.Mark)
 			}
