@@ -553,14 +553,21 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 						matcher.logger.Errorf("failed create: %s %v", fname, err)
 						return
 					}
-					defer f.Close()
 					zw := gzip.NewWriter(f)
-					defer zw.Close()
 					b.lock.Lock()
 					defer b.lock.Unlock()
 					_, err = zw.Write([]byte(data))
 					if err != nil {
 						matcher.logger.Errorf("failed write: %s %v", fname, err)
+						return
+					}
+					err = zw.Close()
+					if err != nil {
+						matcher.logger.Errorf("failed zipclose: %s %v", fname, err)
+					}
+					err = f.Close()
+					if err != nil {
+						matcher.logger.Errorf("failed close: %s %v", fname, err)
 						return
 					}
 					b.saved = true
@@ -589,12 +596,16 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 						matcher.logger.Errorf("failed create: %s %v", fname, err)
 						return
 					}
-					defer f.Close()
 					b.lock.Lock()
 					defer b.lock.Unlock()
 					fmt.Fprint(f, data)
 					if err != nil {
 						matcher.logger.Errorf("failed write: %s %v", fname, err)
+						return
+					}
+					err = f.Close()
+					if err != nil {
+						matcher.logger.Errorf("failed close: %s %v", fname, err)
 						return
 					}
 					b.saved = true
@@ -632,12 +643,12 @@ func writeToFile(fname, contents string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
 	fmt.Fprint(f, contents)
 	if err != nil {
 		return err
 	}
-	return nil
+	err = f.Close()
+	return err
 }
 
 // readFile - assume text feils small enough to be read into memory
@@ -732,12 +743,18 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 									gf.logger.Errorf("Failed to create: %s %v", fname, err)
 									return
 								}
-								defer f.Close()
 								zw := gzip.NewWriter(f)
-								defer zw.Close()
 								_, err = zw.Write([]byte(strings.ReplaceAll(data, "\r\n", "\n")))
 								if err != nil {
 									gf.logger.Errorf("Failed to write: %s %v", fname, err)
+								}
+								err = zw.Close()
+								if err != nil {
+									gf.logger.Errorf("Failed to zipclose: %s %v", fname, err)
+								}
+								err = f.Close()
+								if err != nil {
+									gf.logger.Errorf("Failed to close: %s %v", fname, err)
 								}
 							} else {
 								data, err := readFile(bname)
@@ -775,12 +792,18 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 						gf.logger.Errorf("Failed to create: %s %v", fname, err)
 						return
 					}
-					defer f.Close()
 					zw := gzip.NewWriter(f)
-					defer zw.Close()
 					_, err = zw.Write([]byte(strings.ReplaceAll(data, "\r\n", "\n")))
 					if err != nil {
 						gf.logger.Errorf("Failed to write: %s %v", fname, err)
+					}
+					err = zw.Close()
+					if err != nil {
+						gf.logger.Errorf("Failed to zipclose: %s %v", fname, err)
+					}
+					err = f.Close()
+					if err != nil {
+						gf.logger.Errorf("Failed to close: %s %v", fname, err)
 					}
 				} else {
 					data, err := readFile(bname)
