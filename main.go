@@ -1457,7 +1457,14 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 		for _, dupGf := range dupSrcs {
 			if dupGf.action == modify {
 				if dupGf.name == gf.srcName {
-					g.logger.Warnf("RenameOfModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+					// Treat a rename of a modified file as another dirty rename
+					g.logger.Warnf("RenameOfModifiedFile - DirtyRename2: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+					gf.isDirtyRename = true
+					gf.blob = dupGf.blob
+					gf.compressed = dupGf.compressed
+					gf.duplicateArchive = dupGf.duplicateArchive
+					gf.baseFileType = dupGf.baseFileType
+					dupGf.actionInvalid = true
 				} else {
 					g.logger.Warnf("UnexpectedModifySrcName: GitFile: %s ID %d, %s Src:%s", cmt.ref(), dupGf.ID, dupGf.name, dupGf.srcName)
 				}
@@ -1482,7 +1489,7 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 			}
 		}
 	}
-	if len(dups) > 0 || len(dupSrcs) > 0 { //
+	if len(dups) > 0 || len(dupSrcs) > 0 {
 		singleFile = true
 	}
 	return singleFile
@@ -1684,6 +1691,9 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 		valid := true
 		gf := cmt.files[i]
 		if gf.action == modify {
+			if gf.actionInvalid {
+				continue
+			}
 			// Search for renames or deletes of same file in current commit and note if found.
 			dups := findExactNameMatches(newfiles, gf.name)
 			if len(dups) > 0 {
