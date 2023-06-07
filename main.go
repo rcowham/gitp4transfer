@@ -1413,6 +1413,17 @@ func findExactNameMatches(files []*GitFile, name string) []*GitFile {
 	return result
 }
 
+// findModifyDirNameMatches - either name or srcName (if !actionInvalid)
+func findModifyDirNameMatches(files []*GitFile, name string) []*GitFile {
+	result := make([]*GitFile, 0)
+	for _, gf := range files {
+		if !gf.actionInvalid && (gf.action == modify) && hasDirPrefix(gf.name, name) {
+			result = append(result, gf)
+		}
+	}
+	return result
+}
+
 // func findSrcName(files []*GitFile, name string) *GitFile {
 // 	for _, gf := range files {
 // 		if gf.srcName == name {
@@ -1621,6 +1632,19 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			}
 
 			files := node.GetFiles(gf.srcName)
+			srcs := findModifyDirNameMatches(newfiles, gf.srcName)
+			for _, src := range srcs { // Append new modifies to list if not already there
+				found := false
+				for _, f := range files {
+					if f == src.name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					files = append(files, src.name)
+				}
+			}
 			if len(files) > 0 { // Turn dir rename into multiple single file renames
 				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
 				// First we look for files in current commit - because a single file rename can be followed by a dir rename which overrides it
@@ -1635,7 +1659,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 					}
 				}
 				for _, rf := range files {
-					if !hasDirPrefix(rf, string(gf.srcName)) {
+					if !hasDirPrefix(rf, gf.srcName) {
 						g.logger.Errorf("Unexpected src found: %s: %s", gf.srcName, rf)
 						continue
 					}
@@ -1653,7 +1677,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 						g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
 						newGf := newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger})
 						singleFile := g.singleFileRename(newfiles, newGf, cmt, true)
-						if singleFile && !gf.actionInvalid {
+						if singleFile && !newGf.actionInvalid {
 							newfiles = append(newfiles, newGf)
 						}
 					}

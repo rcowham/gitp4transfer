@@ -39,12 +39,14 @@ func (n *Node) DeleteSubFile(fullPath string, subPath string) {
 	if len(parts) == 1 {
 		i := 0
 		var c *Node
+		found := false
 		for i, c = range n.Children {
 			if c.Name == parts[0] {
+				found = true
 				break
 			}
 		}
-		if i < len(n.Children) {
+		if i < len(n.Children) && found { // Ignore files not found
 			n.Children[i] = n.Children[len(n.Children)-1]
 			n.Children = n.Children[:len(n.Children)-1]
 		}

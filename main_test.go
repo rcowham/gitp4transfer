@@ -489,13 +489,35 @@ func TestCommitValidRenameOfModify(t *testing.T) {
 	assert.Equal(t, 1, len(nfiles))
 	assert.Equal(t, "file1.txt", nfiles[0])
 
-	// Pseudo rename we modify the supposedly deleted file
+	// Modify file and rename
 	gc = newValidatedCommit(g, []testFile{{name: "file1.txt", srcName: "", action: modify},
 		{name: "file2.txt", srcName: "file1.txt", action: rename}})
 	assert.Equal(t, 1, len(gc.files))
 	assert.Equal(t, "file2.txt", gc.files[0].name)
 	assert.True(t, gc.files[0].isDirtyRename)
 	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "file2.txt", nfiles[0])
+}
+
+func TestCommitValidRenameOfModifySameCommit(t *testing.T) {
+	// Rename a modified file - another sequence for dirty rename
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Same commit - we modify a file and rename it
+	gc := newValidatedCommit(g, []testFile{{name: "file1.txt", srcName: "", action: modify},
+		{name: "file2.txt", srcName: "file1.txt", action: rename}})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "file2.txt", gc.files[0].name)
+	assert.True(t, gc.files[0].isDirtyRename)
+	nfiles := g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 1, len(nfiles))
 	assert.Equal(t, "file2.txt", nfiles[0])
 }
@@ -518,13 +540,35 @@ func TestCommitValidRenameDirOfModify(t *testing.T) {
 	assert.Equal(t, 1, len(nfiles))
 	assert.Equal(t, "src/file1.txt", nfiles[0])
 
-	// Pseudo rename we modify the supposedly deleted file
+	// Modify and rename file
 	gc = newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
 		{name: "targ", srcName: "src", action: rename}})
 	assert.Equal(t, 1, len(gc.files))
 	assert.Equal(t, "targ/file1.txt", gc.files[0].name)
 	assert.True(t, gc.files[0].isDirtyRename)
 	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "targ/file1.txt", nfiles[0])
+}
+
+func TestCommitValidRenameDirOfModifySameCommit(t *testing.T) {
+	// Rename a modified file - another sequence for dirty rename
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Modify and rename file in same commit
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "targ", srcName: "src", action: rename}})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "targ/file1.txt", gc.files[0].name)
+	assert.True(t, gc.files[0].isDirtyRename)
+	nfiles := g.filesOnBranch["main"].GetFiles("")
 	assert.Equal(t, 1, len(nfiles))
 	assert.Equal(t, "targ/file1.txt", nfiles[0])
 }
