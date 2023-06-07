@@ -17,6 +17,10 @@ LDFLAGS=-ldflags="-w -s -X ${MODULE}/version.Version=${VERSION} -X ${MODULE}/ver
 build:
 	go build ${LOCAL_LDFLAGS}
 
+# Test - with extended timeout since 10m is default
+test:
+	go test -timeout 15m
+
 # Builds distributions
 dist:
 	GOOS=darwin GOARCH=amd64 go build -o bin/${BINARY}-darwin-amd64 ${LDFLAGS}
@@ -30,4 +34,4 @@ dist:
 clean:
 	if [ -f ${BINARY} ] ; then rm ${BINARY} ; fi
 
-.PHONY: clean install
+.PHONY: clean install test
