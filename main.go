@@ -1631,9 +1631,11 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 				continue // single file actions processed
 			}
 
+			// Find pre-existing files being renamed
+			// Search for modifies in the current commit which are being renamed and adjust them
 			files := node.GetFiles(gf.srcName)
 			srcs := findModifyDirNameMatches(newfiles, gf.srcName)
-			for _, src := range srcs { // Append new modifies to list if not already there
+			for _, src := range srcs {
 				found := false
 				for _, f := range files {
 					if f == src.name {
@@ -1642,7 +1644,9 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 					}
 				}
 				if !found {
-					files = append(files, src.name)
+					dest := fmt.Sprintf("%s%s", gf.name, src.name[len(gf.srcName):])
+					g.logger.Debugf("RenameOverrideModify: %s Src:%s Dst:%s", cmt.ref(), src.name, dest)
+					src.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
 				}
 			}
 			if len(files) > 0 { // Turn dir rename into multiple single file renames
