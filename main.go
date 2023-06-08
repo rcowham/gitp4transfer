@@ -260,7 +260,6 @@ type GitFile struct {
 	isMerge          bool
 	isDirtyRename    bool             // Rename where content changed in same commit
 	isPseudoRename   bool             // Rename where source file should not be deleted as updated in same commit
-	isDoubleRename   bool             // Second rename of same source file in same commit
 	baseFileType     journal.FileType // baseFileType means Text or Binary
 	fileType         journal.FileType // fileType includes typemap matching
 	compressed       bool
@@ -670,7 +669,7 @@ func readFile(fname string) (string, error) {
 
 // CreateArchiveFile - Rename the saved blob to appropriate archive file as required
 func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptions, matcher *BlobFileMatcher, changeNo int) {
-	if gf.action == delete || (gf.action == rename && !gf.isDirtyRename && !gf.isPseudoRename && !gf.isDoubleRename) ||
+	if gf.action == delete || (gf.action == rename && !gf.isDirtyRename && !gf.isPseudoRename) ||
 		gf.blob == nil || !gf.blob.hasData {
 		return
 	}
@@ -881,7 +880,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 		}
 	} else if gf.action == rename {
 		if gf.isBranch { // Rename of a branched file - create integ records from parent
-			if !gf.isPseudoRename && !gf.isDoubleRename {
+			if !gf.isPseudoRename {
 				// Branched rename from dev -> main
 				// Original file was dev/src
 				// Branched as main/src -> main/targ
@@ -913,7 +912,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			endFromRev := gf.p4.origTargDepotRev
 			startToRev := minval(gf.p4.rev-1, 0)
 			endToRev := gf.p4.rev
-			if gf.isPseudoRename || gf.isDoubleRename {
+			if gf.isPseudoRename {
 				endFromRev = gf.p4.srcRev // Not deleted for pseudo rename
 			} else {
 				j.WriteRev(gf.p4.srcDepotFile, gf.p4.srcRev, journal.Delete, fileType, chgNo, gf.p4.lbrFile, gf.p4.lbrRev, dt)
@@ -941,7 +940,7 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 			endFromRev := gf.p4.srcRev - 1
 			startToRev := gf.p4.rev - 1
 			endToRev := gf.p4.rev
-			if gf.isPseudoRename || gf.isDoubleRename {
+			if gf.isPseudoRename {
 				// The src is not deleted for pseudo/double renames
 				endFromRev = gf.p4.srcRev
 			} else {
@@ -1207,7 +1206,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 			if targOrigDepotPath != "" && srcOrigDepotPath != "" {
 				// Both //dev/src and //dev/targ exist
 				handled = true
-				if !gf.isPseudoRename && !gf.isDoubleRename {
+				if !gf.isPseudoRename {
 					g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
 				}
 				gf.p4.srcRev = g.depotFileRevs[gf.p4.srcDepotFile].rev
@@ -1235,7 +1234,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		if !handled {
 			// Either //dev/src or //dev/targ didn't exist
 			// So we handle as straight rename
-			if !gf.isPseudoRename && !gf.isDoubleRename {
+			if !gf.isPseudoRename {
 				g.depotFileRevs[gf.p4.srcDepotFile].rev += 1
 				g.depotFileRevs[gf.p4.srcDepotFile].action = delete
 			}
@@ -1490,9 +1489,8 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 			} else if dupGf.action == rename {
 				if dupGf.name == gf.srcName {
 					dupGf.actionInvalid = true
-					dupGf.isDoubleRename = true
 					gf.srcName = dupGf.srcName // a->b and b->c so create just a->c
-					g.logger.Warnf("DoubleRename2: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					g.logger.Warnf("DoubleRename2: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, gf.name)
 				} else { // dupGf.srcName
 					gf.actionInvalid = true
 					g.logger.Warnf("DoubleRenameOfSourceIgnored2: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
@@ -1587,6 +1585,20 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			// * invalid delete (attempted delete of non-existant file or path - log and ignore)
 			// Note that dir deletes can also override other (prior) actions in same commit
 			files := node.GetFiles(gf.name)
+			commitDeletes := findModifyDirNameMatches(newfiles, gf.name)
+			for _, df := range commitDeletes {
+				found := false
+				for _, f := range files {
+					if f == df.name {
+						found = true
+						break
+					}
+				}
+				if !found {
+					g.logger.Debugf("DeleteOverrideModify: %s Dir:%s File:%s", cmt.ref(), gf.name, df.name)
+					df.actionInvalid = true
+				}
+			}
 			filesDeleted := 0
 			if len(files) > 0 {
 				g.logger.Debugf("DirDelete: Path:%s", gf.name)
@@ -1595,7 +1607,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 						g.logger.Errorf("Unexpected DirFileDelete path found: %s: %s", gf.name, df)
 						continue
 					}
-					g.logger.Debugf("DirFileDelete: %s Path:%s", cmt.ref(), df)
+					g.logger.Debugf("DirFileDelete: %s Dir:%s Path:%s", cmt.ref(), gf.name, df)
 					newGf := newGitFile(&GitFile{name: df, action: delete, logger: g.logger})
 					singleFile := g.singleFileDelete(newfiles, newGf, cmt, true)
 					if singleFile && !gf.actionInvalid {
@@ -1678,7 +1690,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 					if foundDouble {
 						g.logger.Debugf("DirFileRenameIgnoredAsDouble: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
 					} else {
-						g.logger.Debugf("DirFileRename: %s Src:%s Dst:%s", cmt.ref(), rf, dest)
+						g.logger.Debugf("DirFileRename: %s Dir:%s Src:%s Dst:%s", cmt.ref(), gf.srcName, rf, dest)
 						newGf := newGitFile(&GitFile{name: dest, srcName: rf, action: rename, logger: g.logger})
 						singleFile := g.singleFileRename(newfiles, newGf, cmt, true)
 						if singleFile && !newGf.actionInvalid {

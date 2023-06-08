@@ -574,6 +574,54 @@ func TestCommitValidRenameDirOfModifySameCommit(t *testing.T) {
 	assert.Equal(t, "targ/file1.txt", nfiles[0])
 }
 
+func TestCommitValidDeleteDirAndModify(t *testing.T) {
+	// Modify a file deleted by dir delete
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify}})
+	assert.Equal(t, 1, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+
+	// Delete and Modify file
+	gc = newValidatedCommit(g, []testFile{{name: "src", srcName: "", action: delete},
+		{name: "src/file1.txt", srcName: "", action: modify}})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "src/file1.txt", gc.files[0].name)
+	assert.Equal(t, modify, gc.files[0].action)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+}
+
+func TestCommitValidDeleteDirAndModifySameCommit(t *testing.T) {
+	// Modify a file deleted by dir delete
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Delete and Modify file
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src", srcName: "", action: delete}})
+	assert.Equal(t, 0, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 0, len(nfiles))
+}
+
 func TestCommitValidRenameBecomes2Edits(t *testing.T) {
 	// A rename which is both dirty and pseudo - so ultimately not a rename!
 	logger := createLogger()
@@ -3137,6 +3185,164 @@ D src
 ... #1 change 3 add on \S+ by \S+ \S+ 'initial '
 ... ... delete into //import/dev/src/file2.txt#1
 ... ... branch into //import/dev/targ/file3.txt#1
+`
+	assert.Regexp(t, reExpected, result)
+	compareFilelog(t, reExpected, result)
+}
+
+func TestDeleteDirWithModifyOnBranch(t *testing.T) {
+	// File is deleted on branch and modified in same commit - should only be 1 action
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 9
+contents
+
+blob
+mark :2
+data 10
+contents2
+
+reset refs/heads/main
+commit refs/heads/main
+mark :3
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+M 100644 :2 src/file2.txt
+
+commit refs/heads/dev
+mark :4
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+added-one
+from :3
+D src
+M 100644 :2 src/file1.txt
+
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file1.txt#1 - add change 4 (text+C)
+//import/dev/src/file2.txt#1 - delete change 4 (text+C)
+//import/main/src/file1.txt#1 - add change 3 (text+C)
+//import/main/src/file2.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	reExpected := `//import/dev/src/file1.txt
+... #1 change 4 add on \S+ by \S+ \S+ 'added-one '
+... ... branch from //import/main/src/file1.txt#1
+//import/dev/src/file2.txt
+... #1 change 4 delete on \S+ by \S+ \S+ 'added-one '
+//import/main/src/file1.txt
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+... ... edit into //import/dev/src/file1.txt#1
+//import/main/src/file2.txt
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+`
+	assert.Regexp(t, reExpected, result)
+	compareFilelog(t, reExpected, result)
+}
+
+func TestDeleteDirWithModifyAndMerge(t *testing.T) {
+	// File is deleted on branch and modified in same commit with a merge - should only be 1 action
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 11
+contents01
+
+blob
+mark :2
+data 11
+contents02
+
+blob
+mark :3
+data 11
+contents03
+
+blob
+mark :4
+data 11
+contents04
+
+reset refs/heads/main
+commit refs/heads/main
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :6
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 9
+05devmrg
+from :5
+M 100644 :3 src/file2.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :7
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 9
+05devmrg
+from :6
+merge :5
+D src
+M 100644 :4 src/file1.txt
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file1.txt#1 - add change 7 (text+C)
+//import/dev/src/file2.txt#2 - delete change 7 (text+C)
+//import/main/src/file1.txt#1 - add change 5 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	reExpected := `//import/dev/src/file1.txt
+... #1 change 7 add on \S+ by \S+ \S+ '05devmrg '
+... ... branch from //import/main/src/file1.txt#1
+//import/dev/src/file2.txt
+... #2 change 7 delete on \S+ by \S+ \S+ '05devmrg '
+... #1 change 6 add on \S+ by \S+ \S+ '05devmrg '
+//import/main/src/file1.txt
+... #1 change 5 add on \S+ by \S+ \S+ 'initial '
+... ... edit into //import/dev/src/file1.txt#1
 `
 	assert.Regexp(t, reExpected, result)
 	compareFilelog(t, reExpected, result)
