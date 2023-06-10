@@ -875,6 +875,50 @@ func TestCommitValidDeleteFollowedByRenameDir(t *testing.T) {
 	assert.Equal(t, "targ/file2.txt", nfiles[0])
 }
 
+func TestCommitValidDirRenameRenameBackDelete(t *testing.T) {
+	// Complex scenario of rename and deletes in same commit!
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file2.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 2, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
+
+	// Rename dir, modify, rename back, delete and modify!
+	gc = newValidatedCommit(g, []testFile{
+		{name: "temp", srcName: "src", action: rename},
+		{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src", srcName: "temp", action: rename},
+		{name: "temp", srcName: "", action: delete},
+		{name: "src/file1.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "src/file1.txt", gc.files[0].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
+}
+
+// 665: R Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris.tmp-8b37b29c
+// 1031: M 100644 :658513 Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris/MI_Prop_Stone_Brick_01.uasset
+// 5219: R Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris.tmp-8b37b29c/MI_Prop_Stone_Brick_01.uasset
+//         Games/HPPrototype01/Content/Heroes/Environments/Nature/Ground/Debris/MI_Prop_Stone_Brick_01.uasset
+// 5481: D Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris.tmp-8b37b29c
+// 8746: M 100644 :653091 Games/HPPrototype01/Content/Heroes/Environments/Nature/Ground/Debris/MI_Prop_Stone_Brick_01.uasset
+
 // ------------------------------------------------------------------
 
 func TestAdd(t *testing.T) {
@@ -3304,17 +3348,27 @@ data 9
 from :5
 M 100644 :3 src/file2.txt
 
+reset refs/heads/main
+commit refs/heads/main
+mark :7
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 7
+07main
+from :5
+M 100644 :2 src/file2.txt
+
 reset refs/heads/dev
 commit refs/heads/dev
-mark :7
+mark :8
 author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
 committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
 data 9
 05devmrg
 from :6
-merge :5
+merge :7
 D src
-M 100644 :4 src/file1.txt
+M 100644 :3 src/file1.txt
 `
 
 	r := runTransferWithDump(t, logger, gitExport, nil)
@@ -3326,23 +3380,26 @@ M 100644 :4 src/file1.txt
 
 	result, err = runCmd("p4 files //...")
 	assert.Equal(t, nil, err)
-	assert.Equal(t, `//import/dev/src/file1.txt#1 - add change 7 (text+C)
-//import/dev/src/file2.txt#2 - delete change 7 (text+C)
+	assert.Equal(t, `//import/dev/src/file1.txt#1 - add change 8 (text+C)
+//import/dev/src/file2.txt#2 - delete change 8 (text+C)
 //import/main/src/file1.txt#1 - add change 5 (text+C)
+//import/main/src/file2.txt#1 - add change 7 (text+C)
 `,
 		result)
 
 	result, err = runCmd("p4 filelog //...")
 	assert.Equal(t, nil, err)
 	reExpected := `//import/dev/src/file1.txt
-... #1 change 7 add on \S+ by \S+ \S+ '05devmrg '
+... #1 change 8 add on \S+ by \S+ \S+ '05devmrg '
 ... ... branch from //import/main/src/file1.txt#1
 //import/dev/src/file2.txt
-... #2 change 7 delete on \S+ by \S+ \S+ '05devmrg '
+... #2 change 8 delete on \S+ by \S+ \S+ '05devmrg '
 ... #1 change 6 add on \S+ by \S+ \S+ '05devmrg '
 //import/main/src/file1.txt
 ... #1 change 5 add on \S+ by \S+ \S+ 'initial '
 ... ... edit into //import/dev/src/file1.txt#1
+//import/main/src/file2.txt
+... #1 change 7 add on \S+ by \S+ \S+ '07main '
 `
 	assert.Regexp(t, reExpected, result)
 	compareFilelog(t, reExpected, result)
