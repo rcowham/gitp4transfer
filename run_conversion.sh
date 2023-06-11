@@ -25,7 +25,7 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-crlf] [-insensitive] 
+run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
     [-depot <import depot>] [-graph <graphFile.dot>] [-m <max commits>] [-t <parallel threads>]
 
    or
@@ -38,6 +38,7 @@ run_conversion.sh -h
     -dummy       Create dummy archives as placeholders (no real content) - much faster
     -graph       Create Graphviz output showing commit structure
     -insensitive Specify case insensitive checkpoint (and lowercase archive files) - for Linux servers
+    -sensitive   Specify case sensitive checkpoint and restore - for Mac/Windows servers
     -m           Max no of commits to process
     -t           No of parallel threads to use (default is No of CPUs)
     <P4Root>     Directory to use as resulting P4Root - will default to a tmp dir
@@ -57,6 +58,7 @@ declare -i shiftArgs=0
 declare -i Debug=0
 declare -i Dummy=0
 declare -i CaseInsensitive=0
+declare -i CaseSensitive=0
 declare -i ConvertCRLF=0
 declare -i MaxCommits=0
 declare -i ParallelThreads=0
@@ -78,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         (-depot) ImportDepot=$2; shiftArgs=1;;
         (-dummy) Dummy=1;;
         (-insensitive) CaseInsensitive=1;;
+        (-sensitive) CaseSensitive=1;;
         (-graph) GraphFile=$2; shiftArgs=1;;
         (-m) MaxCommits=$2; shiftArgs=1;;
         (-t) ParallelThreads=$2; shiftArgs=1;;
@@ -123,6 +126,9 @@ P4DCaseFlag=""
 if [[ $CaseInsensitive -ne 0 ]]; then
     CaseInsensitiveFlag="--case.insensitive"
     P4DCaseFlag="-C1"
+fi
+if [[ $CaseSensitive -ne 0 ]]; then
+    P4DCaseFlag="-C0"
 fi
 CRLFFlag=""
 if [[ $ConvertCRLF -ne 0 ]]; then
