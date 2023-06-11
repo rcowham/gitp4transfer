@@ -1507,6 +1507,7 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 				if dupGf.name == gf.srcName {
 					dupGf.actionInvalid = true
 					gf.srcName = dupGf.srcName // a->b and b->c so create just a->c
+					gf.isPseudoRename = dupGf.isPseudoRename
 					g.logger.Warnf("DoubleRename2: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, gf.name)
 				} else { // dupGf.srcName
 					gf.actionInvalid = true
