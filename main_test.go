@@ -912,12 +912,48 @@ func TestCommitValidDirRenameRenameBackDelete(t *testing.T) {
 	assert.Equal(t, "src/file2.txt", nfiles[1])
 }
 
-// 665: R Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris.tmp-8b37b29c
-// 1031: M 100644 :658513 Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris/MI_Prop_Stone_Brick_01.uasset
-// 5219: R Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris.tmp-8b37b29c/MI_Prop_Stone_Brick_01.uasset
-//         Games/HPPrototype01/Content/Heroes/Environments/Nature/Ground/Debris/MI_Prop_Stone_Brick_01.uasset
-// 5481: D Games/HPPrototype01/Content/Heroes/Environments/Prop/Debris.tmp-8b37b29c
-// 8746: M 100644 :653091 Games/HPPrototype01/Content/Heroes/Environments/Nature/Ground/Debris/MI_Prop_Stone_Brick_01.uasset
+// 665: R Games/Prop/Debris Games/Prop/Debris.tmp-8b37b29c
+// 1031: M 100644 :658513 Games/Prop/Debris/Brick_01.uasset
+// 5219: R Games/Prop/Debris.tmp-8b37b29c/Brick_01.uasset
+//         Games/Nature/Ground/Debris/Brick_01.uasset
+// 5481: D Games/Prop/Debris.tmp-8b37b29c
+// 8746: M 100644 :653091 Games/Nature/Ground/Debris/Brick_01.uasset
+
+func TestCommitValidDirRenameRenameBackDelete2(t *testing.T) {
+	// Complex scenario of rename and deletes in same commit!
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file2.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 2, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 2, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	assert.Equal(t, "src/file2.txt", nfiles[1])
+
+	// Rename dir, modify, rename back, delete and modify!
+	gc = newValidatedCommit(g, []testFile{
+		{name: "temp", srcName: "src", action: rename},
+		{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "src/file1.txt", srcName: "temp/file1.txt", action: rename},
+		{name: "temp", srcName: "", action: delete},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "src/file2.txt", gc.files[0].name)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, delete, gc.files[0].action)
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+}
 
 // ------------------------------------------------------------------
 

@@ -1450,8 +1450,8 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 		for _, dupGf := range dups {
 			if dupGf.action == modify {
 				if dupGf.name == gf.name {
-					gf.actionInvalid = true
-					g.logger.Warnf("RenameToModifiedFile: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+					dupGf.actionInvalid = true
+					g.logger.Warnf("RenameToModifiedFile - modify ignored: GitFile: %s ID %d, %s", cmt.ref(), dupGf.ID, dupGf.name)
 				} else {
 					g.logger.Warnf("UnexpectedModifySrcName1: GitFile: %s ID %d, %s Src:%s", cmt.ref(), dupGf.ID, dupGf.name, dupGf.srcName)
 				}
@@ -1467,8 +1467,14 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 					dupGf.actionInvalid = true
 					g.logger.Warnf("DoubleRenameTargetIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
 				} else { // dupGf.srcName
-					dupGf.isPseudoRename = true
-					g.logger.Warnf("CascadeRename: %s Src:%s Med:%s Dst:%s", cmt.ref(), gf.srcName, dupGf.srcName, dupGf.name)
+					if dupGf.name == gf.srcName && dupGf.srcName == gf.name {
+						g.logger.Debugf("RenameBack - both ignored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+						dupGf.actionInvalid = true
+						gf.actionInvalid = true
+					} else {
+						dupGf.isPseudoRename = true
+						g.logger.Debugf("CascadeRename: %s Src:%s Med:%s Dst:%s", cmt.ref(), gf.srcName, dupGf.srcName, dupGf.name)
+					}
 				}
 			}
 		}
