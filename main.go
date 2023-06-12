@@ -1695,11 +1695,16 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			for _, dupGf := range newfiles {
 				// Check if our dir delete is overriding any renames, in which case convert renames to deletes
 				if !dupGf.actionInvalid && dupGf.action == rename && hasDirPrefix(dupGf.name, gf.name) {
-					g.logger.Debugf("DirDeleteOverrideRename: %s Path:%s Src:%s Dst:%s", cmt.ref(), gf.name, dupGf.srcName, dupGf.name)
-					dupGf.action = delete
-					dupGf.name = dupGf.srcName
-					dupGf.srcName = ""
-					filesDeleted += 1
+					if dupGf.isPseudoRename {
+						g.logger.Debugf("DirDeleteOverridePseudoRename: %s Path:%s Src:%s Dst:%s", cmt.ref(), gf.name, dupGf.srcName, dupGf.name)
+						dupGf.actionInvalid = true
+					} else {
+						g.logger.Debugf("DirDeleteOverrideRename: %s Path:%s Src:%s Dst:%s", cmt.ref(), gf.name, dupGf.srcName, dupGf.name)
+						dupGf.action = delete
+						dupGf.name = dupGf.srcName
+						dupGf.srcName = ""
+						filesDeleted += 1
+					}
 				}
 			}
 			if filesDeleted == 0 {
