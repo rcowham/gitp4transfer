@@ -3899,6 +3899,135 @@ M 100644 :4 src/file3.txt
 	assert.Equal(t, "contents04\n", result)
 }
 
+func TestRenameMergeOnBranchOfDeletedFile(t *testing.T) {
+	// File is renamed on branch where original has been deleted
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 11
+contents01
+
+blob
+mark :2
+data 11
+contents02
+
+blob
+mark :3
+data 11
+contents03
+
+blob
+mark :4
+data 11
+contents04
+
+reset refs/heads/main
+commit refs/heads/main
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :6
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 10
+01devedit
+from :5
+M 100644 :2 src/file1.txt
+
+reset refs/heads/dev2
+commit refs/heads/dev2
+mark :7
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 9
+03devren
+from :5
+R src/file1.txt targ/file1.txt
+M 100644 :3 src/file1.txt
+
+reset refs/heads/dev2
+commit refs/heads/dev2
+mark :8
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 9
+03devren
+from :7
+D targ/file1.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :9
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 9
+03devren
+from :6
+merge :8
+R src/file1.txt targ/file1.txt
+M 100644 :3 targ/file1.txt
+
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file1.txt#2 - delete change 9 (text+C)
+//import/dev/targ/file1.txt#1 - add change 9 (text+C)
+//import/dev2/src/file1.txt#2 - edit change 7 (text+C)
+//import/dev2/targ/file1.txt#2 - delete change 8 (text+C)
+//import/main/src/file1.txt#1 - add change 5 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	reExpected := `//import/dev/src/file1.txt
+... #2 change 9 delete on \S+ by \S+ \S+ '03devren '
+... ... delete from //import/dev2/src/file1.txt#1,#2
+... #1 change 6 add on \S+ by \S+ \S+ '01devedit '
+... ... branch from //import/main/src/file1.txt#1
+//import/dev/targ/file1.txt
+... #1 change 9 add on \S+ by \S+ \S+ '03devren '
+... ... branch from //import/dev2/targ/file1.txt#1,#2
+//import/dev2/src/file1.txt
+... #2 change 7 edit on \S+ by \S+ \S+ '03devren '
+... ... delete into //import/dev/src/file1.txt#2
+... ... branch from //import/main/src/file1.txt#1
+//import/dev2/targ/file1.txt
+... #2 change 8 delete on \S+ by \S+ \S+ '03devren '
+... ... branch into //import/dev/targ/file1.txt#1
+... #1 change 7 add on \S+ by \S+ \S+ '03devren '
+... ... branch from //import/main/src/file1.txt#1
+//import/main/src/file1.txt
+... #1 change 5 add on \S+ by \S+ \S+ 'initial '
+... ... edit into //import/dev/src/file1.txt#1
+... ... edit into //import/dev2/src/file1.txt#2
+... ... branch into //import/dev2/targ/file1.txt#1
+`
+	assert.Regexp(t, reExpected, result)
+	compareFilelog(t, reExpected, result)
+
+	result, err = runCmd("p4 print -q //import/dev/targ/file1.txt")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "contents03\n", result)
+}
+
 func TestDeleteOfRenamedDir(t *testing.T) {
 	// Dir renamed and target deleted
 	logger := createLogger()

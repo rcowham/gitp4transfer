@@ -1216,15 +1216,19 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 				gf.p4.origSrcDepotRev = g.depotFileRevs[srcOrigDepotPath].rev
 				gf.baseFileType = g.getDepotFileTypes(targOrigDepotPath, g.depotFileRevs[targOrigDepotPath].rev)
 				if g.depotFileRevs[targOrigDepotPath].action == delete {
-					g.logger.Debugf("UDR7a: %s", gf.p4.depotFile) // We don't reference a deleted revision
-					gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
-					gf.p4.lbrRev = g.depotFileRevs[targOrigDepotPath].lbrRev - 1
+					g.logger.Debugf("UDR7a: %s dirty:%v", gf.p4.depotFile, gf.isDirtyRename) // We don't reference a deleted revision
+					if !gf.isDirtyRename {
+						gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
+						gf.p4.lbrRev = g.depotFileRevs[targOrigDepotPath].lbrRev - 1
+					}
 					g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 					g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 				} else {
-					g.logger.Debugf("UDR7b: %s", gf.p4.depotFile)
-					gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
-					gf.p4.lbrRev = g.depotFileRevs[targOrigDepotPath].lbrRev
+					g.logger.Debugf("UDR7b: %s dirty:%v", gf.p4.depotFile, gf.isDirtyRename)
+					if !gf.isDirtyRename {
+						gf.p4.lbrFile = g.depotFileRevs[targOrigDepotPath].lbrFile
+						gf.p4.lbrRev = g.depotFileRevs[targOrigDepotPath].lbrRev
+					}
 					g.depotFileRevs[gf.p4.depotFile].lbrRev = gf.p4.lbrRev
 					g.depotFileRevs[gf.p4.depotFile].lbrFile = gf.p4.lbrFile
 				}
