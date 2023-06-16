@@ -1789,14 +1789,19 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 				// Check for rename back to original - in which case we discard both
 				g.logger.Debugf("DoubleDirRename: Src:%s Dst:%s", gf.srcName, gf.name)
 				for _, dupGf := range dirRenames {
-					dest := fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.srcName):])
+					dest := ""
+					if len(dupGf.name) > len(gf.srcName) {
+						dest = fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.srcName):])
+					}
 					if dupGf.srcName == dest {
 						g.logger.Debugf("RenameBack - ignored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
 						dupGf.actionInvalid = true
-					} else {
-						dest := fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.name):])
+					} else if len(dupGf.name) > len(gf.name) {
+						dest = fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.name):])
 						dupGf.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
 						g.logger.Debugf("RenameOverride2: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					} else {
+						g.logger.Debugf("RenameOverride3 - unexpected dir: %s Dir:%s Dst:%s", cmt.ref(), gf.name, dupGf.name)
 					}
 				}
 			}
@@ -2183,6 +2188,7 @@ func main() {
 		debugCommit:     *debugCommit,
 	}
 	logger.Infof("Options: %+v", opts)
+	logger.Infof("Options.config: %+v", opts.config)
 	g, err := NewGitP4Transfer(logger, opts)
 	if err != nil {
 		logger.Errorf("error loading config: %v", err)
