@@ -745,7 +745,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 								zw := gzip.NewWriter(f)
 								_, err = zw.Write([]byte(strings.ReplaceAll(data, "\r\n", "\n")))
 								if err != nil {
-									gf.logger.Errorf("Failed to write: %s %v", fname, err)
+									gf.logger.Errorf("Failed to write1: %s %v", fname, err)
 								}
 								err = zw.Close()
 								if err != nil {
@@ -761,7 +761,9 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 									gf.logger.Errorf("Failed to read: %s %v", fname, err)
 								} else {
 									err = writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
-									gf.logger.Errorf("Failed to write: %s %v", fname, err)
+									if err != nil {
+										gf.logger.Errorf("Failed to write2: %s %v", fname, err)
+									}
 								}
 							}
 							// As we copied the file, lets's delete the original
@@ -794,7 +796,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 					zw := gzip.NewWriter(f)
 					_, err = zw.Write([]byte(strings.ReplaceAll(data, "\r\n", "\n")))
 					if err != nil {
-						gf.logger.Errorf("Failed to write: %s %v", fname, err)
+						gf.logger.Errorf("Failed to write3: %s %v", fname, err)
 					}
 					err = zw.Close()
 					if err != nil {
@@ -812,7 +814,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 					}
 					err = writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
 					if err != nil {
-						gf.logger.Errorf("Failed to write: %s %v", fname, err)
+						gf.logger.Errorf("Failed to write4: %s %v", fname, err)
 					}
 				}
 				// As we copied the file, lets's delete the original
@@ -1534,6 +1536,11 @@ func (g *GitP4Transfer) singleFileDelete(newfiles []*GitFile, gf *GitFile, cmt *
 			if dupGf.action == modify {
 				g.logger.Debugf("DeleteOverridesModify: GitFile: %s ID %d, %s", cmt.ref(), dupGf.ID, gf.name)
 				dupGf.actionInvalid = true
+				g.blobFileMatcher.removeGitFile(dupGf)
+				if !singleFile {
+					g.logger.Debugf("DeleteDiscarded: GitFile: %s ID %d, %s", cmt.ref(), gf.ID, gf.name)
+					gf.actionInvalid = true
+				}
 			} else if dupGf.action == rename {
 				if dupGf.name == gf.name {
 					g.logger.Debugf("DeleteOverridesRename: GitFile: %s ID %d, %s Src:%s", cmt.ref(), dupGf.ID, gf.name, dupGf.srcName)
@@ -1643,6 +1650,23 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 						g.logger.Warnf("ModifyOfDeletedFile: %s GitFile: ID %d, %s",
 							cmt.ref(), gf.ID, gf.name)
 						dupGf.actionInvalid = true
+						newfiles = append(newfiles, gf)
+					} else if dupGf.action == modify && !dupGf.actionInvalid {
+						g.logger.Debugf("ModifyOverridesModify: %s %s, GitFile: ID %d, %s",
+							cmt.ref(), dupGf.name, dupGf.ID, dupGf.name)
+						dupGf.actionInvalid = true
+						g.blobFileMatcher.removeGitFile(dupGf)
+						// Having updated blob filematcher, if we are duplicate archive then may need to reset
+						if gf.duplicateArchive {
+							blobID := gf.blob.blob.Mark
+							// Bit inefficient perhaps, but shouldn't happen too often we hope.
+							b := g.blobFileMatcher.getBlob(blobID)
+							if b != nil && len(b.gitFileIDs) == 1 && b.gitFileIDs[0] == gf.ID { // First ref to this blob
+								gf.duplicateArchive = false
+								g.logger.Debugf("Reset Duplicate flag: %s %s, GitFile: ID %d",
+									cmt.ref(), gf.name, gf.ID)
+							}
+						}
 						newfiles = append(newfiles, gf)
 					}
 				}
@@ -2003,7 +2027,6 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				g.blobFileMatcher.addGitFile(gf)
 				g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
 					currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.baseFileType)
-
 				currCommit.files = append(currCommit.files, gf)
 
 			case libfastimport.FileDelete:
