@@ -4105,6 +4105,82 @@ M 100644 :2 src/file2.txt
 	assert.Equal(t, "contents02\n", result)
 }
 
+func TestDirDeleteOverridesModifySameCommit(t *testing.T) {
+	// Delete of modify in same commit
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 11
+contents01
+
+blob
+mark :2
+data 11
+contents02
+
+reset refs/heads/main
+commit refs/heads/main
+mark :3
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :4
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 6
+dev01
+from :3
+M 100644 :2 src/file2.txt
+D src
+
+reset refs/heads/dev
+commit refs/heads/dev
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 6
+dev02
+from :4
+M 100644 :2 src/file2.txt
+
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev/src/file1.txt#1 - delete change 4 (text+C)
+//import/dev/src/file2.txt#1 - add change 5 (text+C)
+//import/main/src/file1.txt#1 - add change 3 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	reExpected := `//import/dev/src/file1.txt
+... #1 change 4 delete on \S+ by \S+ \S+ 'dev01 '
+//import/dev/src/file2.txt
+... #1 change 5 add on \S+ by \S+ \S+ 'dev02 '
+//import/main/src/file1.txt
+... #1 change 3 add on \S+ by \S+ \S+ 'initial '
+`
+	assert.Regexp(t, reExpected, result)
+	compareFilelog(t, reExpected, result)
+
+}
+
 func TestDeleteOfRenamedDir(t *testing.T) {
 	// Dir renamed and target deleted
 	logger := createLogger()

@@ -1534,7 +1534,7 @@ func (g *GitP4Transfer) singleFileDelete(newfiles []*GitFile, gf *GitFile, cmt *
 	if len(dups) > 0 {
 		for _, dupGf := range dups {
 			if dupGf.action == modify {
-				g.logger.Debugf("DeleteOverridesModify: GitFile: %s ID %d, %s", cmt.ref(), dupGf.ID, gf.name)
+				g.logger.Debugf("DeleteOverridesModify1: GitFile: %s ID %d, %s", cmt.ref(), dupGf.ID, gf.name)
 				dupGf.actionInvalid = true
 				g.blobFileMatcher.removeGitFile(dupGf)
 				if !singleFile {
@@ -1689,8 +1689,8 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			// * invalid delete (attempted delete of non-existant file or path - log and ignore)
 			// Note that dir deletes can also override other (prior) actions in same commit
 			files := node.GetFiles(gf.name)
-			commitDeletes := findModifyDirNameMatches(newfiles, gf.name)
-			for _, df := range commitDeletes {
+			deleteOverrides := findModifyDirNameMatches(newfiles, gf.name)
+			for _, df := range deleteOverrides {
 				found := false
 				for _, f := range files {
 					if f == df.name {
@@ -1699,8 +1699,9 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 					}
 				}
 				if !found {
-					g.logger.Debugf("DeleteOverrideModify: %s Dir:%s File:%s", cmt.ref(), gf.name, df.name)
+					g.logger.Debugf("DirDeleteOverridesModify2: %s Dir:%s File:%s", cmt.ref(), gf.name, df.name)
 					df.actionInvalid = true
+					g.blobFileMatcher.removeGitFile(df)
 				}
 			}
 			filesDeleted := 0
