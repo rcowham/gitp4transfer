@@ -115,7 +115,7 @@ func writeBlob(rootDir string, blobID int, data *string) error {
 	dir, name := getBlobIDPath(rootDir, blobID)
 	err := os.MkdirAll(dir, 0777)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to create %s: %v", dir, err)
+		fmt.Fprintf(os.Stderr, "Failed to create1 %s: %v", dir, err)
 		return err
 	}
 	f, err := os.Create(name)
@@ -739,7 +739,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 								}
 								f, err := os.Create(fname)
 								if err != nil {
-									gf.logger.Errorf("Failed to create: %s %v", fname, err)
+									gf.logger.Errorf("Failed to create2: %s %v", fname, err)
 									return
 								}
 								zw := gzip.NewWriter(f)
@@ -790,7 +790,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 					}
 					f, err := os.Create(fname)
 					if err != nil {
-						gf.logger.Errorf("Failed to create: %s %v", fname, err)
+						gf.logger.Errorf("Failed to create3: %s %v", fname, err)
 						return
 					}
 					zw := gzip.NewWriter(f)
@@ -985,9 +985,9 @@ func (g *GitP4Transfer) DumpGit(saveFiles bool) {
 		cmd, err := f.ReadCmd()
 		if err != nil {
 			if err != io.EOF {
-				fmt.Printf("ERROR: Failed to read cmd: %v", err)
+				g.logger.Errorf("Failed to read cmd1: %v", err)
+				panic("Unrecoverable error")
 			}
-			break
 		}
 		switch ctype := cmd.(type) {
 		case libfastimport.CmdBlob:
@@ -1964,8 +1964,8 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				if err == io.EOF {
 					break
 				}
-				g.logger.Errorf("ERROR: Failed to read cmd: %v", err)
-				continue
+				g.logger.Errorf("Failed to read cmd2: %v", err)
+				panic("Unrecoverable error")
 			}
 			switch ctype := cmd.(type) {
 			case libfastimport.CmdBlob:
