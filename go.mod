@@ -7,7 +7,7 @@ require (
 	github.com/goccy/go-graphviz v0.0.9
 	github.com/h2non/filetype v1.1.3
 	github.com/perforce/p4prometheus v0.7.5
-	github.com/rcowham/go-libgitfastimport v0.1.5
+	github.com/rcowham/go-libgitfastimport v0.1.6
 	github.com/sirupsen/logrus v1.8.1
 	github.com/stretchr/testify v1.7.0
 	gopkg.in/alecthomas/kingpin.v2 v2.2.6
