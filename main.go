@@ -33,8 +33,7 @@ import (
 	"compress/gzip"
 	"errors"
 	"fmt"
-	"io" // profiling only
-	"log"
+	"io"               // profiling only
 	_ "net/http/pprof" // profiling only
 	"os"
 	"path"
@@ -632,7 +631,7 @@ func readZipFile(fname string) (string, error) {
 		return "", err
 	}
 	if err := gz.Close(); err != nil {
-		log.Fatal(err)
+		return "", err
 	}
 	return string(buf), err
 }
@@ -642,8 +641,9 @@ func writeToFile(fname, contents string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprint(f, contents)
+	_, err = fmt.Fprint(f, contents)
 	if err != nil {
+		_ = f.Close()
 		return err
 	}
 	err = f.Close()
@@ -656,7 +656,6 @@ func readFile(fname string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
 	buf, err := io.ReadAll(f)
 	if err != nil {
 		return "", err
@@ -728,6 +727,8 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 							err = os.Rename(bname, fname)
 							if err != nil {
 								gf.logger.Errorf("Failed to Rename after waiting: %v", err)
+							} else {
+								gf.logger.Debugf("CreateArchiveFile1 - renamed: %s", fname)
 							}
 						} else {
 							// Instead of renaming them we have to rewrite the CRLF, optionally unzipping and zipping again
@@ -754,6 +755,8 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 								err = f.Close()
 								if err != nil {
 									gf.logger.Errorf("Failed to close: %s %v", fname, err)
+								} else {
+									gf.logger.Debugf("CreateArchiveFile2 - renamed zip: %s", fname)
 								}
 							} else {
 								data, err := readFile(bname)
@@ -763,6 +766,8 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 									err = writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
 									if err != nil {
 										gf.logger.Errorf("Failed to write2: %s %v", fname, err)
+									} else {
+										gf.logger.Debugf("CreateArchiveFile3 - renamed: %s", fname)
 									}
 								}
 							}
@@ -779,6 +784,8 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 				err = os.Rename(bname, fname)
 				if err != nil {
 					gf.logger.Errorf("Failed to Rename: %v", err)
+				} else {
+					gf.logger.Debugf("CreateArchiveFile4 - renamed: %s", fname)
 				}
 			} else {
 				// Instead of renaming them we have to rewrite the CRLF, optionally unzipping and zipping again
@@ -805,6 +812,8 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 					err = f.Close()
 					if err != nil {
 						gf.logger.Errorf("Failed to close: %s %v", fname, err)
+					} else {
+						gf.logger.Debugf("CreateArchiveFile5 - renamed zip: %s", fname)
 					}
 				} else {
 					data, err := readFile(bname)
@@ -815,6 +824,8 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 					err = writeToFile(fname, strings.ReplaceAll(data, "\r\n", "\n"))
 					if err != nil {
 						gf.logger.Errorf("Failed to write4: %s %v", fname, err)
+					} else {
+						gf.logger.Debugf("CreateArchiveFile6 - renamed: %s", fname)
 					}
 				}
 				// As we copied the file, lets's delete the original
@@ -833,13 +844,6 @@ func minval(val, min int) int { // Minimum of specified val or min
 	}
 	return val
 }
-
-// func maxval(val, max int) int { // Maxiumum of specified val or max
-// 	if val > max {
-// 		return max
-// 	}
-// 	return val
-// }
 
 // WriteJournal writes journal record for a GitFile
 func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
@@ -987,6 +991,8 @@ func (g *GitP4Transfer) DumpGit(saveFiles bool) {
 			if err != io.EOF {
 				g.logger.Errorf("Failed to read cmd1: %v", err)
 				panic("Unrecoverable error")
+			} else {
+				break
 			}
 		}
 		switch ctype := cmd.(type) {
@@ -1058,17 +1064,6 @@ func (g *GitP4Transfer) DumpGit(saveFiles bool) {
 		g.logger.Infof("Ext %s: %s", ext, Humanize(size))
 	}
 }
-
-// Is current head rev a deleted rev?
-// func (g *GitP4Transfer) isSrcDeletedFile(gf *GitFile) bool {
-// 	if gf.p4.srcDepotFile == "" {
-// 		return false
-// 	}
-// 	if f, ok := g.depotFileRevs[gf.p4.srcDepotFile]; ok {
-// 		return f.action == delete
-// 	}
-// 	return false
-// }
 
 // Maintain a list of latest revision counters indexed by depotFile and set lbrArchive/Rev
 func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgNo int) {
@@ -1398,15 +1393,6 @@ func (g *GitP4Transfer) validateCommit(cmt *GitCommit) {
 	}
 }
 
-// func findName(files []*GitFile, name string) *GitFile {
-// 	for _, gf := range files {
-// 		if gf.name == name || gf.srcName == name {
-// 			return gf
-// 		}
-// 	}
-// 	return nil
-// }
-
 // findExactNameMatches - either name or srcName (if !actionInvalid)
 func findExactNameMatches(files []*GitFile, name string) []*GitFile {
 	result := make([]*GitFile, 0)
@@ -1439,15 +1425,6 @@ func findRenameDirNameMatches(files []*GitFile, name string) []*GitFile {
 	}
 	return result
 }
-
-// func findSrcName(files []*GitFile, name string) *GitFile {
-// 	for _, gf := range files {
-// 		if gf.srcName == name {
-// 			return gf
-// 		}
-// 	}
-// 	return nil
-// }
 
 // singleFileRename - find any conflicts of this rename with any previous files in commit
 func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *GitCommit, singleFile bool) bool {
@@ -2213,6 +2190,7 @@ func main() {
 	}
 	logger.Infof("Options: %+v", opts)
 	logger.Infof("Options.config: %+v", opts.config)
+	logger.Infof("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
 	g, err := NewGitP4Transfer(logger, opts)
 	if err != nil {
 		logger.Errorf("error loading config: %v", err)
@@ -2262,6 +2240,4 @@ func main() {
 	}
 
 	defer pool.StopAndWait()
-	// close(filesChan)
-
 }
