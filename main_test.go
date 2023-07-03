@@ -1431,6 +1431,48 @@ func TestAddBinary(t *testing.T) {
 	assert.Regexp(t, `(?m)lbrPath .*/1.2$`, result)
 }
 
+func TestAddBinaryAndFileType(t *testing.T) {
+	// Add a binary file and set the filetype to be binary, although file will be auto-detected as binary+F
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	d := createGitRepo(t)
+	os.Chdir(d)
+	logger.Debugf("Git repo: %s", d)
+
+	src := "src.txt"
+	srcContents1 := "contents\n"
+	writeToFile(src, srcContents1)
+	runCmd("gzip " + src)
+	runCmd("git add .")
+	runCmd("git commit -m initial")
+
+	c := &config.Config{
+		ImportDepot: "import", DefaultBranch: "main",
+		ReTypeMaps: make([]config.RegexpTypeMap, 0),
+	}
+	rePath := regexp.MustCompile("//.*.gz$") // Go version of typemap
+	c.ReTypeMaps = append(c.ReTypeMaps, config.RegexpTypeMap{Filetype: journal.Binary, RePath: rePath})
+
+	opts := &GitParserOptions{config: c}
+
+	runTransferOpts(t, logger, opts)
+
+	result, err := runCmd("p4 files //...@2")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, "//import/main/src.txt.gz#1 - add change 2 (binary+F)\n", result)
+
+	result, err = runCmd("p4 verify -qu //...")
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+	assert.Equal(t, "", result)
+
+	result, err = runCmd("p4 fstat -Ob //import/main/src.txt.gz#1")
+	assert.Equal(t, nil, err)
+	assert.Regexp(t, `headType binary\+F`, result)
+	assert.Regexp(t, `lbrType binary\+F`, result)
+	assert.Regexp(t, `(?m)lbrPath .*/1.2$`, result)
+}
+
 func TestAddCRLF1(t *testing.T) {
 	// Test where CRLF should be converted to LF - but only for text files!
 	logger := createLogger()

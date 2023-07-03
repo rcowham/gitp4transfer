@@ -1095,7 +1095,19 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		// Determine filetype based on Typemap (if specified)
 		for _, r := range opts.config.ReTypeMaps {
 			if r.RePath.MatchString(gf.p4.depotFile) {
-				gf.fileType = r.Filetype
+				if r.Filetype == journal.Binary {
+					if gf.baseFileType == journal.Binary || gf.baseFileType == journal.UBinary {
+						gf.fileType = gf.baseFileType
+					} else {
+						gf.fileType = journal.Binary
+					}
+				} else { // Text
+					if gf.baseFileType == journal.UText || gf.baseFileType == journal.CText {
+						gf.fileType = gf.baseFileType
+					} else {
+						gf.fileType = journal.CText
+					}
+				}
 				gf.baseFileType = gf.fileType
 			}
 		}
