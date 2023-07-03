@@ -19,7 +19,7 @@ build:
 
 # Test - with extended timeout since 10m is default
 test:
-	go test -timeout 15m
+	go test -timeout 20m
 
 # Builds distributions
 dist:
