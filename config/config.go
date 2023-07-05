@@ -91,7 +91,12 @@ func (c *Config) validate() error {
 			if !strings.Contains(ftype, "binary") && !strings.Contains(ftype, "text") {
 				return fmt.Errorf("typemaps must contain either 'binary' or 'text' in first part: %s", m)
 			}
-			reStr = strings.ReplaceAll(reStr, "...", ".*")
+			// Swap out "..." and then replace back with go equivalent
+			// Note we want to be sure we don't leave "." as will match any char
+			reStr = strings.ReplaceAll(reStr, "...", "\t")
+			reStr = strings.ReplaceAll(reStr, ".", "\\.")
+			reStr = strings.ReplaceAll(reStr, "*", "[^/]*")
+			reStr = strings.ReplaceAll(reStr, "\t", ".*")
 			reStr += "$"
 			if rePath, err := regexp.Compile(reStr); err != nil {
 				return fmt.Errorf("failed to parse '%s' as a regex", reStr)

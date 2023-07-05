@@ -98,11 +98,12 @@ typemaps:
 	assert.Equal(t, "text  //....txt", cfg.TypeMaps[0])
 	assert.Equal(t, "binary  //....bin", cfg.TypeMaps[1])
 	assert.True(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/file.txt"))
-	assert.True(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/fredtxt"))
+	assert.False(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/fredtxt")) // not .txt
 	assert.False(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/fred.txt1"))
 	assert.False(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/fred.bin"))
 	assert.True(t, cfg.ReTypeMaps[1].RePath.MatchString("//file.bin"))
 	assert.True(t, cfg.ReTypeMaps[1].RePath.MatchString("//some/file.bin"))
+	assert.False(t, cfg.ReTypeMaps[1].RePath.MatchString("//some/file_bin"))
 }
 
 func TestTypeMap2(t *testing.T) {
@@ -119,6 +120,30 @@ typemaps:
 	assert.Equal(t, 2, len(cfg.TypeMaps))
 	assert.Equal(t, "text	//....txt", cfg.TypeMaps[0])
 	assert.Equal(t, "binary	\"//....bin\"", cfg.TypeMaps[1])
+}
+
+func TestTypeMap3(t *testing.T) {
+	const config = `
+typemaps:
+- text	//....c
+- binary	//some/*.bin
+- binary	//some/*/*.dat
+`
+	cfg := loadOrFail(t, config)
+	checkValue(t, "ImportDepot", cfg.ImportDepot, "import")
+	checkValue(t, "ImportPath", cfg.ImportPath, "")
+	checkValue(t, "DefaultBranch", cfg.DefaultBranch, "main")
+	assert.Equal(t, 0, len(cfg.BranchMappings))
+	assert.Equal(t, 3, len(cfg.TypeMaps))
+	assert.Equal(t, "text	//....c", cfg.TypeMaps[0])
+	assert.True(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/file.c"))
+	assert.True(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/path/file.c"))
+	assert.False(t, cfg.ReTypeMaps[0].RePath.MatchString("//some/file_c"))
+	assert.True(t, cfg.ReTypeMaps[1].RePath.MatchString("//some/file.bin"))
+	assert.False(t, cfg.ReTypeMaps[1].RePath.MatchString("//some/path/file.bin"))
+	assert.True(t, cfg.ReTypeMaps[2].RePath.MatchString("//some/path/file.dat"))
+	assert.False(t, cfg.ReTypeMaps[2].RePath.MatchString("//some/path/file_dat"))
+	assert.False(t, cfg.ReTypeMaps[2].RePath.MatchString("//some/file.dat"))
 }
 
 func TestRegex(t *testing.T) {
