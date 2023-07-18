@@ -1,0 +1,8 @@
+# .gitignore for gitgraph
+
+# Binary output
+gitgraph
+
+# byproducts
+*.svg
+*.dot
