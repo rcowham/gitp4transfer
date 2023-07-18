@@ -435,7 +435,7 @@ func (gf *GitFile) getDepotPath(opts GitParserOptions, mapper *BranchNameMapper,
 	}
 }
 
-// Sets the depot path according to branch name and whether this is a branched files
+// Sets the depot path according to branch name and whether this is a branched file
 func (gf *GitFile) setDepotPaths(opts GitParserOptions, mapper *BranchNameMapper, fileRevs *map[string]*RevChange, gc *GitCommit) {
 	gf.commit = gc
 	gf.p4.depotFile = gf.getDepotPath(opts, mapper, gc.branch, gf.name)
@@ -615,7 +615,7 @@ func (b *GitBlob) SaveBlob(pool *pond.WorkerPool, opts GitParserOptions, matcher
 	return nil
 }
 
-// readZipFile - assume text files small enough to be read into memory
+// readZipFile - used when converting CRLF->LF - assume text files small enough to be read into memory
 func readZipFile(fname string) (string, error) {
 	f, err := os.Open(fname)
 	if err != nil {
@@ -636,6 +636,7 @@ func readZipFile(fname string) (string, error) {
 	return string(buf), err
 }
 
+// writeToFile - write contents to file
 func writeToFile(fname, contents string) error {
 	f, err := os.Create(fname)
 	if err != nil {
@@ -650,7 +651,7 @@ func writeToFile(fname, contents string) error {
 	return err
 }
 
-// readFile - assume text feils small enough to be read into memory
+// readFile - assume text files small enough to be read into memory
 func readFile(fname string) (string, error) {
 	f, err := os.Open(fname)
 	if err != nil {
@@ -680,7 +681,7 @@ func (gf *GitFile) CreateArchiveFile(pool *pond.WorkerPool, opts *GitParserOptio
 	depotRoot := opts.archiveRoot
 	rootDir := path.Join(depotRoot, fmt.Sprintf("%s,d", depotFile))
 	if gf.blob.blobFileName == "" {
-		gf.logger.Debugf(fmt.Sprintf("NoBlobFound: %s", depotFile))
+		gf.logger.Errorf("NoBlobFound: %s", depotFile)
 		return
 	}
 	bname := path.Join(depotRoot, gf.blob.blobDirPath, gf.blob.blobFileName)
