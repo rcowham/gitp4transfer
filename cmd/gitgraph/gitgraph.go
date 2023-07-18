@@ -11,6 +11,7 @@ import (
 	_ "net/http/pprof" // profiling only
 	"os"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -31,16 +32,21 @@ type GitGraphOption struct {
 	firstCommit   int
 	lastCommit    int
 	maxCommits    int
+	squash        bool
 	debugCommit   int // For debug breakpoint
 }
 
 // GitCommit - A git commit
 type GitCommit struct {
-	commit *libfastimport.CmdCommit
-	user   string
-	branch string   // branch name
-	label  string   // node label
-	gNode  dot.Node // Optional link to GraphizNode
+	commit       *libfastimport.CmdCommit
+	user         string
+	branch       string // branch name
+	label        string // node label
+	parentBranch string
+	childCount   int
+	mergeCount   int
+	hasNode      bool
+	gNode        dot.Node // Optional link to GraphizNode
 }
 
 // HasPrefix tests whether the string s begins with prefix (or is prefix)
@@ -88,9 +94,9 @@ func NewGitGraph(logger *logrus.Logger, opts *GitGraphOption) *GitGraph {
 	return g
 }
 
-// DumpGit - incrementally parse the git file, collecting stats and optionally saving archives as we go
+// ParseGitImport - incrementally parse the git file, collecting stats and optionally saving archives as we go
 // Useful for parsing very large git fast-export files without loading too much into memory!
-func (g *GitGraph) DumpGit() {
+func (g *GitGraph) ParseGitImport() {
 	var buf io.Reader
 
 	if g.testInput != "" {
@@ -105,7 +111,9 @@ func (g *GitGraph) DumpGit() {
 		buf = bufio.NewReader(file)
 	}
 
-	var currCommit *GitCommit
+	var cmt *GitCommit
+	lastBranchCommit := make(map[string]int, 0) // Record last commit per branch
+	branchSkipCount := make(map[string]int, 0)  // Record how many have been skipped per branch
 
 	f := libfastimport.NewFrontend(buf, nil, nil)
 CmdLoop:
@@ -123,12 +131,30 @@ CmdLoop:
 		case libfastimport.CmdCommit:
 			commit := cmd.(libfastimport.CmdCommit)
 			g.logger.Infof("Commit:  %+v", commit)
-			currCommit = newGitCommit(&commit)
-			g.commits[commit.Mark] = currCommit
-			if (g.opts.firstCommit == 0 || currCommit.commit.Mark >= g.opts.firstCommit) &&
-				(g.opts.lastCommit == 0 || currCommit.commit.Mark <= g.opts.lastCommit) {
-				currCommit.gNode = g.graph.Node(currCommit.label)
-				g.createGraphEdges(currCommit)
+			cmt = newGitCommit(&commit)
+			g.commits[commit.Mark] = cmt
+			if cmt.commit.From != "" {
+				if intVar, err := strconv.Atoi(cmt.commit.From[1:]); err == nil {
+					parent := g.commits[intVar]
+					parent.childCount += 1
+					if cmt.branch == "" {
+						cmt.branch = parent.branch
+					}
+					// currCommit.parentBranch = parent.parentBranch
+					// if currCommit.parentBranch == "" {
+					cmt.parentBranch = parent.branch
+					// }
+				}
+			} else {
+				cmt.branch = "main"
+			}
+			if len(cmt.commit.Merge) > 0 {
+				for _, merge := range cmt.commit.Merge {
+					if intVar, err := strconv.Atoi(merge[1:]); err == nil {
+						mergeCmt := g.commits[intVar]
+						mergeCmt.mergeCount += 1
+					}
+				}
 			}
 			if g.opts.maxCommits != 0 && len(g.commits) > g.opts.maxCommits {
 				break CmdLoop
@@ -137,9 +163,40 @@ CmdLoop:
 		default:
 		}
 	}
+	keys := make([]int, 0)
+	for k := range g.commits {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+
+	// Now we create graph nodes as appropriate
+	for _, k := range keys {
+		cmt := g.commits[k]
+		if (g.opts.firstCommit == 0 || cmt.commit.Mark >= g.opts.firstCommit) &&
+			(g.opts.lastCommit == 0 || cmt.commit.Mark <= g.opts.lastCommit) {
+			if !g.opts.squash ||
+				cmt.branch != cmt.parentBranch ||
+				len(cmt.commit.Merge) > 0 ||
+				cmt.mergeCount != 0 ||
+				cmt.childCount > 1 ||
+				cmt.commit.Mark == g.opts.firstCommit ||
+				cmt.commit.Mark == g.opts.lastCommit {
+				if pid, ok := lastBranchCommit[cmt.branch]; ok {
+					cmt.commit.From = fmt.Sprintf(":%d", pid) // reset parent
+				}
+				cmt.gNode = g.graph.Node(cmt.label)
+				cmt.hasNode = true
+				g.createGraphEdges(cmt, branchSkipCount[cmt.branch])
+				lastBranchCommit[cmt.branch] = cmt.commit.Mark
+				branchSkipCount[cmt.branch] = 0
+			} else {
+				branchSkipCount[cmt.branch] += 1
+			}
+		}
+	}
 }
 
-func (g *GitGraph) createGraphEdges(cmt *GitCommit) {
+func (g *GitGraph) createGraphEdges(cmt *GitCommit, skipCount int) {
 	// Sets the branch for the current commit, using its parent if not otherwise specified
 	if cmt == nil {
 		return
@@ -149,7 +206,11 @@ func (g *GitGraph) createGraphEdges(cmt *GitCommit) {
 			parent := g.commits[intVar]
 			if parent != nil {
 				parent.gNode = g.graph.Node(parent.label)
-				g.graph.Edge(parent.gNode, cmt.gNode, "p")
+				label := "p"
+				if skipCount > 0 {
+					label = fmt.Sprintf("p%d", skipCount)
+				}
+				g.graph.Edge(parent.gNode, cmt.gNode, label)
 			}
 		}
 	}
@@ -209,6 +270,10 @@ func main() {
 			"last.commit",
 			"ID of last commit to include in graph output (default of 0 means all commits).",
 		).Default("0").Short('l').Int()
+		squash = kingpin.Flag(
+			"squash",
+			"Squash commits (leaving branches/merges only).",
+		).Short('s').Bool()
 		debug = kingpin.Flag(
 			"debug",
 			"Enable debugging level.",
@@ -238,12 +303,13 @@ func main() {
 		graphFile:     *outputGraph,
 		firstCommit:   *graphFirstCommit,
 		lastCommit:    *graphLastCommit,
+		squash:        *squash,
 	}
 	logger.Infof("Options: %+v", opts)
 	logger.Infof("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
 	g := NewGitGraph(logger, opts)
 	g.graph = dot.NewGraph(dot.Directed)
-	g.DumpGit()
+	g.ParseGitImport()
 	f, err := os.OpenFile(g.opts.graphFile, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
 	if err != nil {
 		g.logger.Error(err)
