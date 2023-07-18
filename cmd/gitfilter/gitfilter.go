@@ -592,10 +592,10 @@ CmdLoop:
 		case libfastimport.CmdCommitEnd:
 			commit := cmd.(libfastimport.CmdCommitEnd)
 			if !commitFiltered {
-				g.logger.Debugf("FilteredCommitEnd: %+v", commit)
+				g.logger.Debugf("CommitEnd: %+v", commit)
 				backend.Do(cmd)
 			} else {
-				g.logger.Debugf("CommitEnd: %+v", commit)
+				g.logger.Debugf("FilteredCommitEnd: %+v", commit)
 			}
 			commitCount += 1
 			if g.opts.maxCommits > 0 && commitCount >= g.opts.maxCommits {
@@ -642,9 +642,6 @@ CmdLoop:
 			mwcBlob = &MyWriterCloser{nil, bufio.NewWriter(g.testBlobOutput)}
 		} else {
 			outpath := options.gitExportFile
-			if filteringPaths {
-				outpath = fmt.Sprintf("%s_", outpath)
-			}
 			outfile, err := os.Create(outpath)
 			if err != nil {
 				panic(err) // Handle error
