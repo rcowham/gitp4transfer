@@ -1310,7 +1310,7 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 func (g *GitP4Transfer) recordDepotFileType(gf *GitFile) {
 	k := fmt.Sprintf("%s#%d", gf.p4.depotFile, gf.p4.rev)
 	g.depotFileTypes[k] = gf.baseFileType
-	if gf.action == rename && (gf.isBranch || gf.isMerge) {
+	if gf.action == rename {
 		k := fmt.Sprintf("%s#%d", gf.p4.srcDepotFile, gf.p4.srcRev)
 		if _, ok := g.depotFileTypes[k]; !ok {
 			g.depotFileTypes[k] = gf.baseFileType
