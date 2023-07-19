@@ -1460,8 +1460,14 @@ func (g *GitP4Transfer) singleFileRename(newfiles []*GitFile, gf *GitFile, cmt *
 				}
 			} else if dupGf.action == rename {
 				if dupGf.name == gf.name {
-					dupGf.actionInvalid = true
-					g.logger.Warnf("DoubleRenameTargetIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					if !singleFile { // This file wasn't found and clashes with a dir file rename - so ignore this one
+						gf.actionInvalid = true
+						g.logger.Warnf("RenameSrcNotExist: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+						return false
+					} else {
+						dupGf.actionInvalid = true
+						g.logger.Warnf("DoubleRenameTargetIgnored: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
+					}
 				} else { // dupGf.srcName
 					if dupGf.name == gf.srcName && dupGf.srcName == gf.name {
 						g.logger.Debugf("RenameBack - both ignored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)

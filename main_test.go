@@ -3677,6 +3677,143 @@ D temp
 	compareFilelog(t, reExpected, result)
 }
 
+func TestRenameOfNonExistantSource(t *testing.T) {
+	// Do a rename where source file doesn't exist
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	gitExport := `blob
+mark :1
+data 11
+contents01
+
+blob
+mark :2
+data 11
+contents02
+
+blob
+mark :3
+data 11
+contents03
+
+blob
+mark :4
+data 11
+contents04
+
+reset refs/heads/main
+commit refs/heads/main
+mark :5
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+
+reset refs/heads/main
+commit refs/heads/main
+mark :6
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 7
+main02
+from :5
+M 100644 :1 src/file2.txt
+
+reset refs/heads/dev1
+commit refs/heads/dev1
+mark :7
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 6
+06dev
+from :5
+M 100644 :3 src/file2.txt
+
+reset refs/heads/dev2
+commit refs/heads/dev2
+mark :8
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 7
+07main
+from :7
+M 100644 :4 src/file3.txt
+
+reset refs/heads/dev2
+commit refs/heads/dev2
+mark :9
+author Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+committer Robert Cowham <rcowham@perforce.com> 1680784555 +0100
+data 7
+08main
+from :8
+merge :6
+R src targ
+R src/file1b.txt targ/file1.txt
+
+`
+
+	r := runTransferWithDump(t, logger, gitExport, nil)
+	logger.Debugf("Server root: %s", r)
+
+	result, err := runCmd("p4 verify -qu //...")
+	assert.Equal(t, "", result)
+	assert.Equal(t, "<nil>", fmt.Sprint(err))
+
+	result, err = runCmd("p4 files //...")
+	assert.Equal(t, nil, err)
+	assert.Equal(t, `//import/dev1/src/file2.txt#1 - add change 7 (text+C)
+//import/dev2/src/file1.txt#1 - delete change 9 (text+C)
+//import/dev2/src/file2.txt#1 - delete change 9 (text+C)
+//import/dev2/src/file3.txt#2 - delete change 9 (text+C)
+//import/dev2/targ/file1.txt#1 - add change 9 (text+C)
+//import/dev2/targ/file2.txt#1 - add change 9 (text+C)
+//import/dev2/targ/file3.txt#1 - add change 9 (text+C)
+//import/main/src/file1.txt#1 - add change 5 (text+C)
+//import/main/src/file2.txt#1 - add change 6 (text+C)
+`,
+		result)
+
+	result, err = runCmd("p4 filelog //...")
+	assert.Equal(t, nil, err)
+	reExpected := `//import/dev1/src/file2.txt
+... #1 change 7 add on \S+ by \S+ \S+ '06dev '
+... ... branch from //import/main/src/file2.txt#1
+//import/dev2/src/file1.txt
+... #1 change 9 delete on \S+ by \S+ \S+ '08main '
+... ... delete from //import/main/src/file1.txt#1
+//import/dev2/src/file2.txt
+... #1 change 9 delete on \S+ by \S+ \S+ '08main '
+... ... delete from //import/main/src/file2.txt#1
+//import/dev2/src/file3.txt
+... #2 change 9 delete on \S+ by \S+ \S+ '08main '
+... #1 change 8 add on \S+ by \S+ \S+ '07main '
+... ... branch into //import/dev2/targ/file3.txt#1
+//import/dev2/targ/file1.txt
+... #1 change 9 add on \S+ by \S+ \S+ '08main '
+... ... branch from //import/main/src/file1.txt#1
+//import/dev2/targ/file2.txt
+... #1 change 9 add on \S+ by \S+ \S+ '08main '
+... ... branch from //import/main/src/file2.txt#1
+//import/dev2/targ/file3.txt
+... #1 change 9 add on \S+ by \S+ \S+ '08main '
+... ... branch from //import/dev2/src/file3.txt#1
+//import/main/src/file1.txt
+... #1 change 5 add on \S+ by \S+ \S+ 'initial '
+... ... delete into //import/dev2/src/file1.txt#1
+... ... branch into //import/dev2/targ/file1.txt#1
+//import/main/src/file2.txt
+... #1 change 6 add on \S+ by \S+ \S+ 'main02 '
+... ... edit into //import/dev1/src/file2.txt#1
+... ... delete into //import/dev2/src/file2.txt#1
+... ... branch into //import/dev2/targ/file2.txt#1
+`
+	assert.Regexp(t, reExpected, result)
+	compareFilelog(t, reExpected, result)
+}
+
 func TestDirRenameTwice(t *testing.T) {
 	// Similar to TestCommitValidDirRenameTwice
 	logger := createLogger()
