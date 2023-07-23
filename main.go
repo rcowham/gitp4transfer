@@ -1417,6 +1417,17 @@ func findExactNameMatches(files []*GitFile, name string) []*GitFile {
 	return result
 }
 
+// findInsensitiveNameMatches - file matches case insensitive
+func findInsensitiveNameMatches(files []*GitFile, name string) []*GitFile {
+	result := make([]*GitFile, 0)
+	for _, gf := range files {
+		if !gf.actionInvalid && (strings.EqualFold(gf.name, name) || strings.EqualFold(gf.srcName, name)) {
+			result = append(result, gf)
+		}
+	}
+	return result
+}
+
 // findModifyDirNameMatches - either name or srcName (if !actionInvalid)
 func findModifyDirNameMatches(files []*GitFile, name string) []*GitFile {
 	result := make([]*GitFile, 0)
@@ -1593,7 +1604,26 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			// Search for renames or deletes of same file in current commit and note if found.
 			dups := findExactNameMatches(newfiles, gf.name)
 			if len(dups) == 0 {
-				newfiles = append(newfiles, gf)
+				if !g.opts.caseInsensitive {
+					newfiles = append(newfiles, gf)
+				} else {
+					dups = findInsensitiveNameMatches(newfiles, gf.name)
+					if len(dups) == 0 {
+						newfiles = append(newfiles, gf)
+						continue
+					}
+					for _, dupGf := range dups {
+						if dupGf.action == delete {
+							g.logger.Warnf("ModifyOfCaseInsensitiveDeletedFile: %s GitFile: ID %d, %s",
+								cmt.ref(), gf.ID, gf.name)
+							dupGf.actionInvalid = true
+							newfiles = append(newfiles, gf)
+						} else if dupGf.action == rename {
+							g.logger.Errorf("ModifyOfCaseInsensitiveRenamedFile: %s GitFile: ID %d, %s",
+								cmt.ref(), gf.ID, gf.name)
+						}
+					}
+				}
 			} else {
 				for _, dupGf := range dups {
 					if dupGf.action == rename {
@@ -1744,7 +1774,19 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			singleFile = g.singleFileRename(newfiles, gf, cmt, singleFile)
 			if singleFile {
 				if !gf.actionInvalid {
-					newfiles = append(newfiles, gf)
+					if g.opts.caseInsensitive && strings.EqualFold(gf.name, gf.srcName) {
+						if gf.isDirtyRename {
+							gf.action = modify
+							g.logger.Warnf("CaseSensitiveRenameDemotedToModify: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+							newfiles = append(newfiles, gf)
+						} else {
+							g.logger.Warnf("CaseSensitiveRenameIgnored: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
+							gf.actionInvalid = true
+							g.blobFileMatcher.removeGitFile(gf)
+						}
+					} else {
+						newfiles = append(newfiles, gf)
+					}
 				}
 				continue // single file actions processed
 			}

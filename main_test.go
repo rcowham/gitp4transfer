@@ -288,9 +288,10 @@ func runTransferOpts(t *testing.T, logger *logrus.Logger, opts *GitParserOptions
 // Set of tests for validation logic, detecting delets of renames etc
 
 type testFile struct {
-	name    string
-	srcName string
-	action  GitAction
+	name          string
+	srcName       string
+	action        GitAction
+	isDirtyRename bool
 }
 
 func newTestGitFile(gf *GitFile) *GitFile {
@@ -302,7 +303,8 @@ func newTestGitFile(gf *GitFile) *GitFile {
 func newValidatedCommit(g *GitP4Transfer, tf []testFile) *GitCommit {
 	gc := &GitCommit{commit: &libfastimport.CmdCommit{Mark: 10}, branch: "main", files: make([]*GitFile, 0)}
 	for _, f := range tf {
-		gf := newTestGitFile(&GitFile{name: f.name, srcName: f.srcName, action: f.action, blob: &GitBlob{}})
+		gf := newTestGitFile(&GitFile{name: f.name, srcName: f.srcName, action: f.action,
+			isDirtyRename: f.isDirtyRename, blob: &GitBlob{}})
 		if gf.action == modify {
 			g.blobFileMatcher.addGitFile(gf)
 		}
@@ -912,13 +914,6 @@ func TestCommitValidDirRenameRenameBackDelete(t *testing.T) {
 	assert.Equal(t, "src/file2.txt", nfiles[1])
 }
 
-// 665: R Games/Prop/Debris Games/Prop/Debris.tmp-8b37b29c
-// 1031: M 100644 :658513 Games/Prop/Debris/Brick_01.uasset
-// 5219: R Games/Prop/Debris.tmp-8b37b29c/Brick_01.uasset
-//         Games/Nature/Ground/Debris/Brick_01.uasset
-// 5481: D Games/Prop/Debris.tmp-8b37b29c
-// 8746: M 100644 :653091 Games/Nature/Ground/Debris/Brick_01.uasset
-
 func TestCommitValidDirRenameRenameBackDelete2(t *testing.T) {
 	// Complex scenario of rename and deletes in same commit!
 	logger := createLogger()
@@ -1034,12 +1029,85 @@ func TestCommitValidDirRenameTwice(t *testing.T) {
 	assert.Equal(t, "targ/file2.txt", nfiles[2])
 }
 
-// 425: R Games/Prop/Debris
-//        Games/Prop/Debris.tmp-bdf32fcb
-// 3278: M 100644 :658513 Games/Prop/Debris/Brick_01
-// 4051: R Games/Prop/Debris.tmp-bdf32fcb/Brick_01
-//         Games/Nature/Ground/Debris/Brick_01
-// 6947: M 100644 :653091 Games/Nature/Ground/Debris/Brick_01
+func TestCommitValidCaseInsensitiveRename(t *testing.T) {
+	// Rename a file just changing case
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}, caseInsensitive: true}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify}})
+	assert.Equal(t, 1, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+
+	// Rename just changing case
+	gc = newValidatedCommit(g, []testFile{
+		{name: "src/FILE1.txt", srcName: "src/file1.txt", action: rename},
+	})
+	assert.Equal(t, 0, len(gc.files))
+}
+
+func TestCommitValidCaseInsensitiveDirtyRename(t *testing.T) {
+	// Rename a file just changing case
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}, caseInsensitive: true}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify}})
+	assert.Equal(t, 1, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+
+	// Rename just changing case
+	gc = newValidatedCommit(g, []testFile{
+		{name: "src/FILE1.txt", srcName: "src/file1.txt", action: rename, isDirtyRename: true},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "src/FILE1.txt", gc.files[0].name)
+	assert.Equal(t, modify, gc.files[0].action)
+}
+
+func TestCommitValidCaseInsensitiveDirDeleteModify(t *testing.T) {
+	// Dir delete followed by case insensitive modify
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}, caseInsensitive: true}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{{name: "src/file1.txt", srcName: "", action: modify}})
+	assert.Equal(t, 1, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+
+	// Delete old dir and modify to new name
+	gc = newValidatedCommit(g, []testFile{
+		{name: "src", srcName: "", action: delete},
+		{name: "SRC/file1.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "SRC/file1.txt", gc.files[0].name)
+	assert.Equal(t, modify, gc.files[0].action)
+}
 
 // ------------------------------------------------------------------
 
