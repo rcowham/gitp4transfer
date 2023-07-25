@@ -444,6 +444,11 @@ class GitCommit():
         self.parentBranch = None
         self.firstOnBranch = False
 
+    def userID(self):
+        parts = self.email.split("@")
+        if parts and len(parts) > 1:
+            return parts[0]
+        return self.name.replace(" ", "_")
 
 class GitInfo:
     "Extract info about Git repo"
@@ -1112,17 +1117,19 @@ class P4Target(P4Base):
                     sourceDescription=commit.description,
                     sourceChange=commit.commitID, sourcePort='git_repo',
                     sourceUser=commit.name)
-                self.updateChange(newChangeId=newChangeId, description=description)
+                self.updateChange(newChangeId=newChangeId, userID=commit.userID(), description=description)
             else:
                 self.logger.error("failed to replicate change {}".format(commit))
             return newChangeId
 
-    def updateChange(self, newChangeId, description):
+    def updateChange(self, newChangeId, userID, description):
         # need to update the user and time stamp - but only if a superuser
         if not self.options.superuser == "y":
             return
         newChange = self.p4.fetch_change(newChangeId)
         newChange._description = description
+        newChange._user = userID
+        self.logger.debug("Updating change: {}".format(newChange))
         self.p4.save_change(newChange, '-f')
 
     def getCounter(self):
