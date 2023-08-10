@@ -313,7 +313,10 @@ func hasPrefix(s, prefix string) bool {
 }
 
 // This expands on above to require original is longer!
-func hasDirPrefix(s, prefix string) bool {
+func hasDirPrefix(s, prefix string, caseInsensitive bool) bool {
+	if caseInsensitive {
+		return len(s) > len(prefix) && strings.EqualFold(s[0:len(prefix)], prefix)
+	}
 	return len(s) > len(prefix) && s[0:len(prefix)] == prefix
 }
 
@@ -1421,29 +1424,31 @@ func findExactNameMatches(files []*GitFile, name string) []*GitFile {
 func findInsensitiveNameMatches(files []*GitFile, name string) []*GitFile {
 	result := make([]*GitFile, 0)
 	for _, gf := range files {
-		if !gf.actionInvalid && (strings.EqualFold(gf.name, name) || strings.EqualFold(gf.srcName, name)) {
+		if !gf.actionInvalid &&
+			((len(name) == len(gf.name) && strings.EqualFold(gf.name, name)) ||
+				(len(name) == len(gf.srcName) && strings.EqualFold(gf.srcName, name))) {
 			result = append(result, gf)
 		}
 	}
 	return result
 }
 
-// findModifyDirNameMatches - either name or srcName (if !actionInvalid)
-func findModifyDirNameMatches(files []*GitFile, name string) []*GitFile {
+// findModifyDirNameMatches - modifies matching name (if !actionInvalid)
+func findModifyDirNameMatches(files []*GitFile, name string, caseInsensitive bool) []*GitFile {
 	result := make([]*GitFile, 0)
 	for _, gf := range files {
-		if !gf.actionInvalid && (gf.action == modify) && hasDirPrefix(gf.name, name) {
+		if !gf.actionInvalid && (gf.action == modify) && hasDirPrefix(gf.name, name, caseInsensitive) {
 			result = append(result, gf)
 		}
 	}
 	return result
 }
 
-// findModifyDirNameMatches - either name or srcName (if !actionInvalid)
-func findRenameDirNameMatches(files []*GitFile, name string) []*GitFile {
+// findRenameDirNameMatches - either name or srcName (if !actionInvalid)
+func findRenameDirNameMatches(files []*GitFile, name string, caseInsensitive bool) []*GitFile {
 	result := make([]*GitFile, 0)
 	for _, gf := range files {
-		if !gf.actionInvalid && (gf.action == rename) && hasDirPrefix(gf.name, name) {
+		if !gf.actionInvalid && (gf.action == rename) && hasDirPrefix(gf.name, name, caseInsensitive) {
 			result = append(result, gf)
 		}
 	}
@@ -1579,10 +1584,10 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 		cmt.commit.Mark, len(cmt.files), cmt.commitSize, Humanize(cmt.commitSize))
 	// If a new branch, then copy files from parent
 	if _, ok := g.filesOnBranch[cmt.parentBranch]; !ok {
-		g.filesOnBranch[cmt.parentBranch] = &node.Node{Name: ""}
+		g.filesOnBranch[cmt.parentBranch] = node.NewNode("", g.opts.caseInsensitive)
 	}
 	if _, ok := g.filesOnBranch[cmt.branch]; !ok {
-		g.filesOnBranch[cmt.branch] = &node.Node{Name: ""}
+		g.filesOnBranch[cmt.branch] = node.NewNode("", g.opts.caseInsensitive)
 		pfiles := g.filesOnBranch[cmt.parentBranch].GetFiles("")
 		for _, f := range pfiles {
 			g.filesOnBranch[cmt.branch].AddFile(f)
@@ -1715,7 +1720,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			// * invalid delete (attempted delete of non-existant file or path - log and ignore)
 			// Note that dir deletes can also override other (prior) actions in same commit
 			files := node.GetFiles(gf.name)
-			deleteOverrides := findModifyDirNameMatches(newfiles, gf.name)
+			deleteOverrides := findModifyDirNameMatches(newfiles, gf.name, g.opts.caseInsensitive)
 			for _, df := range deleteOverrides {
 				found := false
 				for _, f := range files {
@@ -1734,7 +1739,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			if len(files) > 0 {
 				g.logger.Debugf("DirDelete: Path:%s", gf.name)
 				for _, df := range files {
-					if !hasPrefix(df, gf.name) {
+					if !hasDirPrefix(df, gf.name, g.opts.caseInsensitive) {
 						g.logger.Errorf("Unexpected DirFileDelete path found: %s: %s", gf.name, df)
 						continue
 					}
@@ -1749,7 +1754,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			}
 			for _, dupGf := range newfiles {
 				// Check if our dir delete is overriding any renames, in which case convert renames to deletes
-				if !dupGf.actionInvalid && dupGf.action == rename && hasDirPrefix(dupGf.name, gf.name) {
+				if !dupGf.actionInvalid && dupGf.action == rename && hasDirPrefix(dupGf.name, gf.name, g.opts.caseInsensitive) {
 					if dupGf.isPseudoRename {
 						g.logger.Debugf("DirDeleteOverridePseudoRename: %s Path:%s Src:%s Dst:%s", cmt.ref(), gf.name, dupGf.srcName, dupGf.name)
 						dupGf.actionInvalid = true
@@ -1774,7 +1779,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			singleFile = g.singleFileRename(newfiles, gf, cmt, singleFile)
 			if singleFile {
 				if !gf.actionInvalid {
-					if g.opts.caseInsensitive && strings.EqualFold(gf.name, gf.srcName) {
+					if g.opts.caseInsensitive && len(gf.name) == len(gf.srcName) && strings.EqualFold(gf.name, gf.srcName) {
 						if gf.isDirtyRename {
 							gf.action = modify
 							g.logger.Warnf("CaseSensitiveRenameDemotedToModify: %s Src:%s Dst:%s", cmt.ref(), gf.srcName, gf.name)
@@ -1794,7 +1799,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 			// Find pre-existing files being renamed
 			// Search for modifies in the current commit which are being renamed and adjust them
 			files := node.GetFiles(gf.srcName)
-			srcs := findModifyDirNameMatches(newfiles, gf.srcName)
+			srcs := findModifyDirNameMatches(newfiles, gf.srcName, g.opts.caseInsensitive)
 			for _, src := range srcs {
 				found := false
 				for _, f := range files {
@@ -1809,14 +1814,14 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 					src.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
 				}
 			}
-			dirRenames := findRenameDirNameMatches(newfiles, gf.srcName)
+			dirRenames := findRenameDirNameMatches(newfiles, gf.srcName, g.opts.caseInsensitive)
 			if len(files) > 0 { // Turn dir rename into multiple single file renames
 				g.logger.Debugf("DirRename: Src:%s Dst:%s", gf.srcName, gf.name)
 				// First we look for files in current commit - because a single file rename can be followed by a dir rename which overrides it
 				// src/A -> src/B followed by src -> targ, means turn it into src/A -> targ/B
 				srcDoubles := make([]string, 0)
 				for _, dupGf := range newfiles {
-					if dupGf.action == rename && hasDirPrefix(dupGf.name, gf.srcName) {
+					if dupGf.action == rename && hasDirPrefix(dupGf.name, gf.srcName, g.opts.caseInsensitive) {
 						dest := fmt.Sprintf("%s%s", gf.name, dupGf.name[len(gf.srcName):])
 						dupGf.name = dest // Don't append gf to newfiles because we adjust dupGF to be the correct rename
 						g.logger.Debugf("RenameOverride1: %s Src:%s Dst:%s", cmt.ref(), dupGf.srcName, dupGf.name)
@@ -1824,7 +1829,7 @@ func (g *GitP4Transfer) ValidateCommit(cmt *GitCommit) {
 					}
 				}
 				for _, rf := range files {
-					if !hasDirPrefix(rf, gf.srcName) {
+					if !hasDirPrefix(rf, gf.srcName, g.opts.caseInsensitive) {
 						g.logger.Errorf("Unexpected src found: %s: %s", gf.srcName, rf)
 						continue
 					}

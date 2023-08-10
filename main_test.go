@@ -294,14 +294,39 @@ type testFile struct {
 	isDirtyRename bool
 }
 
+var gcMark = 10 // Unique Mark - see newGCMark
+
 func newTestGitFile(gf *GitFile) *GitFile {
 	gitFileID += 1
 	gf.ID = gitFileID
 	return gf
 }
 
+func newGCMark() int {
+	gcMark += 10
+	return gcMark
+}
+
 func newValidatedCommit(g *GitP4Transfer, tf []testFile) *GitCommit {
-	gc := &GitCommit{commit: &libfastimport.CmdCommit{Mark: 10}, branch: "main", files: make([]*GitFile, 0)}
+	branch := "main"
+	gc := &GitCommit{commit: &libfastimport.CmdCommit{Mark: newGCMark()}, branch: branch, files: make([]*GitFile, 0)}
+	g.commits[gc.commit.Mark] = gc
+	for _, f := range tf {
+		gf := newTestGitFile(&GitFile{name: f.name, srcName: f.srcName, action: f.action,
+			isDirtyRename: f.isDirtyRename, blob: &GitBlob{}})
+		if gf.action == modify {
+			g.blobFileMatcher.addGitFile(gf)
+		}
+		gc.files = append(gc.files, gf)
+	}
+	g.ValidateCommit(gc)
+	return gc
+}
+
+func newValidatedBranchCommit(g *GitP4Transfer, branch string, tf []testFile) *GitCommit {
+	gc := &GitCommit{commit: &libfastimport.CmdCommit{Mark: newGCMark()}, branch: branch, files: make([]*GitFile, 0)}
+	gc.commit.From = fmt.Sprintf(":%d", gc.commit.Mark-10)
+	g.commits[gc.commit.Mark] = gc
 	for _, f := range tf {
 		gf := newTestGitFile(&GitFile{name: f.name, srcName: f.srcName, action: f.action,
 			isDirtyRename: f.isDirtyRename, blob: &GitBlob{}})
@@ -1107,6 +1132,77 @@ func TestCommitValidCaseInsensitiveDirDeleteModify(t *testing.T) {
 	assert.Equal(t, 1, len(gc.files))
 	assert.Equal(t, "SRC/file1.txt", gc.files[0].name)
 	assert.Equal(t, modify, gc.files[0].action)
+}
+
+func TestCommitValidCaseInsensitiveDirDeleteMultiple(t *testing.T) {
+	// Dir delete of multiple files only differing in case
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}, caseInsensitive: true}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{
+		{name: "src/file1.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+
+	gc = newValidatedBranchCommit(g, "dev", []testFile{
+		{name: "src/FILE1.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+	nfiles = g.filesOnBranch["dev"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+
+	// Delete old dir
+	gc = newValidatedCommit(g, []testFile{
+		{name: "src", srcName: "", action: delete},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "src/file1.txt", gc.files[0].name)
+	assert.Equal(t, delete, gc.files[0].action)
+}
+
+func TestCommitValidCaseInsensitiveDirDelete(t *testing.T) {
+	// Dir delete of modify with different case
+	logger := createLogger()
+	logger.Debugf("======== Test: %s", t.Name())
+
+	opts := &GitParserOptions{config: &config.Config{ImportDepot: "import", DefaultBranch: "main"}, caseInsensitive: true}
+	g, err := NewGitP4Transfer(logger, opts)
+	if err != nil {
+		logger.Fatalf("Failed to create GitP4Transfer")
+	}
+
+	// Add
+	gc := newValidatedCommit(g, []testFile{
+		{name: "src/file1.txt", srcName: "", action: modify},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	nfiles := g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 1, len(nfiles))
+	assert.Equal(t, "src/file1.txt", nfiles[0])
+
+	gc = newValidatedCommit(g, []testFile{
+		{name: "src/file1.txt", srcName: "", action: modify},
+		{name: "SRC", srcName: "", action: delete},
+	})
+	assert.Equal(t, 1, len(gc.files))
+	assert.Equal(t, "src/file1.txt", gc.files[0].name)
+	assert.Equal(t, delete, gc.files[0].action)
+	nfiles = g.filesOnBranch["main"].GetFiles("")
+	assert.Equal(t, 0, len(nfiles))
 }
 
 // ------------------------------------------------------------------
@@ -4896,6 +4992,73 @@ func TestNode(t *testing.T) {
 	assert.Equal(t, "file.txt", f[0])
 
 	f = n.GetFiles("file.txt")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "file.txt", f[0])
+
+	fname := "src/file2.txt"
+	n.AddFile(fname)
+	assert.Equal(t, 2, len(n.Children))
+	assert.Equal(t, "src", n.Children[1].Name)
+	assert.Equal(t, false, n.Children[1].IsFile)
+	assert.Equal(t, 1, len(n.Children[1].Children))
+	assert.Equal(t, fname, n.Children[1].Children[0].Path)
+
+	f = n.GetFiles("src")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "src/file2.txt", f[0])
+
+	n.AddFile(fname) // IF adding pre-existing file then no change
+	assert.Equal(t, 2, len(n.Children))
+	assert.Equal(t, "src", n.Children[1].Name)
+	assert.Equal(t, false, n.Children[1].IsFile)
+	assert.Equal(t, 1, len(n.Children[1].Children))
+
+	fname = "src/file3.txt"
+	n.AddFile(fname)
+	assert.Equal(t, 2, len(n.Children))
+	assert.Equal(t, "src", n.Children[1].Name)
+	assert.Equal(t, false, n.Children[1].IsFile)
+	assert.Equal(t, 2, len(n.Children[1].Children))
+	assert.Equal(t, "file2.txt", n.Children[1].Children[0].Name)
+	assert.Equal(t, "file3.txt", n.Children[1].Children[1].Name)
+
+	f = n.GetFiles("src")
+	assert.Equal(t, 2, len(f))
+	assert.Equal(t, "src/file2.txt", f[0])
+	assert.Equal(t, "src/file3.txt", f[1])
+
+	assert.True(t, n.FindFile("src/file2.txt"))
+	assert.False(t, n.FindFile("src/file99.txt"))
+	assert.False(t, n.FindFile("file99.txt"))
+
+	n.DeleteFile("src/file2.txt")
+	f = n.GetFiles("src")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "src/file3.txt", f[0])
+
+	n.DeleteFile("src/file3.txt")
+	f = n.GetFiles("src")
+	assert.Equal(t, 0, len(f))
+}
+
+func TestNodeInsensitive(t *testing.T) {
+	// logger := createLogger()
+	n := &node.Node{Name: "", CaseInsensitive: true}
+	n.AddFile("file.txt")
+	assert.Equal(t, 1, len(n.Children))
+	assert.Equal(t, "file.txt", n.Children[0].Name)
+	f := n.GetFiles("")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "file.txt", f[0])
+
+	f = n.GetFiles("file.txt")
+	assert.Equal(t, 1, len(f))
+	assert.Equal(t, "file.txt", f[0])
+
+	n.AddFile("FILE.txt")
+	assert.Equal(t, 1, len(n.Children))
+	assert.Equal(t, "file.txt", n.Children[0].Name)
+	f = n.GetFiles("")
 	assert.Equal(t, 1, len(f))
 	assert.Equal(t, "file.txt", f[0])
 
