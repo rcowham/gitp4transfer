@@ -444,7 +444,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div class="details">
 <span id="author" class="author">Perforce Professional Services</span><br>
 <span id="email" class="email"><a href="mailto:consulting@perforce.com">consulting@perforce.com</a></span><br>
-<span id="revdate">2022-04-19</span>
+<span id="revdate">2023-08-01</span>
 </div>
 <div id="toc" class="toc">
 <div id="toctitle">Table of Contents</div>
@@ -466,7 +466,42 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </li>
 </ul>
 </li>
-<li><a href="#_gitp4transfer_go_program">2. gitp4transfer - Go program</a></li>
+<li><a href="#_gitp4transfer_tool_for_git_and_plastic_scm_migrations">2. gitp4transfer - tool for Git and Plastic SCM migrations</a>
+<ul class="sectlevel2">
+<li><a href="#_overall_approach">2.1. Overall Approach</a>
+<ul class="sectlevel3">
+<li><a href="#_resulting_converted_repository_and_how_to_use_it">2.1.1. Resulting converted repository and how to use it</a></li>
+</ul>
+</li>
+<li><a href="#_approach_for_plastic_scm">2.2. Approach for Plastic SCM</a>
+<ul class="sectlevel3">
+<li><a href="#_creating_plastic_git_export_file">2.2.1. Creating Plastic Git Export file</a></li>
+<li><a href="#_exporting_of_data">2.2.2. Exporting of data</a></li>
+</ul>
+</li>
+<li><a href="#_running_gitp4transfer">2.3. Running gitp4transfer</a>
+<ul class="sectlevel3">
+<li><a href="#_configuration_yaml_file">2.3.1. Configuration YAML file</a></li>
+</ul>
+</li>
+<li><a href="#_using_the_shell_wrapper_run_conversion_sh">2.4. Using the shell wrapper run_conversion.sh</a>
+<ul class="sectlevel3">
+<li><a href="#_example_conversions">2.4.1. Example conversions</a></li>
+</ul>
+</li>
+<li><a href="#_useful_utilities">2.5. Useful Utilities</a>
+<ul class="sectlevel3">
+<li><a href="#_gitfilter">2.5.1. gitfilter</a></li>
+<li><a href="#_gitgraph">2.5.2. gitgraph</a></li>
+</ul>
+</li>
+<li><a href="#_troubleshooting">2.6. Troubleshooting</a>
+<ul class="sectlevel3">
+<li><a href="#_verify_errors">2.6.1. Verify Errors</a></li>
+</ul>
+</li>
+</ul>
+</li>
 </ul>
 </div>
 </div>
@@ -689,8 +724,7 @@ DESCRIPTION:
 
     This script transfers changes in one direction - from a source Git server to a
     target p4 server.
-    It handles LFS files in the source server (assuming git LFS is suitably installed
-    and enabled)
+    It handles LFS files in the source server (assuming git LFS is suitably installed and enabled)
 
     Requires Git version 2.7+ due to use of formatting flags
 
@@ -833,13 +867,205 @@ if the script fails, then the active branch is going to be the temp one - don&#8
 </div>
 </div>
 <div class="sect1">
-<h2 id="_gitp4transfer_go_program">2. gitp4transfer - Go program</h2>
+<h2 id="_gitp4transfer_tool_for_git_and_plastic_scm_migrations">2. gitp4transfer - tool for Git and Plastic SCM migrations</h2>
 <div class="sectionbody">
 <div class="paragraph">
-<p>This uses git&#8217;s fast-import file format.</p>
+<p>This uses git&#8217;s <code>fast-import</code> (or <code>fast-export</code>) file format which is more or less supported as an export format for Plastic SCM (with caveats below!)</p>
 </div>
 <div class="paragraph">
-<p>For git LFS files, this might work via <code>git lfs migrate</code>??</p>
+<p>These files contain a complete record of the main information from a git repository:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>file contents (blobs) - the actual content of each unique file (e.g. a git SHA1 entry)</p>
+</li>
+<li>
+<p>commits (including attributes such as user/datetime/message etc) and with lists of actions within that commit:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>modify (new or edited file)</p>
+</li>
+<li>
+<p>delete (of file or directory)</p>
+</li>
+<li>
+<p>rename (of file or directory)</p>
+</li>
+<li>
+<p>copy (of file or directory)</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>branch indications (per commit)</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The format of these files is documented here: <a href="https://git-scm.com/docs/git-fast-import" class="bare">https://git-scm.com/docs/git-fast-import</a></p>
+</div>
+<div class="paragraph">
+<p>Simple examples are included in the test module: <a href="../main_test.go">main_test.go</a></p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>blob
+mark :1
+data 9
+contents
+
+blob
+mark :2
+data 10
+contents2
+
+reset refs/heads/main
+commit refs/heads/main
+mark :3
+author Robert Cowham &lt;rcowham@perforce.com&gt; 1680784555 +0100
+committer Robert Cowham &lt;rcowham@perforce.com&gt; 1680784555 +0100
+data 8
+initial
+M 100644 :1 src/file1.txt
+M 100644 :2 src/file2.txt</pre>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_overall_approach">2.1. Overall Approach</h3>
+<div class="paragraph">
+<p>The <code>gitp4transfer</code> tool can be run on a <code>git fast-export</code> file, and the tool creates:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>a <code>p4d</code> journal format (using schema for p4d 2004.2 release)</p>
+</li>
+<li>
+<p>individual librarian files (equivalent of git blobs) in a directory tree corresponding to p4d depot structure</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>These are used to create a Perforce Helix Core repository:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>p4d -jr &lt;journal&gt;</code> to create db.* metadata files</p>
+</li>
+<li>
+<p><code>p4d -xu</code> to upgrade the db.* to format of the actual <code>p4d</code> version schema</p>
+</li>
+<li>
+<p><code>p4 storage</code> command is run to perform the 2019.1 <code>p4d</code> storage upgrade process</p>
+</li>
+<li>
+<p><code>p4 verify -qu</code> command is run to perform an update of the MD5 checksums for all depot files</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Optionally:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>p4d -xi</code> can convert the repository to unicode mode</p>
+</li>
+<li>
+<p>you can specify that a case-sensitive Plastic Repository is converted to <code>p4d</code> repository running in "case-insensitive" mode (at the risk of the loss of some actions, e.g. those which only differ in case)</p>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>All of the above operations are wrapped by the <code>run_conversion.sh</code> script (<a href="#_using_the_shell_wrapper_run_conversion_sh">Section 2.4, &#8220;Using the shell wrapper run_conversion.sh&#8221;</a>) with its various parameters.</p>
+</div>
+<div class="sect3">
+<h4 id="_resulting_converted_repository_and_how_to_use_it">2.1.1. Resulting converted repository and how to use it</h4>
+<div class="paragraph">
+<p>The result of a successful repository converted by <code>gitp4transfer</code> contains:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>a top level depot with all branches</p>
+</li>
+<li>
+<p>branching is "sparse" meaning that only files changed on actual git branches are populated withint the resultind p4d repo</p>
+<div class="ulist">
+<ul>
+<li>
+<p>therefore you will need to review</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Using the result can be done in two main ways:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>As a standalone p4d repository</p>
+</li>
+<li>
+<p>As a basis for using p4 DVCS commands (p4 push/fetch) to transfer the converted contents into an already existing repository</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Note the usual caveats about the requirements for compatible settings for case sensitivity, unicode etc.</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_approach_for_plastic_scm">2.2. Approach for Plastic SCM</h3>
+<div class="paragraph">
+<p>Plastic&#8217;s git export capability writes files which are only directly git-compatible for simple repos. The following issues occur in practice:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>branch names contain spaces (auto-converted to underscores "_")</p>
+</li>
+<li>
+<p>multiple operations in the same commit can over-write each other - especially common when merging commits between branches. Examples include:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>modify of a renamed file (so called "dirty rename")</p>
+</li>
+<li>
+<p>delete of the target of a renamed file (which means the rename is not actioned)</p>
+</li>
+<li>
+<p>delete of an already deleted file</p>
+</li>
+<li>
+<p>rename of a renamed file</p>
+</li>
+<li>
+<p>many, many more! These are "documented" as part of the test suite</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>The above are complicated by the fact that you can perform actions on a directory (e.g. rename "src" to "targ" which affect all the files current present in that directory "src"). Also a "directory action" such as rename or delete, may override individual file actions which came previously in the same commit! This is especially common when you look at commits which are the result of "merges" from other branches.</p>
+</div>
+<div class="paragraph">
+<p>The net result is a lot of complexity and iterating through all the "file actions" in a commit, trying to decide which ones are still valid, and which are invalid because they have been over-ridden by a later action.</p>
 </div>
 <div class="admonitionblock important">
 <table>
@@ -848,17 +1074,381 @@ if the script fails, then the active branch is going to be the temp one - don&#8
 <i class="fa icon-important" title="Important"></i>
 </td>
 <td class="content">
-Not yet functional - very much a work in progress!!!
+Plastic&#8217;s "creativity" in this area (actions over-riding other actions in same commit) means that there likely to be scenarios still not yet correctly covered by the current tool.
 </td>
 </tr>
 </table>
+</div>
+<div class="sect3">
+<h4 id="_creating_plastic_git_export_file">2.2.1. Creating Plastic Git Export file</h4>
+<div class="paragraph">
+<p>Create workspaces:</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>cm wk mk SomeRepo /data/work/SomeRepo SomeRepo@some_server@cloud
+cd /data/work/SomeRepo</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Show rough stats:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>[robert@testhost SomeRepo]$ cm status
+/main@SomeRepo@some_server@cloud (cs:49123 - head)</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Other details:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre class="highlight"><code>[robert@testhost SomeRepo]$ cm find changeset &gt; ../cm_SomeRepo.txt
+
+[robert@testhost Onward2Repo]$ tail -3 ../cm_SomeRepo.txt
+1112339  49123    /main/beta/dev/Art 07/07/2022 09:29:51 fred@example.com Update files
+
+Total: 49012</code></pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Note the number of the final changelist and the total may not be the same.</p>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_exporting_of_data">2.2.2. Exporting of data</h4>
+<div class="paragraph">
+<p>From within the workspace directory, launch the Plastic <code>cm fast-export</code> command - this creates a complete single git <code>fast-export</code> format file containing all file revisions and all commits.</p>
+</div>
+<div class="literalblock">
+<div class="content">
+<pre>nohup cm fast-export --export-marks=marks.cm SomeRepo@some_server@cloud ../git-SomeRepo &gt; ../out_SomeRepo &amp;</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>This can take a while (hours), and also can produce rather large export files (e.g. many TB in size!)</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_running_gitp4transfer">2.3. Running gitp4transfer</h3>
+<div class="paragraph">
+<p>Once you have created the git export, you can run the <code>gitp4transfer</code> tool to process it. While it does work on Windows, it is usually run on Linux (or Mac).</p>
+</div>
+<div class="paragraph">
+<p>The latest release of this tool is available here: <a href="https://github.com/rcowham/gitp4transfer/releases" class="bare">https://github.com/rcowham/gitp4transfer/releases</a></p>
+</div>
+<div class="paragraph">
+<p>Basic help and options are shown below. It is normally expected that you don&#8217;t run the tool directly but use the wrapper script <a href="#_using_the_shell_wrapper_run_conversion_sh">Section 2.4, &#8220;Using the shell wrapper run_conversion.sh&#8221;</a> (which does expect that <code>gitp4transfer</code> is in the $PATH)</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ ./gitp4transfer -h
+usage: gitp4transfer [&lt;flags&gt;] [&lt;gitimport&gt;]
+
+Parses one or more git fast-export files to create a Perforce Helix Core import
+
+Flags:
+  -h, --help                     Show context-sensitive help (also try --help-long and --help-man).
+  -c, --config="gitp4transfer.yaml"
+                                 Config file for gitp4transfer - allows for branch renaming etc.
+  -d, --import.depot="import"    Depot into which to import (overrides config).
+      --import.path=IMPORT.PATH  (Optional) path component under import.depot (overrides config).
+  -b, --default.branch="main"    Name of default git branch (overrides config).
+      --case.insensitive         Create checkpoint case-insensitive mode (for Linux) and lowercase archive files. If not set, then OS default applies.
+      --convert.crlf             Convert CRLF in text files to just LF.
+      --dummy                    Create dummy (small) archive files - for quick analysis of large repos.
+      --dump                     Dump git file, saving the contained archive contents.
+  -a, --dump.archives            Saving the contained archive contents if --dump is specified.
+  -m, --max.commits=0            Max no of commits to process (default 0 means all).
+      --dryrun                   Don't actually create archive files.
+      --archive.root=ARCHIVE.ROOT
+                                 Archive root dir under which to store extracted archives.
+      --graphfile=GRAPHFILE      Graphviz dot file to output git commit/file structure to.
+      --journal="jnl.0"          P4D journal file to write (assuming --dump not specified).
+      --debug=0                  Enable debugging level.
+      --parallel.threads=0       How many parallel threads to use (default 0 means no of CPUs).
+      --debug.commit=0           For debugging - to allow breakpoints to be set - only valid if debug &gt; 0.
+      --version                  Show application version.
+
+Args:
+  [&lt;gitimport&gt;]  Git fast-export file to process.</pre>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_configuration_yaml_file">2.3.1. Configuration YAML file</h4>
+<div class="paragraph">
+<p>This is a fairly simple format:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre># import_depot: the p4d depot into which all data is imported
+import_depot:       import
+
+# import_path: an optional extra path within the import_depot, e.g.
+#   "git/repo1" =&gt; //import/git/repo1/&lt;branch&gt;/&lt;git path&gt;
+import_path:
+
+# default_branch: the name of the git default branch (typically "main" or "master")
+default_branch:     main
+
+# branch_mappings: an array of name/prefix pairs which "rename" the original branches
+#   into the p4 repository.
+#   Note that the name is a go regex, and the prefix is the equivalent of import_path above
+# - name: 	main.*
+#   prefix:	trunk
+# - name: 	.*
+#   prefix:	dev
+branch_mappings:
+
+# typemaps: an array of strings representing (simplified) typemap lines.
+#   Note type defaults to text+C but various binary formats are correctly
+#   detected already, and identified as "binary" or "binary+F"
+typemaps:
+- binary //....uasset
+- binary //....exe</pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_using_the_shell_wrapper_run_conversion_sh">2.4. Using the shell wrapper run_conversion.sh</h3>
+<div class="paragraph">
+<p>This is <a href="../run_conversion.sh">a Bash script</a> which provides a convenient wrapper to perform conversions and subsequent repository building actions automatically.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ bash ./run_conversion.sh -h
+USAGE for run_conversion.sh:
+
+run_conversion.sh &lt;git_fast_export&gt; [-p &lt;P4Root&gt;] [-d] [-c &lt;configfile&gt;] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
+    [-depot &lt;import depot&gt;] [-graph &lt;graphFile&gt;] [-m &lt;max commits&gt;] [-t &lt;parallel threads&gt;]
+
+   or
+
+run_conversion.sh -h
+
+    -c           &lt;configfile&gt; name of Yaml config file to control conversion (means parameters below don't need to be provided)
+    -d           Debug
+    -depot       &lt;import depot&gt; - Depot to use for this import (default is 'import')
+    -crlf        Convert CRLF to just LF for text files - useful for importing Plastic Windows exports to a Linux p4d
+    -unicode     Create a unicode enabled p4d repository (runs p4d -xi)
+    -dummy       Create dummy archives as placeholders (no real content) - much faster
+    -graph       &lt;graphfile.dot&gt; Create Graphviz output showing commit structure (see also 'gitgraph' utility which is more flexible)
+    -insensitive Specify case insensitive checkpoint (and lowercase archive files) - for Linux servers
+    -sensitive   Specify case sensitive checkpoint and restore - for Mac/Windows servers (for testing only)
+    -m           &lt;max commits&gt; - Max no of commits to process (stops after this number is reached)
+    -t           &lt;parallel threads&gt; - No of parallel threads to use (default is No of CPUs)
+    -p          &lt;P4Root&gt; - directory to use as resulting P4Root - will default to a tmp dir if not set
+    &lt;git_fast_export&gt; The (input) git fast-export format file (required)
+
+Examples:
+
+./run_conversion.sh export.git
+./run_conversion.sh export.git -p P4Root
+
+nohup ./run_conversion.sh export.git -p P4Root -d -c config.yaml &gt; out1 &amp;</pre>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_example_conversions">2.4.1. Example conversions</h4>
+<div class="paragraph">
+<p>Typical conversion process is:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Run <code>run_conversion.sh</code> in the background (can take hours) on an export file</p>
+</li>
+<li>
+<p>Review output, concentrating particularly on:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Any verify errors (indicates some sort of logic error in <code>gitp4transfer</code>)</p>
+</li>
+<li>
+<p>Run <code>p4</code> commands against the created <code>p4d</code> instance to review output</p>
+</li>
+<li>
+<p>Run a <code>p4d</code> in the output directory and then use <code>P4V</code> to review the output</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Once things are looking reasonable, you need to test the resulting conversion. E.g.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Use Plastic <code>cm</code> to create a workspace with latest known state (on a specific branch)</p>
+</li>
+<li>
+<p>Create a <code>p4</code> workspace for the resulting conversion (same branch), e.g. with root <code>/data/work/p4ws</code></p>
+</li>
+<li>
+<p>Sync the workspace</p>
+</li>
+<li>
+<p>Run a local diff between the two and look to understand any differences in file contents, e.g.</p>
+<div class="ulist">
+<ul>
+<li>
+<p><code>diff -qr /data/work/p4ws /data/work/SomeRepo</code></p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+<div class="paragraph">
+<p>Note that sometimes it is easier to "fix forwards" if there are only a few errors, by manually copying those files over and submitting them.</p>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_useful_utilities">2.5. Useful Utilities</h3>
+<div class="paragraph">
+<p>These are useful tools which help to understand the repository structure, debug issues with the conversion,
+and to test things like resulting p4 structure without worrying about
+the contents of all files (because processing of all file contents can take many hours vs a few minutes for filtered views)</p>
+</div>
+<div class="sect3">
+<h4 id="_gitfilter">2.5.1. gitfilter</h4>
+<div class="paragraph">
+<p>This tool allows you to process a git fast-export file and produce a new version which filters out the actual file contents. Instead it replaces the contents of every <code>blob</code> file with its unique ID.</p>
+</div>
+<div class="paragraph">
+<p>The advantages of this utility are:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>resulting git export file is hugely smaller (e.g. TB &#8594; a few GB) and can be processed much quicker</p>
+</li>
+<li>
+<p>it has options to produce a filtered export file which only includes file actions matching specific regex patterns (allows for even more hugely reduced export files and thus enables interactive debugging of problems which might otherwise)</p>
+</li>
+</ul>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ ./gitfilter -h
+usage: gitfilter [&lt;flags&gt;] [&lt;gitimport&gt;] [&lt;gitexport&gt;]
+
+Parses one or more git fast-export files to filter blob contents and write a new one
+
+Flags:
+  -h, --help                     Show context-sensitive help (also try --help-long and --help-man).
+  -r, --rename                   Rename branches (remove spaces).
+  -f, --filter.commits           Filter out empty commits (if --path.filter defined).
+  -m, --max.commits=MAX.COMMITS  Max no of commits to process.
+      --path.filter=PATH.FILTER  Regex git path to filter output by.
+  -d, --debug=DEBUG              Enable debugging level.
+      --debug.commit=0           For debugging - to allow breakpoints to be set - only valid if debug &gt; 0.
+      --version                  Show application version.
+
+Args:
+  [&lt;gitimport&gt;]  Git fast-export file to process.
+  [&lt;gitexport&gt;]  Git fast-import file to write.</pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Examples</div>
+<div class="content">
+<pre># Filter a file with debug output
+nohup ./gitfilter --debug 1 --rename big_file.git filtered_file.git &gt; out1 &amp;
+
+# Same as above with only 500 commits
+nohup ./gitfilter --debug 1 --rename --max.commits 500 big_file.git filtered_file.git &gt; out1 &amp;
+
+# Filter with all file history ommitted except for specified regex paths
+nohup ./gitfilter --debug 1 --rename --path.filter "file1/.txt|file2\.txt" big_file.git filtered_file.git &gt; out1 &amp;</pre>
+</div>
+</div>
+</div>
+<div class="sect3">
+<h4 id="_gitgraph">2.5.2. gitgraph</h4>
+<div class="paragraph">
+<p>This utility produces Graphviz <code>*.dot</code> files which can create a graphical view (e.g. .svg which can be opened in a browswer) of the git commit structure.</p>
+</div>
+<div class="paragraph">
+<p>While a graph.dot which contains 50k nodes is not easily processed by Graphviz in any sensible amount of time (think hours), with the filtering options (specifying start and end commits) and using a file which has been output from <a href="#_gitfilter">Section 2.5.1, &#8220;gitfilter&#8221;</a> you can create a quick visual representation of the git branching structure and see things like merges between branches etc.</p>
+</div>
+<div class="paragraph">
+<p>Very useful for some debugging/understanding of branching relationships.</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>$ ./gitgraph -h
+usage: gitgraph [&lt;flags&gt;] [&lt;gitexport&gt;]
+
+Parses one or more git fast-export files to create a graphviz DOT file
+
+Flags:
+  -h, --help            Show context-sensitive help (also try --help-long and --help-man).
+  -m, --max.commits=0   Max no of commits to process (default 0 means all).
+  -o, --output=OUTPUT   Graphviz dot file to output git commit/file structure to.
+  -f, --first.commit=0  ID of first commit to include in graph output (default 0 means all commits).
+  -l, --last.commit=0   ID of last commit to include in graph output (default of 0 means all commits).
+  -s, --squash          Squash commits (leaving branches/merges only).
+      --debug=0         Enable debugging level.
+      --version         Show application version.
+
+Args:
+  [&lt;gitexport&gt;]  Git fast-export file to process.</pre>
+</div>
+</div>
+<div class="listingblock">
+<div class="title">Example usage</div>
+<div class="content">
+<pre># Graph first 500 commits
+./gitgraph --max.commits 500 --output graph.dot export.git
+
+# Graph commits between start and end, ommitting any commits without either parent or merge
+./gitgraph --first.commit 10234 --last.commit 21321 --output graph.dot export.git
+
+# For the above you can create SVG files which can be opened with any browser
+# Install Graphviz dot as per your operating system
+
+dot -Tsvg graph.dot &gt; graph.svg</pre>
+</div>
+</div>
+</div>
+</div>
+<div class="sect2">
+<h3 id="_troubleshooting">2.6. Troubleshooting</h3>
+<div class="sect3">
+<h4 id="_verify_errors">2.6.1. Verify Errors</h4>
+<div class="paragraph">
+<p>If the resulting conversion contains verify errors, then it implies a logic error in the tool which is not coping with
+some not previously encountered Plastic/git scenario.</p>
+</div>
+<div class="paragraph">
+<p>The resolution is to consult with the author of the tool:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Create a log file with debug on</p>
+</li>
+<li>
+<p>Consider providing a <code>gitfilter</code> produced git export (contains filenames but no data)</p>
+</li>
+</ul>
+</div>
+</div>
 </div>
 </div>
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2022-04-19 12:38:26 +0100
+Last updated 2023-08-24 16:27:41 +0100
 </div>
 </div>
 </body>
