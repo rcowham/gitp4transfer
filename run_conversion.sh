@@ -1,5 +1,8 @@
 #!/bin/bash
-# Run's the conversion.
+# Run's the gitp4transfer conversion tool and performs various p4d actions to create the resulting repository, upgrade it etc.
+# Dependencies:
+# - p4 and p4d in $PATH
+# - GNU parallelel in $PATH (for verification step)
 
 # shellcheck disable=SC2128
 if [[ -z "${BASH_VERSINFO}" ]] || [[ -z "${BASH_VERSINFO[0]}" ]] || [[ ${BASH_VERSINFO[0]} -lt 4 ]]; then
@@ -8,12 +11,15 @@ if [[ -z "${BASH_VERSINFO}" ]] || [[ -z "${BASH_VERSINFO[0]}" ]] || [[ ${BASH_VE
 fi
 
 # ============================================================
-# Configuration section
-
-# ============================================================
 
 function msg () { echo -e "$*"; }
 function bail () { msg "\nError: ${1:-Unknown Error}\n"; exit "${2:-1}"; }
+function check_cmd () {
+    if ! command -v $1 &> /dev/null
+    then
+        bail "$1 could not be found in $PATH - please install it"
+    fi
+}
 
 function usage
 {
@@ -25,29 +31,33 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
-    [-depot <import depot>] [-graph <graphFile.dot>] [-m <max commits>] [-t <parallel threads>]
+run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-c <configfile>] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
+    [-depot <import depot>] [-graph <graphFile>] [-m <max commits>] [-t <parallel threads>]
 
    or
 
 run_conversion.sh -h
 
+    -c           <configfile> name of Yaml config file to control conversion (means parameters below don't need to be provided)
     -d           Debug
-    -depot       Depot to use for this import (default is 'import')
-    -crlf        Cionvert CRLF to just LF for text files
+    -depot       <import depot> - Depot to use for this import (default is 'import')
+    -crlf        Convert CRLF to just LF for text files - useful for importing Plastic Windows exports to a Linux p4d
+    -unicode     Create a unicode enabled p4d repository (runs p4d -xi)
     -dummy       Create dummy archives as placeholders (no real content) - much faster
-    -graph       Create Graphviz output showing commit structure
+    -graph       <graphfile.dot> Create Graphviz output showing commit structure (see also 'gitgraph' utility which is more flexible)
     -insensitive Specify case insensitive checkpoint (and lowercase archive files) - for Linux servers
-    -sensitive   Specify case sensitive checkpoint and restore - for Mac/Windows servers
-    -m           Max no of commits to process
-    -t           No of parallel threads to use (default is No of CPUs)
-    <P4Root>     Directory to use as resulting P4Root - will default to a tmp dir
+    -sensitive   Specify case sensitive checkpoint and restore - for Mac/Windows servers (for testing only)
+    -m           <max commits> - Max no of commits to process (stops after this number is reached)
+    -t           <parallel threads> - No of parallel threads to use (default is No of CPUs)
+    -p          <P4Root> - directory to use as resulting P4Root - will default to a tmp dir if not set
     <git_fast_export> The (input) git fast-export format file (required)
 
 Examples:
 
 ./run_conversion.sh export.git
 ./run_conversion.sh export.git -p P4Root
+
+nohup ./run_conversion.sh export.git -p P4Root -d -c config.yaml > out1 &
 
 "
 }
@@ -59,7 +69,8 @@ declare -i Debug=0
 declare -i Dummy=0
 declare -i CaseInsensitive=0
 declare -i CaseSensitive=0
-declare -i ConvertCRLF=0
+declare -i ConvertCRLF=0        # Whether to attempt to convert CRLF to LF only
+declare -i ConvertUnicode=0     # Convert resulting repo to unicode mode p4d -xi
 declare -i MaxCommits=0
 declare -i ParallelThreads=0
 declare ConfigFile=""
@@ -75,6 +86,7 @@ while [[ $# -gt 0 ]]; do
         # (-man) usage -man;;
         (-c) ConfigFile=$2; shiftArgs=1;;
         (-crlf) ConvertCRLF=1;;
+        (-unicode) ConvertUnicode=1;;
         (-p) P4Root=$2; shiftArgs=1;;
         (-d) Debug=1;;
         (-depot) ImportDepot=$2; shiftArgs=1;;
@@ -97,8 +109,11 @@ while [[ $# -gt 0 ]]; do
 done
 set -u
 
-which gitp4transfer
-[[ $? -eq 0 ]] || bail "Failed to find gitp4transfer in path"
+# Validate commands are in $PATH
+check_cmd gitp4transfer
+check_cmd p4d
+check_cmd p4
+check_cmd parallel
 
 if [[ -z $P4Root ]]; then
     P4Root=$(mktemp -d 2>/dev/null || mktemp -d -t 'myP4Root')
@@ -156,21 +171,32 @@ pushd "$P4Root"
 curr_dir=$(pwd)
 
 declare P4PORT="rsh:p4d $P4DCaseFlag -r \"$curr_dir\" -L log -vserver=3 -i"
-p4d $P4DCaseFlag -r . -jr jnl.0
-p4d $P4DCaseFlag -r . -J journal -xu
+echo "P4PORT=$P4PORT" > .p4config
+export P4CONFIG=.p4config
+p4d $P4DCaseFlag -r . -jr jnl.0 || bail "Failed to restore journal"
+p4d $P4DCaseFlag -r . -J journal -xu || bail "Failed to upgrade repository"
 p4 -p "$P4PORT" storage -r
-p4 -p "$P4PORT" storage -w
+p4 -p "$P4PORT" storage -w || bail "Failed to perform storage upgrade"å
 p4 -p "$P4PORT" configure set monitor=1
 p4 -p "$P4PORT" configure set lbr.bufsize=1M
 p4 -p "$P4PORT" configure set filesys.bufsize=1M
 
+if [[ $ConvertUnicode -ne 0 ]]; then
+    p4d -r . -xi || bail "Failed to convert repository to unicode - please see jnl.invalid-utf8 file listing unicode errors"
+fi
+
 echo "P4PORT=$P4PORT" > .p4config
 export P4CONFIG=.p4config
 
+# Now perform parallel p4 verify command to update all the MD5 checksums as appropriate for revisions/storage records
 rm -f dirs.txt
+# This next command might want to be tweaked, if you are using a config file to specify branches say at 3 levels
+# In such a case, change "//$ImportDepot/*" to "//$ImportDepot/*/*"
 p4 dirs "//$ImportDepot/*" | while read -e f; do echo "$f/..." >> dirs.txt; done
 echo "Verifying with -qu ..."
 parallel -a dirs.txt p4 verify -qu {} > verify.out 2>&1
+
+# Count the verify errors and report them
 echo "Verify errors: $(wc -l verify.out)"
 
 echo "Server is in directory:"
