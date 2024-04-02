@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="generator" content="Asciidoctor 2.0.17">
+<meta name="generator" content="Asciidoctor 2.0.20">
 <meta name="author" content="Perforce Professional Services">
 <title>GitP4Transfer - Git to P4 Migration</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
@@ -85,10 +85,10 @@ code{font-family:"Droid Sans Mono","DejaVu Sans Mono",monospace;font-weight:400;
 ul,ol,dl{line-height:1.6;margin-bottom:1.25em;list-style-position:outside;font-family:inherit}
 ul,ol{margin-left:1.5em}
 ul li ul,ul li ol{margin-left:1.25em;margin-bottom:0}
-ul.square li ul,ul.circle li ul,ul.disc li ul{list-style:inherit}
-ul.square{list-style-type:square}
 ul.circle{list-style-type:circle}
 ul.disc{list-style-type:disc}
+ul.square{list-style-type:square}
+ul.circle ul:not([class]),ul.disc ul:not([class]),ul.square ul:not([class]){list-style:inherit}
 ol li ul,ol li ol{margin-left:1.25em;margin-bottom:0}
 dl dt{margin-bottom:.3125em;font-weight:bold}
 dl dd{margin-bottom:1.25em}
@@ -209,13 +209,10 @@ table.tableblock.fit-content>caption.title{white-space:nowrap;width:0}
 .admonitionblock>table td.content{padding-left:1.125em;padding-right:1.25em;border-left:1px solid #dddddf;color:rgba(0,0,0,.6);word-wrap:anywhere}
 .admonitionblock>table td.content>:last-child>:last-child{margin-bottom:0}
 .exampleblock>.content{border:1px solid #e6e6e6;margin-bottom:1.25em;padding:1.25em;background:#fff;border-radius:4px}
-.exampleblock>.content>:first-child{margin-top:0}
-.exampleblock>.content>:last-child{margin-bottom:0}
 .sidebarblock{border:1px solid #dbdbd6;margin-bottom:1.25em;padding:1.25em;background:#f3f3f2;border-radius:4px}
-.sidebarblock>:first-child{margin-top:0}
-.sidebarblock>:last-child{margin-bottom:0}
 .sidebarblock>.content>.title{color:#7a2518;margin-top:0;text-align:center}
-.exampleblock>.content>:last-child>:last-child,.exampleblock>.content .olist>ol>li:last-child>:last-child,.exampleblock>.content .ulist>ul>li:last-child>:last-child,.exampleblock>.content .qlist>ol>li:last-child>:last-child,.sidebarblock>.content>:last-child>:last-child,.sidebarblock>.content .olist>ol>li:last-child>:last-child,.sidebarblock>.content .ulist>ul>li:last-child>:last-child,.sidebarblock>.content .qlist>ol>li:last-child>:last-child{margin-bottom:0}
+.exampleblock>.content>:first-child,.sidebarblock>.content>:first-child{margin-top:0}
+.exampleblock>.content>:last-child,.exampleblock>.content>:last-child>:last-child,.exampleblock>.content .olist>ol>li:last-child>:last-child,.exampleblock>.content .ulist>ul>li:last-child>:last-child,.exampleblock>.content .qlist>ol>li:last-child>:last-child,.sidebarblock>.content>:last-child,.sidebarblock>.content>:last-child>:last-child,.sidebarblock>.content .olist>ol>li:last-child>:last-child,.sidebarblock>.content .ulist>ul>li:last-child>:last-child,.sidebarblock>.content .qlist>ol>li:last-child>:last-child{margin-bottom:0}
 .literalblock pre,.listingblock>.content>pre{border-radius:4px;overflow-x:auto;padding:1em;font-size:.8125em}
 @media screen and (min-width:768px){.literalblock pre,.listingblock>.content>pre{font-size:.90625em}}
 @media screen and (min-width:1280px){.literalblock pre,.listingblock>.content>pre{font-size:1em}}
@@ -394,7 +391,7 @@ b.conum *{color:inherit!important}
 dt,th.tableblock,td.content,div.footnote{text-rendering:optimizeLegibility}
 h1,h2,p,td.content,span.alt,summary{letter-spacing:-.01em}
 p strong,td.content strong,div.footnote strong{letter-spacing:-.005em}
-p,blockquote,dt,td.content,span.alt,summary{font-size:1.0625rem}
+p,blockquote,dt,td.content,td.hdlist1,span.alt,summary{font-size:1.0625rem}
 p{margin-bottom:1.25rem}
 .sidebarblock p,.sidebarblock dt,.sidebarblock td.content,p.tableblock{font-size:1em}
 .exampleblock>.content{background:#fffef7;border-color:#e0e0dc;box-shadow:0 1px 4px #e0e0dc}
@@ -444,7 +441,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div class="details">
 <span id="author" class="author">Perforce Professional Services</span><br>
 <span id="email" class="email"><a href="mailto:consulting@perforce.com">consulting@perforce.com</a></span><br>
-<span id="revdate">2023-08-01</span>
+<span id="revdate">2024-04-02</span>
 </div>
 <div id="toc" class="toc">
 <div id="toctitle">Table of Contents</div>
@@ -473,7 +470,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <li><a href="#_resulting_converted_repository_and_how_to_use_it">2.1.1. Resulting converted repository and how to use it</a></li>
 </ul>
 </li>
-<li><a href="#_approach_for_plastic_scm">2.2. Approach for Plastic SCM</a>
+<li><a href="#_approach_for_plastic_scm_migrations">2.2. Approach for Plastic SCM Migrations</a>
 <ul class="sectlevel3">
 <li><a href="#_creating_plastic_git_export_file">2.2.1. Creating Plastic Git Export file</a></li>
 <li><a href="#_exporting_of_data">2.2.2. Exporting of data</a></li>
@@ -941,7 +938,7 @@ M 100644 :2 src/file2.txt</pre>
 <div class="ulist">
 <ul>
 <li>
-<p>a <code>p4d</code> journal format (using schema for p4d 2004.2 release)</p>
+<p>a <code>p4d</code> checkpoint file (using schema for p4d 2004.2 release)</p>
 </li>
 <li>
 <p>individual librarian files (equivalent of git blobs) in a directory tree corresponding to p4d depot structure</p>
@@ -949,7 +946,7 @@ M 100644 :2 src/file2.txt</pre>
 </ul>
 </div>
 <div class="paragraph">
-<p>These are used to create a Perforce Helix Core repository:</p>
+<p>These are then used to create a Perforce Helix Core repository:</p>
 </div>
 <div class="ulist">
 <ul>
@@ -998,7 +995,7 @@ M 100644 :2 src/file2.txt</pre>
 <div class="ulist">
 <ul>
 <li>
-<p>therefore you will need to review</p>
+<p>therefore you will need to review to result in some detail</p>
 </li>
 </ul>
 </div>
@@ -1028,7 +1025,7 @@ M 100644 :2 src/file2.txt</pre>
 </div>
 </div>
 <div class="sect2">
-<h3 id="_approach_for_plastic_scm">2.2. Approach for Plastic SCM</h3>
+<h3 id="_approach_for_plastic_scm_migrations">2.2. Approach for Plastic SCM Migrations</h3>
 <div class="paragraph">
 <p>Plastic&#8217;s git export capability writes files which are only directly git-compatible for simple repos. The following issues occur in practice:</p>
 </div>
@@ -1196,6 +1193,7 @@ default_branch:     main
 # branch_mappings: an array of name/prefix pairs which "rename" the original branches
 #   into the p4 repository.
 #   Note that the name is a go regex, and the prefix is the equivalent of import_path above
+#   The first "match" will win and stop further processing, so order is relevant.
 # - name: 	main.*
 #   prefix:	trunk
 # - name: 	.*
@@ -1209,6 +1207,22 @@ typemaps:
 - binary //....uasset
 - binary //....exe</pre>
 </div>
+</div>
+<div class="paragraph">
+<p>With the above branch mappings:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><code>main</code> &#8594; <code>//import/trunk/main</code></p>
+</li>
+<li>
+<p><code>main-qa</code> &#8594; <code>//import/trunk/main-qa</code></p>
+</li>
+<li>
+<p><code>featureA</code> &#8594; <code>//import/dev/featureA</code></p>
+</li>
+</ul>
 </div>
 </div>
 </div>
@@ -1448,7 +1462,7 @@ some not previously encountered Plastic/git scenario.</p>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2023-08-24 16:27:41 +0100
+Last updated 2024-04-02 14:27:05 +0100
 </div>
 </div>
 </body>

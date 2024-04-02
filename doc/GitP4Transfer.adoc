@@ -1,6 +1,6 @@
 = GitP4Transfer - Git to P4 Migration
 Perforce Professional Services <consulting@perforce.com>
-:revdate: 2023-08-01
+:revdate: 2024-04-02
 :doctype: book
 :icons: font
 :toc:
@@ -276,10 +276,10 @@ M 100644 :2 src/file2.txt
 
 The `gitp4transfer` tool can be run on a `git fast-export` file, and the tool creates:
 
-* a `p4d` journal format (using schema for p4d 2004.2 release)
+* a `p4d` checkpoint file (using schema for p4d 2004.2 release)
 * individual librarian files (equivalent of git blobs) in a directory tree corresponding to p4d depot structure
 
-These are used to create a Perforce Helix Core repository:
+These are then used to create a Perforce Helix Core repository:
 
 * `p4d -jr <journal>` to create db.* metadata files
 * `p4d -xu` to upgrade the db.* to format of the actual `p4d` version schema
@@ -299,7 +299,7 @@ The result of a successful repository converted by `gitp4transfer` contains:
 
 * a top level depot with all branches
 * branching is "sparse" meaning that only files changed on actual git branches are populated withint the resultind p4d repo
-** therefore you will need to review
+** therefore you will need to review to result in some detail
 
 Using the result can be done in two main ways:
 
@@ -307,7 +307,7 @@ Using the result can be done in two main ways:
 * As a basis for using p4 DVCS commands (p4 push/fetch) to transfer the converted contents into an already existing repository
 ** Note the usual caveats about the requirements for compatible settings for case sensitivity, unicode etc.
 
-=== Approach for Plastic SCM
+=== Approach for Plastic SCM Migrations
 
 Plastic's git export capability writes files which are only directly git-compatible for simple repos. The following issues occur in practice:
 
@@ -420,6 +420,7 @@ default_branch:     main
 # branch_mappings: an array of name/prefix pairs which "rename" the original branches 
 #   into the p4 repository.
 #   Note that the name is a go regex, and the prefix is the equivalent of import_path above
+#   The first "match" will win and stop further processing, so order is relevant.
 # - name: 	main.*
 #   prefix:	trunk
 # - name: 	.*
@@ -433,6 +434,12 @@ typemaps:
 - binary //....uasset
 - binary //....exe
 ----
+
+With the above branch mappings:
+
+* `main` -> `//import/trunk/main`
+* `main-qa` -> `//import/trunk/main-qa`
+* `featureA` -> `//import/dev/featureA`
 
 === Using the shell wrapper run_conversion.sh
 

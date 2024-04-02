@@ -1,5 +1,7 @@
 # GitP4Transfer
 
+Options to import git repositories into Perforce Helix Core.
+
 ## GitP4Transfer.py
 
 Script to migrate history from a git LFS repository into p4 (Perforce Helix Core).
@@ -18,6 +20,9 @@ For details of design/usage etc see: [GitP4Transfer.adoc](doc/GitP4Transfer.adoc
 
 ## gitp4transfer - Go version
 
-The intent of this is to process `git fast-export` files ad import then into Helix Core.
+The intent of this is to process `git fast-export` files and import then into Helix Core. It does this by creating
+a Helix Core checkpoint file (and associated archive files).
 
-As of 2022/04/19 - this is not yet functional!
+This is documented in: [GitP4Transfer.adoc](doc/GitP4Transfer.adoc#gitp4transfer-tool-for-git-and-plastic-scm-migrations)
+
+It is considered to be in beta release.
