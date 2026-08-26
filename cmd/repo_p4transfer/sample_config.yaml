@@ -30,3 +30,21 @@ typemaps:
   - "binary .zip"
   - "text .java"
   - "text .xml"
+
+# Git fast-export configuration
+# These options control how git fast-export handles edge cases
+git_export:
+  # How to handle tags pointing to filtered objects (e.g., commits before date range)
+  # Options: abort (stop), drop (remove tags), rewrite (dereference tags)
+  # Recommended: "drop" for date-filtered imports
+  tag_of_filtered_object: "drop"
+  
+  # How to handle GPG-signed tags
+  # Options: verbatim, warn-verbatim, warn-strip, strip, abort
+  # Recommended: "warn-strip" for P4 import (P4 doesn't support GPG signatures)
+  signed_tags: "warn-strip"
+  
+  # Enable done marker for resumable exports (advanced feature)
+  # Allows resuming interrupted fast-export operations
+  use_done_feature: false
+

@@ -6,6 +6,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -61,6 +62,13 @@ type ManifestProject struct {
 	Name string `xml:"name,attr"`
 }
 
+// GitExportOptions configures git fast-export behavior
+type GitExportOptions struct {
+	TagOfFilteredObject string `yaml:"tag_of_filtered_object"`
+	SignedTags          string `yaml:"signed_tags"`
+	UseDoneFeature      bool   `yaml:"use_done_feature"`
+}
+
 // RepoP4TransferConfig combines base config with repo-specific settings
 type RepoP4TransferConfig struct {
 	DateRange struct {
@@ -74,6 +82,7 @@ type RepoP4TransferConfig struct {
 	DefaultBranch  string                 `yaml:"default_branch"`
 	BranchMappings []config.BranchMapping `yaml:"branch_mappings"`
 	TypeMaps       []string               `yaml:"typemaps"`
+	GitExport      GitExportOptions       `yaml:"git_export"`
 }
 
 // CommitMetadata holds minimal metadata for timeline building
@@ -180,6 +189,11 @@ func (r *RepoP4Transfer) loadConfig() error {
 		return fmt.Errorf("failed to parse config YAML: %w", err)
 	}
 
+	// Validate git export options
+	if err := r.validateGitExportOptions(cfg); err != nil {
+		return err
+	}
+
 	// If no selected repos specified, use all from manifest
 	if len(cfg.SelectedRepos) == 0 {
 		for path := range r.projects {
@@ -188,6 +202,35 @@ func (r *RepoP4Transfer) loadConfig() error {
 	}
 
 	r.cfg = cfg
+	return nil
+}
+
+// validateGitExportOptions validates git export configuration
+func (r *RepoP4Transfer) validateGitExportOptions(cfg *RepoP4TransferConfig) error {
+	validTagModes := map[string]bool{"abort": true, "drop": true, "rewrite": true}
+	validSignedModes := map[string]bool{
+		"verbatim": true, "warn-verbatim": true, "warn-strip": true,
+		"strip": true, "abort": true,
+	}
+
+	// Check tag_of_filtered_object if specified
+	if cfg.GitExport.TagOfFilteredObject != "" {
+		if !validTagModes[cfg.GitExport.TagOfFilteredObject] {
+			return fmt.Errorf("invalid git_export.tag_of_filtered_object: %s (must be abort, drop, or rewrite)",
+				cfg.GitExport.TagOfFilteredObject)
+		}
+		r.logger.Debugf("Git export tag_of_filtered_object: %s", cfg.GitExport.TagOfFilteredObject)
+	}
+
+	// Check signed_tags if specified
+	if cfg.GitExport.SignedTags != "" {
+		if !validSignedModes[cfg.GitExport.SignedTags] {
+			return fmt.Errorf("invalid git_export.signed_tags: %s (must be verbatim, warn-verbatim, warn-strip, strip, or abort)",
+				cfg.GitExport.SignedTags)
+		}
+		r.logger.Debugf("Git export signed_tags: %s", cfg.GitExport.SignedTags)
+	}
+
 	return nil
 }
 
@@ -213,8 +256,9 @@ func (r *RepoP4Transfer) parseDateRange() error {
 // BuildTimeline scans all repos and builds a chronological timeline of commits
 func (r *RepoP4Transfer) BuildTimeline() error {
 	r.logger.Info("Building timeline of commits across all repos...")
+	r.logger.Debugf("Scanning %d selected repos", len(r.cfg.SelectedRepos))
 
-	for _, repoPath := range r.cfg.SelectedRepos {
+	for i, repoPath := range r.cfg.SelectedRepos {
 		project, ok := r.projects[repoPath]
 		if !ok {
 			r.logger.Warnf("Repo %s not found in manifest", repoPath)
@@ -222,6 +266,8 @@ func (r *RepoP4Transfer) BuildTimeline() error {
 		}
 
 		repoFullPath := filepath.Join(r.repoRoot, repoPath)
+
+		r.logger.Debugf("[%d/%d] Scanning repo: %s", i+1, len(r.cfg.SelectedRepos), repoPath)
 
 		// Check if repo exists
 		if _, err := os.Stat(repoFullPath); os.IsNotExist(err) {
@@ -236,9 +282,17 @@ func (r *RepoP4Transfer) BuildTimeline() error {
 	}
 
 	// Sort commits by timestamp
+	r.logger.Debugf("Sorting %d total commits chronologically", len(r.commits))
 	sort.Sort(CommitsByTime(r.commits))
 
 	r.logger.Infof("Found %d commits across all repos in date range", len(r.commits))
+
+	if len(r.commits) > 0 {
+		r.logger.Debugf("Timeline range: %s to %s",
+			r.commits[0].Timestamp.Format("2006-01-02 15:04:05"),
+			r.commits[len(r.commits)-1].Timestamp.Format("2006-01-02 15:04:05"))
+	}
+
 	return nil
 }
 
@@ -253,11 +307,22 @@ func (r *RepoP4Transfer) scanRepoCommits(project *ManifestProject, repoPath stri
 		return fmt.Errorf("failed to get branches: %w", err)
 	}
 
+	if len(branches) == 0 {
+		r.logger.Warnf("No branches found in repo %s", project.Path)
+		return nil
+	}
+
 	// Filter branches based on config
 	selectedBranches := r.filterBranches(branches)
+	r.logger.Debugf("Filtered %d branches to %d matching branches", len(branches), len(selectedBranches))
+
 	if len(selectedBranches) == 0 {
-		r.logger.Debugf("No matching branches in repo %s", project.Path)
+		r.logger.Debugf("No matching branches in repo %s after filtering", project.Path)
 		return nil
+	}
+
+	for i, branch := range selectedBranches {
+		r.logger.Debugf("[%d/%d] Scanning branch: %s", i+1, len(selectedBranches), branch)
 	}
 
 	// Get commits for each branch
@@ -271,18 +336,45 @@ func (r *RepoP4Transfer) scanRepoCommits(project *ManifestProject, repoPath stri
 	return nil
 }
 
-// getRepoBranches lists all branches in a git repository
-func (r *RepoP4Transfer) getRepoBranches(repoPath string) ([]string, error) {
-	cmd := exec.Command("git", "branch", "-r")
+// executeGitCommand runs a git command and captures stdout and stderr
+func (r *RepoP4Transfer) executeGitCommand(repoPath string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
 	cmd.Dir = repoPath
 
-	output, err := cmd.Output()
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+
+	r.logger.Debugf("[%s] Executing: git %s", repoPath, strings.Join(args, " "))
+
+	err := cmd.Run()
+	stderrOutput := stderr.String()
+
+	// Log stderr if present (regardless of error status)
+	if stderrOutput != "" {
+		if err != nil {
+			r.logger.Warnf("[%s] Command stderr: %s", repoPath, stderrOutput)
+		} else {
+			r.logger.Debugf("[%s] Command stderr: %s", repoPath, stderrOutput)
+		}
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("git command failed: %w (stderr: %s)", err, stderrOutput)
+	}
+
+	return stdout.Bytes(), nil
+}
+
+// getRepoBranches lists all branches in a git repository
+func (r *RepoP4Transfer) getRepoBranches(repoPath string) ([]string, error) {
+	output, err := r.executeGitCommand(repoPath, "branch", "-r")
 	if err != nil {
 		return nil, fmt.Errorf("failed to run git branch: %w", err)
 	}
 
 	branches := []string{}
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(bytes.NewReader(output))
 	for scanner.Scan() {
 		branch := strings.TrimSpace(scanner.Text())
 		// Skip HEAD and remote-tracking branches like origin/HEAD
@@ -293,6 +385,7 @@ func (r *RepoP4Transfer) getRepoBranches(repoPath string) ([]string, error) {
 		}
 	}
 
+	r.logger.Debugf("[%s] Found %d branches", repoPath, len(branches))
 	return branches, nil
 }
 
@@ -339,20 +432,20 @@ func (r *RepoP4Transfer) getCommitsForBranch(project *ManifestProject, repoPath,
 	startDateStr := r.startDate.Format("2006-01-02")
 	endDateStr := r.endDate.Format("2006-01-02")
 
-	cmd := exec.Command("git", "log",
+	output, err := r.executeGitCommand(repoPath, "log",
 		fmt.Sprintf("--since=%s", startDateStr),
 		fmt.Sprintf("--until=%s", endDateStr),
 		"--format=%H|%aI|%an|%s",
 		branch)
-	cmd.Dir = repoPath
 
-	output, err := cmd.Output()
 	if err != nil {
 		// Branch might not exist, just skip it
+		r.logger.Debugf("[%s] Branch %s not found or error getting commits", repoPath, branch)
 		return nil
 	}
 
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner := bufio.NewScanner(bytes.NewReader(output))
+	commitCount := 0
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -385,6 +478,11 @@ func (r *RepoP4Transfer) getCommitsForBranch(project *ManifestProject, repoPath,
 		}
 
 		r.commits = append(r.commits, commit)
+		commitCount++
+	}
+
+	if commitCount > 0 {
+		r.logger.Debugf("[%s:%s] Found %d commits", project.Path, branch, commitCount)
 	}
 
 	return nil
@@ -402,12 +500,19 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 
 	// Group commits by repo for fast-export
 	commitsByRepo := r.groupCommitsByRepo()
+	r.logger.Debugf("Grouping %d commits into %d repos for batched export", len(r.commits), len(commitsByRepo))
 
 	for repoPath, commits := range commitsByRepo {
 		project := r.projects[repoPath]
 		repoFullPath := filepath.Join(r.repoRoot, repoPath)
 
 		r.logger.Infof("Processing repo: %s (%d commits)", repoPath, len(commits))
+		r.logger.Debugf("  Repo path: %s", project.Path)
+		r.logger.Debugf("  Full path: %s", repoFullPath)
+		r.logger.Debugf("  First commit: %s at %s", commits[0].Hash[:8], commits[0].Timestamp.Format("2006-01-02 15:04:05"))
+		if len(commits) > 1 {
+			r.logger.Debugf("  Last commit: %s at %s", commits[len(commits)-1].Hash[:8], commits[len(commits)-1].Timestamp.Format("2006-01-02 15:04:05"))
+		}
 
 		if err := r.createAndImportFastExport(project, repoFullPath, commits); err != nil {
 			r.logger.Errorf("Failed to export/import repo %s: %v", repoPath, err)
@@ -419,12 +524,19 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	return nil
 }
 
-// groupCommitsByRepo groups commits by their source repo
+// groupCommitsByRepo groups commits by their source repo and sorts by timestamp within each repo
 func (r *RepoP4Transfer) groupCommitsByRepo() map[string][]*CommitMetadata {
 	groups := make(map[string][]*CommitMetadata)
 	for _, commit := range r.commits {
 		groups[commit.RepoPath] = append(groups[commit.RepoPath], commit)
 	}
+
+	// Sort commits within each repo by timestamp (should already be sorted globally, but ensure it per-repo)
+	for repoPath, commits := range groups {
+		sort.Sort(CommitsByTime(commits))
+		r.logger.Debugf("Repo '%s': %d commits", repoPath, len(commits))
+	}
+
 	return groups
 }
 
@@ -460,23 +572,44 @@ func (r *RepoP4Transfer) createAndImportFastExport(project *ManifestProject, rep
 	return nil
 }
 
-// createFastExport creates a git fast-export dump file
+// createFastExport creates a git fast-export dump file with configured options
 func (r *RepoP4Transfer) createFastExport(repoPath string, commitHashes []string, outputFile string) error {
-	// Use git fast-export to create dump file for specified commits
-	args := []string{"fast-export", "--all"}
+	// Build git fast-export command with configured options
+	args := []string{"fast-export"}
+
+	// Add tag handling option if specified
+	if r.cfg.GitExport.TagOfFilteredObject != "" {
+		args = append(args, fmt.Sprintf("--tag-of-filtered-object=%s", r.cfg.GitExport.TagOfFilteredObject))
+		r.logger.Debugf("[%s] Using --tag-of-filtered-object=%s", repoPath, r.cfg.GitExport.TagOfFilteredObject)
+	}
+
+	// Add signed tags handling option if specified
+	if r.cfg.GitExport.SignedTags != "" {
+		args = append(args, fmt.Sprintf("--signed-tags=%s", r.cfg.GitExport.SignedTags))
+		r.logger.Debugf("[%s] Using --signed-tags=%s", repoPath, r.cfg.GitExport.SignedTags)
+	}
+
+	// Add done feature if enabled
+	if r.cfg.GitExport.UseDoneFeature {
+		args = append(args, "--use-done-feature")
+		r.logger.Debugf("[%s] Using --use-done-feature for resumable exports", repoPath)
+	}
+
+	args = append(args, "--all")
 	args = append(args, commitHashes...)
 
-	cmd := exec.Command("git", args...)
-	cmd.Dir = repoPath
-
-	output, err := cmd.Output()
+	output, err := r.executeGitCommand(repoPath, args...)
 	if err != nil {
 		return fmt.Errorf("git fast-export failed: %w", err)
 	}
 
+	r.logger.Debugf("[%s] Fast-export output size: %d bytes", repoPath, len(output))
+
 	if err := os.WriteFile(outputFile, output, 0644); err != nil {
 		return fmt.Errorf("failed to write export file: %w", err)
 	}
+
+	r.logger.Debugf("[%s] Export file written to: %s", repoPath, outputFile)
 
 	return nil
 }
@@ -486,12 +619,29 @@ func (r *RepoP4Transfer) PrintStats() {
 	r.logger.Info("=== Transfer Statistics ===")
 	r.logger.Infof("Total commits: %d", len(r.commits))
 	r.logger.Infof("Total repos: %d", len(r.projects))
+	r.logger.Infof("Selected repos: %d", len(r.cfg.SelectedRepos))
 
 	// Count commits per repo
 	commitsByRepo := r.groupCommitsByRepo()
-	for repoPath, commits := range commitsByRepo {
-		r.logger.Infof("  %s: %d commits", repoPath, len(commits))
+	if len(commitsByRepo) > 0 {
+		r.logger.Infof("Repos with commits: %d", len(commitsByRepo))
+		for repoPath, commits := range commitsByRepo {
+			r.logger.Infof("  %s: %d commits", repoPath, len(commits))
+		}
+	} else {
+		r.logger.Info("No repos have commits in the date range")
 	}
+
+	r.logger.Debugf("Branch filters: %v", r.cfg.Branches)
+	r.logger.Debugf("Date range: %s to %s", r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
+}
+
+// minInt returns the minimum of two integers
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func init() {

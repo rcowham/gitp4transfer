@@ -28,6 +28,96 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
 
+## Debug Mode
+
+When running with `--log-level debug`, the tool provides detailed output about the transfer process:
+
+### Git Command Logging
+
+All git commands are executed with both stdout and stderr captured:
+
+**Successful Commands:**
+```
+DEBUG [repo/path] Executing: git branch -r
+DEBUG [repo/path] Executing: git log --since=2024-01-01 --until=2024-12-31 --format=%H|%aI|%an|%s main
+DEBUG [repo/path] Executing: git fast-export --all <hashes>
+```
+
+**Commands with Warnings (stderr logged at WARN level):**
+```
+WARN [repo/path] Command stderr: warning: refname '...' is ambiguous
+WARN [repo/path] Command stderr: hint: The following pathnames are ambiguous...
+```
+
+**Commands that Fail (stderr logged with error details):**
+```
+ERROR [repo/path] Command failed: exit status 128 (stderr: fatal: not a git repository)
+```
+
+### Stderr Handling
+
+- **Warnings**: stderr output is logged at DEBUG level even when the command succeeds
+- **Failures**: stderr is included in error messages for troubleshooting
+- **Errors**: Failed commands show both the error code and stderr content
+
+This ensures you have full visibility into what git is reporting, even for non-fatal issues.
+
+### Command Execution Output
+
+All git commands executed are logged with their full arguments:
+```
+[repo/path] Executing: git branch -r
+[repo/path] Executing: git log --since=2024-01-01 --until=2024-12-31 --format=%H|%aI|%an|%s main
+[repo/path] Executing: git fast-export --all <commit-hashes> (with N commit hashes)
+```
+
+### Commit Timeline Building
+
+Detailed progress during timeline construction:
+```
+[1/500] Scanning repo: platform/build
+  [repo] Executing: git branch -r
+  [repo] Found 12 branches
+  Filtered 12 branches to 3 matching branches
+  [1/3] Scanning branch: main
+  [repo:main] Found 45 commits
+  [2/3] Scanning branch: develop
+  [repo:develop] Found 23 commits
+Sorting 68 total commits chronologically
+Timeline range: 2024-01-15 09:23:45 to 2024-12-28 16:42:18
+```
+
+### Batch Processing Information
+
+When exporting and importing, batching details show commit distribution:
+```
+Grouping 500 commits into 45 repos for batched export
+Processing repo: platform/build (45 commits)
+  Repo path: platform/build
+  Full path: /path/to/repos/platform/build
+  First commit: a1b2c3d4 at 2024-01-01 10:30:15
+  Last commit: x9y8z7w6 at 2024-12-28 14:22:45
+Repo 'platform/build': 45 commits
+```
+
+### Example Debug Run
+
+```bash
+./repo_p4transfer \
+  --manifest ../../test/android/manifest/default.xml \
+  --config sample_config.yaml \
+  --repo-root /path/to/android/repos \
+  --log-level debug
+```
+
+Expected output:
+- Repository discovery and branch enumeration
+- Per-branch commit counts and filtering
+- Global timeline sort verification
+- Batch composition and export process
+- Per-repository commit ranges and statistics
+
+
 ## Configuration
 
 The YAML config file controls filtering and import settings:
