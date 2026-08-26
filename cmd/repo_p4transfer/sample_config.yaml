@@ -1,0 +1,32 @@
+# Sample configuration for repo_p4transfer
+# This file defines filtering and P4 target settings
+
+# Date range for filtering commits (format: YYYY-MM-DD)
+date_range:
+  start_date: "2024-01-01"
+  end_date: "2024-12-31"
+
+# Branch patterns to include (supports * wildcard)
+# If empty, all branches are included
+branches:
+  - "main"
+  - "develop"
+  - "android*-release"
+  - "master"
+
+# P4 target configuration
+# The import_depot is where repos will be imported under their manifest paths
+import_depot: "//depot/android_import"
+import_path: "android"
+default_branch: "main"
+
+# Optional: Specify which repos to import from the manifest
+# If empty or omitted, all repos from the manifest are imported
+selected_repos: []
+
+# Type mappings for P4 filetypes (optional)
+typemaps:
+  - "binary .exe"
+  - "binary .zip"
+  - "text .java"
+  - "text .xml"
