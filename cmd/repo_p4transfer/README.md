@@ -15,7 +15,7 @@ This tool processes multiple git repositories defined in an Android manifest fil
 ## Usage
 
 ```bash
-repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <path/to/repos> [--log-level debug]
+repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <path/to/repos> [--export-dir <path/to/exports>] [--log-level debug]
 ```
 
 ### Required Flags
@@ -26,6 +26,7 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 
 ### Optional Flags
 
+- `--export-dir`: Directory where to store git fast-export dump files (default: system temp directory)
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
 
 ## Debug Mode

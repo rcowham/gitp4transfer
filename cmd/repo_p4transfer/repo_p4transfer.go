@@ -33,6 +33,8 @@ var (
 			Required().String()
 	repoRoot = app.Flag("repo-root", "Root directory containing all repos").
 			Required().String()
+	exportDir = app.Flag("export-dir", "Directory where to store export files").
+			String()
 	logLevel = app.Flag("log-level", "Log level").
 			Default("info").String()
 
@@ -109,6 +111,7 @@ type RepoP4Transfer struct {
 	manifestFile string
 	configFile   string
 	repoRoot     string
+	exportDir    string
 	manifest     *RepoManifest
 	cfg          *RepoP4TransferConfig
 	projects     map[string]*ManifestProject // key: project path
@@ -118,12 +121,13 @@ type RepoP4Transfer struct {
 }
 
 // NewRepoP4Transfer creates a new transfer coordinator
-func NewRepoP4Transfer(manifestFile, configFile, repoRoot string, logger *logrus.Logger) *RepoP4Transfer {
+func NewRepoP4Transfer(manifestFile, configFile, repoRoot, exportDir string, logger *logrus.Logger) *RepoP4Transfer {
 	return &RepoP4Transfer{
 		logger:       logger,
 		manifestFile: manifestFile,
 		configFile:   configFile,
 		repoRoot:     repoRoot,
+		exportDir:    exportDir,
 		projects:     make(map[string]*ManifestProject),
 		commits:      make([]*CommitMetadata, 0),
 	}
@@ -148,6 +152,9 @@ func (r *RepoP4Transfer) Init() error {
 
 	r.logger.Infof("Loaded %d projects from manifest", len(r.projects))
 	r.logger.Infof("Date range: %s to %s", r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
+	if r.exportDir != "" {
+		r.logger.Infof("Export directory: %s", r.exportDir)
+	}
 
 	return nil
 }
@@ -542,9 +549,20 @@ func (r *RepoP4Transfer) groupCommitsByRepo() map[string][]*CommitMetadata {
 
 // createAndImportFastExport creates fast-export dump for a repo and imports to P4
 func (r *RepoP4Transfer) createAndImportFastExport(project *ManifestProject, repoPath string, commits []*CommitMetadata) error {
-	// Create a temporary export file
-	tempExportFile := filepath.Join(os.TempDir(), fmt.Sprintf("export_%s.txt", strings.ReplaceAll(project.Path, "/", "_")))
-	defer os.Remove(tempExportFile)
+	var targetExportDir string
+	if r.exportDir != "" {
+		targetExportDir = r.exportDir
+		if err := os.MkdirAll(targetExportDir, 0755); err != nil {
+			return fmt.Errorf("failed to create export directory %s: %w", targetExportDir, err)
+		}
+	} else {
+		targetExportDir = os.TempDir()
+	}
+
+	exportFile := filepath.Join(targetExportDir, fmt.Sprintf("export_%s.txt", strings.ReplaceAll(project.Path, "/", "_")))
+	if r.exportDir == "" {
+		defer os.Remove(exportFile)
+	}
 
 	r.logger.Debugf("Creating fast-export dump for %s", project.Path)
 
@@ -559,15 +577,15 @@ func (r *RepoP4Transfer) createAndImportFastExport(project *ManifestProject, rep
 	}
 
 	// Create fast-export dump
-	if err := r.createFastExport(repoPath, uniqueCommits, tempExportFile); err != nil {
+	if err := r.createFastExport(repoPath, uniqueCommits, exportFile); err != nil {
 		return fmt.Errorf("failed to create fast-export: %w", err)
 	}
 
-	r.logger.Debugf("Fast-export dump created: %s", tempExportFile)
+	r.logger.Debugf("Fast-export dump created: %s", exportFile)
 
 	// TODO: Implement P4 import logic
 	// For now, just log the path
-	r.logger.Infof("Would import %s to P4 depot %s at path %s", tempExportFile, r.cfg.ImportDepot, project.Path)
+	r.logger.Infof("Would import %s to P4 depot %s at path %s", exportFile, r.cfg.ImportDepot, project.Path)
 
 	return nil
 }
@@ -665,7 +683,7 @@ func main() {
 	logger.SetLevel(level)
 
 	// Create transfer coordinator
-	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, logger)
+	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, logger)
 
 	// Initialize from config and manifest
 	if err := transfer.Init(); err != nil {

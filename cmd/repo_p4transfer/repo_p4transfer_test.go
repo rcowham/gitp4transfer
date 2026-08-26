@@ -41,7 +41,7 @@ import_depot: "//depot/test"`
 	}
 
 	// Create transfer instance and load manifest
-	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, nil)
+	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, "", nil)
 
 	if err := transfer.loadManifest(); err != nil {
 		t.Fatalf("Failed to load manifest: %v", err)
@@ -94,7 +94,7 @@ default_branch: "main"`
 	}
 
 	// Create transfer instance
-	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, nil)
+	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, "", nil)
 
 	// Load both manifest and config
 	if err := transfer.loadManifest(); err != nil {
@@ -165,5 +165,16 @@ func TestCommitSorting(t *testing.T) {
 		if commits[i].Hash != expected {
 			t.Errorf("Expected commit %s at position %d, got %s", expected, i, commits[i].Hash)
 		}
+	}
+}
+
+func TestExportDirSetting(t *testing.T) {
+	tmpDir := t.TempDir()
+	customExportDir := filepath.Join(tmpDir, "custom_exports")
+
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", tmpDir, customExportDir, nil)
+
+	if transfer.exportDir != customExportDir {
+		t.Errorf("Expected exportDir %s, got %s", customExportDir, transfer.exportDir)
 	}
 }
