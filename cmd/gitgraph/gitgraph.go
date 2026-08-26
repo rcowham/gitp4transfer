@@ -20,8 +20,8 @@ import (
 	libfastimport "github.com/rcowham/go-libgitfastimport"
 
 	"github.com/perforce/p4prometheus/version"
+	"github.com/rcowham/kingpin"
 	"github.com/sirupsen/logrus"
-	"gopkg.in/alecthomas/kingpin.v2"
 )
 
 var defaultP4user = "git-user" // Default user if non found
