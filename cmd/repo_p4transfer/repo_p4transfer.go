@@ -606,13 +606,16 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	if err := r.writeBatchSummary(batches, summaryFile); err != nil {
 		return err
 	}
-	r.logger.Infof("Dry-run batch summary written to: %s", summaryFile)
+	r.logger.Infof("Batch summary written to: %s", summaryFile)
+	batchMap := r.batchMapForBatches(batches, filepath.Dir(summaryFile))
+	mapFilePath := r.batchMapOutputFile(filepath.Dir(summaryFile))
+	if err := r.writeBatchMap(batchMap, mapFilePath); err != nil {
+		return fmt.Errorf("failed to write batch map: %w", err)
+	}
+	r.logger.Infof("Batch mapping file written to: %s", mapFilePath)
 	if r.dryRun {
 		return nil
 	}
-
-	batchMap := make(map[string]string)
-	var lastExportDir string
 
 	for i, batch := range batches {
 		project, ok := r.projects[batch.RepoPath]
@@ -630,38 +633,39 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 			r.logger.Debugf("  Last commit: %s at %s", batch.Commits[len(batch.Commits)-1].Hash[:8], batch.Commits[len(batch.Commits)-1].Timestamp.Format("2006-01-02 15:04:05"))
 		}
 
-		exportFile, err := r.createAndImportFastExport(batch, project, repoFullPath, i+1)
+		_, err := r.createAndImportFastExport(batch, project, repoFullPath, i+1)
 		if err != nil {
 			r.logger.Errorf("Failed to export/import batch %d for repo %s: %v", i+1, batch.RepoPath, err)
 			continue
-		}
-		cleanPath := strings.Trim(project.Path, "/")
-		batchMap[exportFile] = cleanPath
-		batchMap[filepath.Base(exportFile)] = cleanPath
-		lastExportDir = filepath.Dir(exportFile)
-	}
-
-	if len(batchMap) > 0 {
-		var mapFilePath string
-		if r.batchMapFile != "" {
-			mapFilePath = r.batchMapFile
-		} else if r.exportDir != "" {
-			mapFilePath = filepath.Join(r.exportDir, "batch_mapping.yaml")
-		} else if lastExportDir != "" {
-			mapFilePath = filepath.Join(lastExportDir, "batch_mapping.yaml")
-		} else {
-			mapFilePath = filepath.Join(os.TempDir(), "batch_mapping.yaml")
-		}
-
-		if err := r.writeBatchMap(batchMap, mapFilePath); err != nil {
-			r.logger.Warnf("Failed to write batch map file: %v", err)
-		} else {
-			r.logger.Infof("Batch mapping file written to: %s", mapFilePath)
 		}
 	}
 
 	r.logger.Info("Export and import completed")
 	return nil
+}
+
+// batchMapForBatches builds the import mapping using the names assigned to export files.
+func (r *RepoP4Transfer) batchMapForBatches(batches []*CommitBatch, outputDir string) map[string]string {
+	batchMap := make(map[string]string)
+	for index, batch := range batches {
+		project, ok := r.projects[batch.RepoPath]
+		if !ok {
+			continue
+		}
+		exportName := fmt.Sprintf("export_batch%04d_%s.txt", index+1, strings.ReplaceAll(project.Path, "/", "_"))
+		exportFile := filepath.Join(outputDir, exportName)
+		cleanPath := strings.Trim(project.Path, "/")
+		batchMap[exportFile] = cleanPath
+		batchMap[exportName] = cleanPath
+	}
+	return batchMap
+}
+
+func (r *RepoP4Transfer) batchMapOutputFile(outputDir string) string {
+	if r.batchMapFile != "" {
+		return r.batchMapFile
+	}
+	return filepath.Join(outputDir, "batch_mapping.yaml")
 }
 
 // writeBatchSummary records each time-ordered batch without exporting its contents.

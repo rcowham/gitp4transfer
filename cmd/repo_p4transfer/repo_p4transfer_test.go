@@ -291,6 +291,22 @@ func TestBatchSummaryOutput(t *testing.T) {
 	}
 }
 
+func TestBatchMapForBatches(t *testing.T) {
+	outputDir := t.TempDir()
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", outputDir, false, nil)
+	transfer.projects["packages/services/Car"] = &ManifestProject{Path: "packages/services/Car"}
+	batches := []*CommitBatch{{RepoPath: "packages/services/Car"}}
+
+	batchMap := transfer.batchMapForBatches(batches, outputDir)
+	exportName := "export_batch0001_packages_services_Car.txt"
+	if batchMap[exportName] != "packages/services/Car" {
+		t.Errorf("Unexpected batch map entry: %q", batchMap[exportName])
+	}
+	if batchMap[filepath.Join(outputDir, exportName)] != "packages/services/Car" {
+		t.Errorf("Missing full-path batch map entry")
+	}
+}
+
 func TestDummyFastExport(t *testing.T) {
 	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", true, nil)
 
