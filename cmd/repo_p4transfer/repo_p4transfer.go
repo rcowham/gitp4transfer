@@ -41,6 +41,8 @@ var (
 			String()
 	dummy = app.Flag("dummy", "Write placeholder text for blob contents in export files").
 		Bool()
+	firstParent = app.Flag("first-parent", "Follow only the first parent commit when scanning git history").
+			Bool()
 	logLevel = app.Flag("log-level", "Log level").
 			Default("info").String()
 
@@ -75,6 +77,7 @@ type GitExportOptions struct {
 	TagOfFilteredObject string `yaml:"tag_of_filtered_object"`
 	SignedTags          string `yaml:"signed_tags"`
 	UseDoneFeature      bool   `yaml:"use_done_feature"`
+	FirstParent         bool   `yaml:"first_parent"`
 }
 
 // RepoP4TransferConfig combines base config with repo-specific settings
@@ -126,6 +129,7 @@ type RepoP4Transfer struct {
 	exportDir    string
 	batchMapFile string
 	dummy        bool
+	firstParent  bool
 	manifest     *RepoManifest
 	cfg          *RepoP4TransferConfig
 	projects     map[string]*ManifestProject // key: project path
@@ -494,11 +498,19 @@ func (r *RepoP4Transfer) getCommitsForBranch(project *ManifestProject, repoPath,
 	startDateStr := r.startDate.Format("2006-01-02")
 	endDateStr := r.endDate.Format("2006-01-02")
 
-	output, err := r.executeGitCommand(repoPath, "log",
+	args := []string{
+		"log",
 		fmt.Sprintf("--since=%s", startDateStr),
 		fmt.Sprintf("--until=%s", endDateStr),
-		"--format=%H|%aI|%an|%s",
-		branch)
+	}
+
+	if r.firstParent || (r.cfg != nil && r.cfg.GitExport.FirstParent) {
+		args = append(args, "--first-parent")
+	}
+
+	args = append(args, "--format=%H|%aI|%an|%s", branch)
+
+	output, err := r.executeGitCommand(repoPath, args...)
 
 	if err != nil {
 		// Branch might not exist, just skip it
@@ -891,6 +903,7 @@ func main() {
 	// Create transfer coordinator
 	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, *dummy, logger)
 	transfer.batchMapFile = *batchMapFile
+	transfer.firstParent = *firstParent
 
 	// Initialize from config and manifest
 	if err := transfer.Init(); err != nil {

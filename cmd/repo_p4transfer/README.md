@@ -29,6 +29,7 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 - `--export-dir`: Directory where to store git fast-export dump files (default: system temp directory)
 - `--batch-map`: Output YAML file path for batch to repo path mapping
 - `--dummy`: Write placeholder text for blob contents in export files (for quick testing)
+- `--first-parent`: Follow only the first parent commit when scanning git history
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
 
 ## Debug Mode

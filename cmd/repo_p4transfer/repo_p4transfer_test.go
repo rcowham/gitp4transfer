@@ -342,3 +342,63 @@ func TestGetRepoBranchesAndTags(t *testing.T) {
 		}
 	}
 }
+
+func TestFirstParentFiltering(t *testing.T) {
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\nOutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("init", "-b", "main")
+	runCmd("config", "user.email", "test@example.com")
+	runCmd("config", "user.name", "Test User")
+
+	os.WriteFile(filepath.Join(repoDir, "f1.txt"), []byte("commit 1\n"), 0644)
+	runCmd("add", "f1.txt")
+	runCmd("commit", "-m", "commit 1 on main")
+
+	// Branch out to feature and make commit 2
+	runCmd("checkout", "-b", "feature")
+	os.WriteFile(filepath.Join(repoDir, "f2.txt"), []byte("commit 2 on feature\n"), 0644)
+	runCmd("add", "f2.txt")
+	runCmd("commit", "-m", "commit 2 on feature")
+
+	// Switch back to main and make commit 3, then merge feature
+	runCmd("checkout", "main")
+	os.WriteFile(filepath.Join(repoDir, "f3.txt"), []byte("commit 3 on main\n"), 0644)
+	runCmd("add", "f3.txt")
+	runCmd("commit", "-m", "commit 3 on main")
+	runCmd("merge", "--no-ff", "feature", "-m", "merge feature")
+
+	project := &ManifestProject{Path: "testrepo", Name: "testrepo"}
+
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", false, nil)
+	transfer.startDate = time.Now().Add(-24 * time.Hour)
+	transfer.endDate = time.Now().Add(24 * time.Hour)
+
+	// Case 1: Without firstParent, commit on feature branch is included
+	transfer.firstParent = false
+	transfer.commits = nil
+	if err := transfer.getCommitsForBranch(project, repoDir, "main", make(map[string]bool)); err != nil {
+		t.Fatalf("getCommitsForBranch failed: %v", err)
+	}
+	if len(transfer.commits) < 4 {
+		t.Errorf("Expected all 4 commits (merge, commit 3, commit 2, commit 1), got %d", len(transfer.commits))
+	}
+
+	// Case 2: With firstParent = true, side-branch commit (commit 2) is skipped
+	transfer.firstParent = true
+	transfer.commits = nil
+	if err := transfer.getCommitsForBranch(project, repoDir, "main", make(map[string]bool)); err != nil {
+		t.Fatalf("getCommitsForBranch failed: %v", err)
+	}
+	// With first-parent on main, it follows merge -> commit 3 -> commit 1 (3 commits)
+	if len(transfer.commits) != 3 {
+		t.Errorf("Expected 3 commits with first-parent (merge, commit 3, commit 1), got %d", len(transfer.commits))
+	}
+}
