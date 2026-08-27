@@ -821,6 +821,8 @@ func minInt(a, b int) int {
 
 func init() {
 	app.Version(version.Print("repo_p4transfer"))
+	app.HelpFlag.Short('h')
+	app.VersionFlag.Short('v')
 }
 
 func main() {
