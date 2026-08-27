@@ -136,6 +136,10 @@ type RepoP4Transfer struct {
 
 // NewRepoP4Transfer creates a new transfer coordinator
 func NewRepoP4Transfer(manifestFile, configFile, repoRoot, exportDir string, dummy bool, logger *logrus.Logger) *RepoP4Transfer {
+	if logger == nil {
+		logger = logrus.New()
+		logger.SetOutput(io.Discard)
+	}
 	return &RepoP4Transfer{
 		logger:       logger,
 		manifestFile: manifestFile,
@@ -322,8 +326,8 @@ func (r *RepoP4Transfer) BuildTimeline() error {
 func (r *RepoP4Transfer) scanRepoCommits(project *ManifestProject, repoPath string) error {
 	r.logger.Debugf("Scanning repo: %s (%s)", project.Path, repoPath)
 
-	// Build git log command to get commits in date range for specified branches
-	// Get list of available branches first
+	// Build git log command to get commits in date range for specified branches and tags
+	// Get list of available branches and tags first
 	branches, err := r.getRepoBranches(repoPath)
 	if err != nil {
 		return fmt.Errorf("failed to get branches: %w", err)
@@ -344,13 +348,16 @@ func (r *RepoP4Transfer) scanRepoCommits(project *ManifestProject, repoPath stri
 	}
 
 	for i, branch := range selectedBranches {
-		r.logger.Debugf("[%d/%d] Scanning branch: %s", i+1, len(selectedBranches), branch)
+		r.logger.Debugf("[%d/%d] Scanning branch/tag: %s", i+1, len(selectedBranches), branch)
 	}
+
+	// Track seen commit hashes for this repo to avoid duplicate entries when a commit is on multiple branches/tags
+	seenCommitHashes := make(map[string]bool)
 
 	// Get commits for each branch
 	for _, branch := range selectedBranches {
-		if err := r.getCommitsForBranch(project, repoPath, branch); err != nil {
-			r.logger.Warnf("Failed to get commits for branch %s in %s: %v", branch, project.Path, err)
+		if err := r.getCommitsForBranch(project, repoPath, branch, seenCommitHashes); err != nil {
+			r.logger.Warnf("Failed to get commits for branch/tag %s in %s: %v", branch, project.Path, err)
 			continue
 		}
 	}
@@ -388,26 +395,59 @@ func (r *RepoP4Transfer) executeGitCommand(repoPath string, args ...string) ([]b
 	return stdout.Bytes(), nil
 }
 
-// getRepoBranches lists all branches in a git repository
+// getRepoBranches lists all local branches, remote branches, and tags in a git repository
 func (r *RepoP4Transfer) getRepoBranches(repoPath string) ([]string, error) {
-	output, err := r.executeGitCommand(repoPath, "branch", "-r")
-	if err != nil {
-		return nil, fmt.Errorf("failed to run git branch: %w", err)
-	}
-
 	branches := []string{}
-	scanner := bufio.NewScanner(bytes.NewReader(output))
-	for scanner.Scan() {
-		branch := strings.TrimSpace(scanner.Text())
-		// Skip HEAD and remote-tracking branches like origin/HEAD
-		if branch != "" && !strings.Contains(branch, "/HEAD") {
-			// Remove origin/ prefix to get local branch name
-			branch = strings.TrimPrefix(branch, "origin/")
-			branches = append(branches, branch)
+	seen := make(map[string]bool)
+
+	addRef := func(ref string) {
+		ref = strings.TrimSpace(ref)
+		if ref != "" && !seen[ref] {
+			seen[ref] = true
+			branches = append(branches, ref)
 		}
 	}
 
-	r.logger.Debugf("[%s] Found %d branches", repoPath, len(branches))
+	// 1. Local branches
+	if output, err := r.executeGitCommand(repoPath, "branch"); err == nil {
+		scanner := bufio.NewScanner(bytes.NewReader(output))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if strings.HasPrefix(line, "*") {
+				line = strings.TrimSpace(strings.TrimPrefix(line, "*"))
+			}
+			if line != "" && !strings.HasPrefix(line, "(") && !strings.Contains(line, "detached") {
+				addRef(line)
+			}
+		}
+	}
+
+	// 2. Remote branches (includes m/* manifest refs created by repo tool)
+	if output, err := r.executeGitCommand(repoPath, "branch", "-r"); err == nil {
+		scanner := bufio.NewScanner(bytes.NewReader(output))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line != "" && !strings.Contains(line, "/HEAD") && !strings.Contains(line, "->") {
+				addRef(line)
+				if idx := strings.Index(line, "/"); idx != -1 && idx < len(line)-1 {
+					addRef(line[idx+1:])
+				}
+			}
+		}
+	}
+
+	// 3. Tags
+	if output, err := r.executeGitCommand(repoPath, "tag"); err == nil {
+		scanner := bufio.NewScanner(bytes.NewReader(output))
+		for scanner.Scan() {
+			tag := strings.TrimSpace(scanner.Text())
+			if tag != "" {
+				addRef(tag)
+			}
+		}
+	}
+
+	r.logger.Debugf("[%s] Found %d branches/tags", repoPath, len(branches))
 	return branches, nil
 }
 
@@ -448,8 +488,8 @@ func matchPattern(s, pattern string) bool {
 	return false
 }
 
-// getCommitsForBranch extracts commits from a specific branch within date range
-func (r *RepoP4Transfer) getCommitsForBranch(project *ManifestProject, repoPath, branch string) error {
+// getCommitsForBranch extracts commits from a specific branch or tag within date range
+func (r *RepoP4Transfer) getCommitsForBranch(project *ManifestProject, repoPath, branch string, seenCommitHashes map[string]bool) error {
 	// Use git log to get commits in date range
 	startDateStr := r.startDate.Format("2006-01-02")
 	endDateStr := r.endDate.Format("2006-01-02")
@@ -480,6 +520,13 @@ func (r *RepoP4Transfer) getCommitsForBranch(project *ManifestProject, repoPath,
 		}
 
 		hash := parts[0]
+		if seenCommitHashes != nil {
+			if seenCommitHashes[hash] {
+				continue
+			}
+			seenCommitHashes[hash] = true
+		}
+
 		timestamp, err := time.Parse(time.RFC3339, parts[1])
 		if err != nil {
 			r.logger.Warnf("Failed to parse timestamp %s: %v", parts[1], err)

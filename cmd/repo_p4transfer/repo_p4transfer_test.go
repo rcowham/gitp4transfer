@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -286,5 +287,58 @@ M 100644 :1 file.txt
 	dummyStr := string(dummyOutput)
 	if !strings.Contains(dummyStr, "blob\nmark :1\ndata 2\n1\n") {
 		t.Errorf("Expected dummy blob output with mark content, got:\n%s", dummyStr)
+	}
+}
+
+func TestGetRepoBranchesAndTags(t *testing.T) {
+	// Create a test git repository with a commit, a tag, and a remote branch
+	repoDir := t.TempDir()
+
+	runCmd := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\nOutput: %s", args, err, out)
+		}
+	}
+
+	runCmd("init", "-b", "main")
+	runCmd("config", "user.email", "test@example.com")
+	runCmd("config", "user.name", "Test User")
+
+	dummyFile := filepath.Join(repoDir, "test.txt")
+	os.WriteFile(dummyFile, []byte("test"), 0644)
+
+	runCmd("add", "test.txt")
+	runCmd("commit", "-m", "initial commit")
+	runCmd("tag", "v1.0.0")
+
+	// Create a remote ref mimicking repo tool's m/android-latest-release
+	runCmd("update-ref", "refs/remotes/m/android-latest-release", "HEAD")
+
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", false, nil)
+	refs, err := transfer.getRepoBranches(repoDir)
+	if err != nil {
+		t.Fatalf("getRepoBranches failed: %v", err)
+	}
+
+	expectedRefs := map[string]bool{
+		"main":                     true,
+		"m/android-latest-release": true,
+		"android-latest-release":   true,
+		"v1.0.0":                   true,
+	}
+
+	for exp := range expectedRefs {
+		found := false
+		for _, r := range refs {
+			if r == exp {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("Expected ref/tag %s not found in getRepoBranches output: %v", exp, refs)
+		}
 	}
 }
