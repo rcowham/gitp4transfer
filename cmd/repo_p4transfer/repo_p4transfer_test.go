@@ -261,6 +261,36 @@ func TestBatchMappingOutput(t *testing.T) {
 	}
 }
 
+func TestBatchSummaryOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	summaryFile := filepath.Join(tmpDir, "batch_summary.tsv")
+	batches := []*CommitBatch{
+		{RepoPath: "packages/services/Car", Commits: []*CommitMetadata{
+			{Timestamp: time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)},
+			{Timestamp: time.Date(2024, 1, 1, 11, 0, 0, 0, time.UTC)},
+		}},
+		{RepoPath: "frameworks/base", Commits: []*CommitMetadata{
+			{Timestamp: time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)},
+		}},
+	}
+
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", false, nil)
+	if err := transfer.writeBatchSummary(batches, summaryFile); err != nil {
+		t.Fatalf("Failed to write batch summary: %v", err)
+	}
+
+	data, err := os.ReadFile(summaryFile)
+	if err != nil {
+		t.Fatalf("Failed to read batch summary: %v", err)
+	}
+	want := "batch\trepository\tcommit_count\tstart_datetime\tend_datetime\n" +
+		"0001\tpackages/services/Car\t2\t2024-01-01T10:00:00Z\t2024-01-01T11:00:00Z\n" +
+		"0002\tframeworks/base\t1\t2024-01-01T12:00:00Z\t2024-01-01T12:00:00Z\n"
+	if string(data) != want {
+		t.Errorf("Unexpected batch summary:\n%s", data)
+	}
+}
+
 func TestDummyFastExport(t *testing.T) {
 	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", true, nil)
 

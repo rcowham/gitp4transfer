@@ -41,6 +41,8 @@ var (
 			String()
 	dummy = app.Flag("dummy", "Write placeholder text for blob contents in export files").
 		Bool()
+	dryRun = app.Flag("dry-run", "Write batch summary without creating fast-export files").
+		Bool()
 	firstParent = app.Flag("first-parent", "Follow only the first parent commit when scanning git history").
 			Bool()
 	logLevel = app.Flag("log-level", "Log level").
@@ -129,6 +131,7 @@ type RepoP4Transfer struct {
 	exportDir    string
 	batchMapFile string
 	dummy        bool
+	dryRun       bool
 	firstParent  bool
 	manifest     *RepoManifest
 	cfg          *RepoP4TransferConfig
@@ -596,6 +599,17 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	// Group commits into contiguous time-ordered batches per repo
 	batches := r.groupContiguousCommits()
 	r.logger.Infof("Grouped %d commits into %d contiguous time-ordered batches across repos", len(r.commits), len(batches))
+	summaryFile := "batch_summary.tsv"
+	if r.exportDir != "" {
+		summaryFile = filepath.Join(r.exportDir, summaryFile)
+	}
+	if err := r.writeBatchSummary(batches, summaryFile); err != nil {
+		return err
+	}
+	r.logger.Infof("Dry-run batch summary written to: %s", summaryFile)
+	if r.dryRun {
+		return nil
+	}
 
 	batchMap := make(map[string]string)
 	var lastExportDir string
@@ -647,6 +661,34 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	}
 
 	r.logger.Info("Export and import completed")
+	return nil
+}
+
+// writeBatchSummary records each time-ordered batch without exporting its contents.
+func (r *RepoP4Transfer) writeBatchSummary(batches []*CommitBatch, outputFile string) error {
+	if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
+		return fmt.Errorf("failed to create directory for batch summary %s: %w", outputFile, err)
+	}
+
+	f, err := os.Create(outputFile)
+	if err != nil {
+		return fmt.Errorf("failed to create batch summary %s: %w", outputFile, err)
+	}
+	defer f.Close()
+
+	if _, err := fmt.Fprintln(f, "batch\trepository\tcommit_count\tstart_datetime\tend_datetime"); err != nil {
+		return fmt.Errorf("failed to write batch summary header: %w", err)
+	}
+	for index, batch := range batches {
+		if len(batch.Commits) == 0 {
+			continue
+		}
+		start := batch.Commits[0].Timestamp.Format(time.RFC3339)
+		end := batch.Commits[len(batch.Commits)-1].Timestamp.Format(time.RFC3339)
+		if _, err := fmt.Fprintf(f, "%04d\t%s\t%d\t%s\t%s\n", index+1, batch.RepoPath, len(batch.Commits), start, end); err != nil {
+			return fmt.Errorf("failed to write batch summary: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -917,6 +959,7 @@ func main() {
 	// Create transfer coordinator
 	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, *dummy, logger)
 	transfer.batchMapFile = *batchMapFile
+	transfer.dryRun = *dryRun
 	transfer.firstParent = *firstParent
 
 	// Initialize from config and manifest

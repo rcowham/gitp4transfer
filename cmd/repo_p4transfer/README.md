@@ -29,6 +29,7 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 - `--export-dir`: Directory where to store git fast-export dump files (default: system temp directory)
 - `--batch-map`: Output YAML file path for batch to repo path mapping
 - `--dummy`: Write placeholder text for blob contents in export files (for quick testing)
+- `--dry-run`: Write `batch_summary.tsv` without creating fast-export files
 - `--first-parent`: Follow only the first parent commit when scanning git history
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
 
@@ -200,9 +201,23 @@ make
 
 ## TODO
 
-- Implement actual P4 import logic (currently logs what would be imported)
 - Add dry-run mode to preview without actual P4 changes
 - Add resumption logic for interrupted imports
 - Add progress tracking and statistics collection
 - Implement proper error recovery and retry logic
 - Add verification step to compare before/after imports
+- Add incremental writing of map files
+- Add pipelining of the work done by gitp4transfer with option to remove export files (save disk space) - in parallel?
+
+
+## Initializing using Android repo tool
+
+```
+
+  706  2026/08/27 UTC 17:20:22 repo init --no-partial-clone -b android-latest-release -u https://android.googlesource.com/platform/manifest
+  707  2026/08/27 UTC 17:21:02 cp ../test_manifest.xml .repo/manifests/
+  708  2026/08/27 UTC 17:21:19 history | grep repo
+  709  2026/08/27 UTC 17:21:29 history | grep 'repo '
+  710  2026/08/27 UTC 17:21:37 repo init -m test_manifest.xml
+  711  2026/08/27 UTC 17:21:58 nohup repo sync -c -j8 >/tmp/s.out &
+```
