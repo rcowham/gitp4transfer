@@ -40,6 +40,22 @@ func runCmd(cmdLine string) (string, error) {
 	return string(stdout), err
 }
 
+func TestFastExportSource(t *testing.T) {
+	source := NewFastExportSource(strings.NewReader("blob\nmark :1\ndata 5\nhello\n\n"))
+
+	cmd, err := source.Next()
+	if err != nil {
+		t.Fatalf("Failed to read fast-export command: %v", err)
+	}
+	blob, ok := cmd.(libfastimport.CmdBlob)
+	if !ok {
+		t.Fatalf("Expected blob command, got %T", cmd)
+	}
+	if blob.Mark != 1 || blob.Data != "hello" {
+		t.Errorf("Unexpected blob: %+v", blob)
+	}
+}
+
 func createGitRepo(t *testing.T) string {
 	d := t.TempDir()
 	os.Chdir(d)

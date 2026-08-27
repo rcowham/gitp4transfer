@@ -91,6 +91,19 @@ type GitParserOptions struct {
 	debugCommit     int // For debug breakpoint
 }
 
+// FastExportSource reads records from a git fast-export stream.
+type FastExportSource struct {
+	frontend *libfastimport.Frontend
+}
+
+func NewFastExportSource(input io.Reader) *FastExportSource {
+	return &FastExportSource{frontend: libfastimport.NewFrontend(input, nil, nil)}
+}
+
+func (s *FastExportSource) Next() (libfastimport.Cmd, error) {
+	return s.frontend.ReadCmd()
+}
+
 type GitAction int
 
 const (
@@ -2037,7 +2050,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 		}
 
 		parseReader := func(buf io.Reader, importFile string) bool {
-			f := libfastimport.NewFrontend(buf, nil, nil)
+			source := NewFastExportSource(buf)
 			fileMarks := make(map[int]int) // local mark -> offset mark for this file
 			maxMarkInFile := 0
 
@@ -2064,7 +2077,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 
 		CmdLoop:
 			for {
-				cmd, err := f.ReadCmd()
+				cmd, err := source.Next()
 				if err != nil {
 					if err == io.EOF {
 						break

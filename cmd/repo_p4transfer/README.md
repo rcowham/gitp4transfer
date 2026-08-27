@@ -42,6 +42,7 @@ When running with `--log-level debug`, the tool provides detailed output about t
 All git commands are executed with both stdout and stderr captured:
 
 **Successful Commands:**
+
 ```
 DEBUG [repo/path] Executing: git branch -r
 DEBUG [repo/path] Executing: git log --since=2024-01-01 --until=2024-12-31 --format=%H|%aI|%an|%s main
@@ -49,6 +50,7 @@ DEBUG [repo/path] Executing: git fast-export --all <hashes>
 ```
 
 **Commands with Warnings (stderr logged at WARN level):**
+
 ```
 WARN [repo/path] Command stderr: warning: refname '...' is ambiguous
 WARN [repo/path] Command stderr: hint: The following pathnames are ambiguous...
