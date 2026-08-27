@@ -98,6 +98,12 @@ type CommitMetadata struct {
 	Branch    string
 }
 
+// CommitBatch represents a contiguous group of commits for a single repo in chronological order
+type CommitBatch struct {
+	RepoPath string
+	Commits  []*CommitMetadata
+}
+
 // CommitsByTime implements sort.Interface for CommitMetadata
 type CommitsByTime []*CommitMetadata
 
@@ -505,24 +511,28 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 		return nil
 	}
 
-	// Group commits by repo for fast-export
-	commitsByRepo := r.groupCommitsByRepo()
-	r.logger.Debugf("Grouping %d commits into %d repos for batched export", len(r.commits), len(commitsByRepo))
+	// Group commits into contiguous time-ordered batches per repo
+	batches := r.groupContiguousCommits()
+	r.logger.Infof("Grouped %d commits into %d contiguous time-ordered batches across repos", len(r.commits), len(batches))
 
-	for repoPath, commits := range commitsByRepo {
-		project := r.projects[repoPath]
-		repoFullPath := filepath.Join(r.repoRoot, repoPath)
+	for i, batch := range batches {
+		project, ok := r.projects[batch.RepoPath]
+		if !ok {
+			r.logger.Errorf("Batch %d: repo %s not found in manifest", i+1, batch.RepoPath)
+			continue
+		}
+		repoFullPath := filepath.Join(r.repoRoot, batch.RepoPath)
 
-		r.logger.Infof("Processing repo: %s (%d commits)", repoPath, len(commits))
+		r.logger.Infof("[%d/%d] Processing batch for repo: %s (%d commits)", i+1, len(batches), batch.RepoPath, len(batch.Commits))
 		r.logger.Debugf("  Repo path: %s", project.Path)
 		r.logger.Debugf("  Full path: %s", repoFullPath)
-		r.logger.Debugf("  First commit: %s at %s", commits[0].Hash[:8], commits[0].Timestamp.Format("2006-01-02 15:04:05"))
-		if len(commits) > 1 {
-			r.logger.Debugf("  Last commit: %s at %s", commits[len(commits)-1].Hash[:8], commits[len(commits)-1].Timestamp.Format("2006-01-02 15:04:05"))
+		r.logger.Debugf("  First commit: %s at %s", batch.Commits[0].Hash[:8], batch.Commits[0].Timestamp.Format("2006-01-02 15:04:05"))
+		if len(batch.Commits) > 1 {
+			r.logger.Debugf("  Last commit: %s at %s", batch.Commits[len(batch.Commits)-1].Hash[:8], batch.Commits[len(batch.Commits)-1].Timestamp.Format("2006-01-02 15:04:05"))
 		}
 
-		if err := r.createAndImportFastExport(project, repoFullPath, commits); err != nil {
-			r.logger.Errorf("Failed to export/import repo %s: %v", repoPath, err)
+		if err := r.createAndImportFastExport(batch, project, repoFullPath, i+1); err != nil {
+			r.logger.Errorf("Failed to export/import batch %d for repo %s: %v", i+1, batch.RepoPath, err)
 			continue
 		}
 	}
@@ -531,24 +541,55 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	return nil
 }
 
-// groupCommitsByRepo groups commits by their source repo and sorts by timestamp within each repo
-func (r *RepoP4Transfer) groupCommitsByRepo() map[string][]*CommitMetadata {
-	groups := make(map[string][]*CommitMetadata)
+// groupContiguousCommits groups globally sorted commits into contiguous time-ordered batches by repository
+func (r *RepoP4Transfer) groupContiguousCommits() []*CommitBatch {
+	if len(r.commits) == 0 {
+		return nil
+	}
+
+	var batches []*CommitBatch
+	var currentBatch *CommitBatch
+
 	for _, commit := range r.commits {
-		groups[commit.RepoPath] = append(groups[commit.RepoPath], commit)
+		if currentBatch == nil || currentBatch.RepoPath != commit.RepoPath {
+			currentBatch = &CommitBatch{
+				RepoPath: commit.RepoPath,
+				Commits:  []*CommitMetadata{commit},
+			}
+			batches = append(batches, currentBatch)
+		} else {
+			currentBatch.Commits = append(currentBatch.Commits, commit)
+		}
 	}
 
-	// Sort commits within each repo by timestamp (should already be sorted globally, but ensure it per-repo)
-	for repoPath, commits := range groups {
-		sort.Sort(CommitsByTime(commits))
-		r.logger.Debugf("Repo '%s': %d commits", repoPath, len(commits))
-	}
-
-	return groups
+	return batches
 }
 
-// createAndImportFastExport creates fast-export dump for a repo and imports to P4
-func (r *RepoP4Transfer) createAndImportFastExport(project *ManifestProject, repoPath string, commits []*CommitMetadata) error {
+// getRangeSpecs generates git revision range arguments for a batch of commits
+func (r *RepoP4Transfer) getRangeSpecs(repoPath, startHash, endHash string) []string {
+	hasParent := r.hasParentCommit(repoPath, startHash)
+
+	if startHash == endHash {
+		if hasParent {
+			return []string{fmt.Sprintf("%s^..%s", startHash, startHash)}
+		}
+		return []string{startHash}
+	}
+
+	if hasParent {
+		return []string{fmt.Sprintf("%s^..%s", startHash, endHash)}
+	}
+	return []string{fmt.Sprintf("%s..%s", startHash, endHash), startHash}
+}
+
+// hasParentCommit checks if a commit has a parent commit in git
+func (r *RepoP4Transfer) hasParentCommit(repoPath, hash string) bool {
+	_, err := r.executeGitCommand(repoPath, "rev-parse", "--verify", "-q", hash+"^")
+	return err == nil
+}
+
+// createAndImportFastExport creates fast-export dump for a batch and imports to P4
+func (r *RepoP4Transfer) createAndImportFastExport(batch *CommitBatch, project *ManifestProject, repoPath string, batchNum int) error {
 	var targetExportDir string
 	if r.exportDir != "" {
 		targetExportDir = r.exportDir
@@ -559,25 +600,34 @@ func (r *RepoP4Transfer) createAndImportFastExport(project *ManifestProject, rep
 		targetExportDir = os.TempDir()
 	}
 
-	exportFile := filepath.Join(targetExportDir, fmt.Sprintf("export_%s.txt", strings.ReplaceAll(project.Path, "/", "_")))
+	exportFile := filepath.Join(targetExportDir, fmt.Sprintf("export_batch%d_%s.txt", batchNum, strings.ReplaceAll(project.Path, "/", "_")))
+	marksFile := filepath.Join(targetExportDir, fmt.Sprintf("marks_%s.txt", strings.ReplaceAll(project.Path, "/", "_")))
+
 	if r.exportDir == "" {
 		defer os.Remove(exportFile)
 	}
 
-	r.logger.Debugf("Creating fast-export dump for %s", project.Path)
+	r.logger.Debugf("Creating fast-export dump for %s (batch %d)", project.Path, batchNum)
 
-	// Get unique commits from the list
+	// Get unique commits from the list while preserving order
 	commitHashes := make(map[string]bool)
 	var uniqueCommits []string
-	for _, commit := range commits {
+	for _, commit := range batch.Commits {
 		if !commitHashes[commit.Hash] {
 			commitHashes[commit.Hash] = true
 			uniqueCommits = append(uniqueCommits, commit.Hash)
 		}
 	}
 
-	// Create fast-export dump
-	if err := r.createFastExport(repoPath, uniqueCommits, exportFile); err != nil {
+	// Build range spec for fast-export
+	startHash := uniqueCommits[0]
+	endHash := uniqueCommits[len(uniqueCommits)-1]
+	revSpecs := r.getRangeSpecs(repoPath, startHash, endHash)
+
+	r.logger.Debugf("[%s] Exporting revision specs: %s", project.Path, strings.Join(revSpecs, " "))
+
+	// Create fast-export dump using range specs and marks
+	if err := r.createFastExport(repoPath, revSpecs, marksFile, exportFile); err != nil {
 		return fmt.Errorf("failed to create fast-export: %w", err)
 	}
 
@@ -590,10 +640,20 @@ func (r *RepoP4Transfer) createAndImportFastExport(project *ManifestProject, rep
 	return nil
 }
 
-// createFastExport creates a git fast-export dump file with configured options
-func (r *RepoP4Transfer) createFastExport(repoPath string, commitHashes []string, outputFile string) error {
+// createFastExport creates a git fast-export dump file with configured options, range specs, and marks
+func (r *RepoP4Transfer) createFastExport(repoPath string, revSpecs []string, marksFile string, outputFile string) error {
 	// Build git fast-export command with configured options
 	args := []string{"fast-export"}
+
+	// Add marks options for incremental exports across batches
+	if marksFile != "" {
+		if _, err := os.Stat(marksFile); err == nil {
+			args = append(args, fmt.Sprintf("--import-marks=%s", marksFile))
+			r.logger.Debugf("[%s] Using --import-marks=%s", repoPath, marksFile)
+		}
+		args = append(args, fmt.Sprintf("--export-marks=%s", marksFile))
+		r.logger.Debugf("[%s] Using --export-marks=%s", repoPath, marksFile)
+	}
 
 	// Add tag handling option if specified
 	if r.cfg.GitExport.TagOfFilteredObject != "" {
@@ -613,8 +673,7 @@ func (r *RepoP4Transfer) createFastExport(repoPath string, commitHashes []string
 		r.logger.Debugf("[%s] Using --use-done-feature for resumable exports", repoPath)
 	}
 
-	args = append(args, "--all")
-	args = append(args, commitHashes...)
+	args = append(args, revSpecs...)
 
 	output, err := r.executeGitCommand(repoPath, args...)
 	if err != nil {
@@ -639,12 +698,15 @@ func (r *RepoP4Transfer) PrintStats() {
 	r.logger.Infof("Total repos: %d", len(r.projects))
 	r.logger.Infof("Selected repos: %d", len(r.cfg.SelectedRepos))
 
-	// Count commits per repo
-	commitsByRepo := r.groupCommitsByRepo()
-	if len(commitsByRepo) > 0 {
-		r.logger.Infof("Repos with commits: %d", len(commitsByRepo))
-		for repoPath, commits := range commitsByRepo {
-			r.logger.Infof("  %s: %d commits", repoPath, len(commits))
+	batches := r.groupContiguousCommits()
+	if len(batches) > 0 {
+		r.logger.Infof("Contiguous time batches: %d", len(batches))
+		commitsPerRepo := make(map[string]int)
+		for _, batch := range batches {
+			commitsPerRepo[batch.RepoPath] += len(batch.Commits)
+		}
+		for repoPath, count := range commitsPerRepo {
+			r.logger.Infof("  %s: %d commits", repoPath, count)
 		}
 	} else {
 		r.logger.Info("No repos have commits in the date range")

@@ -178,3 +178,47 @@ func TestExportDirSetting(t *testing.T) {
 		t.Errorf("Expected exportDir %s, got %s", customExportDir, transfer.exportDir)
 	}
 }
+
+func TestContiguousGrouping(t *testing.T) {
+	// Create globally sorted commits from interleaved repos: A, A, B, B, A
+	commits := []*CommitMetadata{
+		{Hash: "a1", RepoPath: "repoA", Timestamp: time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)},
+		{Hash: "a2", RepoPath: "repoA", Timestamp: time.Date(2024, 1, 1, 10, 5, 0, 0, time.UTC)},
+		{Hash: "b1", RepoPath: "repoB", Timestamp: time.Date(2024, 1, 1, 10, 10, 0, 0, time.UTC)},
+		{Hash: "b2", RepoPath: "repoB", Timestamp: time.Date(2024, 1, 1, 10, 15, 0, 0, time.UTC)},
+		{Hash: "a3", RepoPath: "repoA", Timestamp: time.Date(2024, 1, 1, 10, 20, 0, 0, time.UTC)},
+	}
+
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", nil)
+	transfer.commits = commits
+
+	batches := transfer.groupContiguousCommits()
+
+	if len(batches) != 3 {
+		t.Fatalf("Expected 3 contiguous batches, got %d", len(batches))
+	}
+
+	// Batch 1: repoA with 2 commits
+	if batches[0].RepoPath != "repoA" || len(batches[0].Commits) != 2 {
+		t.Errorf("Batch 1 mismatch: repo=%s, commits=%d", batches[0].RepoPath, len(batches[0].Commits))
+	}
+	if batches[0].Commits[0].Hash != "a1" || batches[0].Commits[1].Hash != "a2" {
+		t.Errorf("Batch 1 commits mismatch")
+	}
+
+	// Batch 2: repoB with 2 commits
+	if batches[1].RepoPath != "repoB" || len(batches[1].Commits) != 2 {
+		t.Errorf("Batch 2 mismatch: repo=%s, commits=%d", batches[1].RepoPath, len(batches[1].Commits))
+	}
+	if batches[1].Commits[0].Hash != "b1" || batches[1].Commits[1].Hash != "b2" {
+		t.Errorf("Batch 2 commits mismatch")
+	}
+
+	// Batch 3: repoA with 1 commit
+	if batches[2].RepoPath != "repoA" || len(batches[2].Commits) != 1 {
+		t.Errorf("Batch 3 mismatch: repo=%s, commits=%d", batches[2].RepoPath, len(batches[2].Commits))
+	}
+	if batches[2].Commits[0].Hash != "a3" {
+		t.Errorf("Batch 3 commit mismatch")
+	}
+}

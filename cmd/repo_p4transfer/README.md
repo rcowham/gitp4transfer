@@ -90,15 +90,22 @@ Timeline range: 2024-01-15 09:23:45 to 2024-12-28 16:42:18
 
 ### Batch Processing Information
 
-When exporting and importing, batching details show commit distribution:
+When exporting and importing, commits across repositories are grouped into contiguous time-ordered batches to preserve global chronological order in Perforce:
+
 ```
-Grouping 500 commits into 45 repos for batched export
-Processing repo: platform/build (45 commits)
+Grouped 500 commits into 12 contiguous time-ordered batches across repos
+[1/12] Processing batch for repo: platform/build (45 commits)
   Repo path: platform/build
   Full path: /path/to/repos/platform/build
   First commit: a1b2c3d4 at 2024-01-01 10:30:15
-  Last commit: x9y8z7w6 at 2024-12-28 14:22:45
-Repo 'platform/build': 45 commits
+  Last commit: x9y8z7w6 at 2024-01-05 14:22:45
+  [platform/build] Exporting revision specs: a1b2c3d4^..x9y8z7w6
+  [platform/build] Using --export-marks=marks_platform_build.txt
+[2/12] Processing batch for repo: platform/art (30 commits)
+  ...
+[3/12] Processing batch for repo: platform/build (15 commits)
+  [platform/build] Using --import-marks=marks_platform_build.txt
+  [platform/build] Using --export-marks=marks_platform_build.txt
 ```
 
 ### Example Debug Run
