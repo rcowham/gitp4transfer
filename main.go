@@ -78,6 +78,7 @@ func Humanize(b int) string {
 type GitParserOptions struct {
 	config          *config.Config
 	gitImportFile   string
+	gitImportFiles  []string
 	archiveRoot     string
 	dryRun          bool
 	dummyArchives   bool
@@ -151,6 +152,7 @@ func newGitBlob(blob *libfastimport.CmdBlob) *GitBlob {
 		filename := fmt.Sprintf("%07d", b.blob.Mark)
 		b.blobFileName = filename
 		b.blobDirPath = path.Join(filename[:1], filename[1:4])
+		b.setCompressionDetails()
 	}
 	return b
 }
@@ -968,18 +970,11 @@ func (gf *GitFile) WriteJournal(j *journal.Journal, c *GitCommit) {
 // DumpGit - incrementally parse the git file, collecting stats and optionally saving archives as we go
 // Useful for parsing very large git fast-export files without loading too much into memory!
 func (g *GitP4Transfer) DumpGit(saveFiles bool) {
-	var buf io.Reader
-
-	if g.testInput != "" {
-		buf = strings.NewReader(g.testInput)
-	} else {
-		file, err := os.Open(g.opts.gitImportFile)
-		if err != nil {
-			fmt.Printf("ERROR: Failed to open file '%s': %v\n", g.opts.gitImportFile, err)
-			os.Exit(1)
-		}
-		defer file.Close()
-		buf = bufio.NewReader(file)
+	var filesToProcess []string
+	if len(g.opts.gitImportFiles) > 0 {
+		filesToProcess = g.opts.gitImportFiles
+	} else if g.opts.gitImportFile != "" {
+		filesToProcess = []string{g.opts.gitImportFile}
 	}
 
 	commits := make(map[int]*GitCommit, 0)
@@ -988,80 +983,96 @@ func (g *GitP4Transfer) DumpGit(saveFiles bool) {
 	var currCommit *GitCommit
 	var commitSize = 0
 
-	f := libfastimport.NewFrontend(buf, nil, nil)
-	for {
-		cmd, err := f.ReadCmd()
-		if err != nil {
-			if err != io.EOF {
-				g.logger.Errorf("Failed to read cmd1: %v", err)
-				panic("Unrecoverable error")
-			} else {
-				break
-			}
-		}
-		switch ctype := cmd.(type) {
-		case libfastimport.CmdBlob:
-			blob := cmd.(libfastimport.CmdBlob)
-			g.logger.Infof("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-			size := len(blob.Data)
-			commitSize += size
-			gb := newGitBlob(&blob)
-			// We write the blobs as we go to avoid using up too much memory
-			if saveFiles {
-				err = writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
-				if err != nil {
-					g.logger.Errorf("writeBlob: %+v", err)
+	dumpStream := func(buf io.Reader) {
+		f := libfastimport.NewFrontend(buf, nil, nil)
+		for {
+			cmd, err := f.ReadCmd()
+			if err != nil {
+				if err != io.EOF {
+					g.logger.Errorf("Failed to read cmd1: %v", err)
+					panic("Unrecoverable error")
+				} else {
+					break
 				}
 			}
-			blob.Data = "" // Allow GC to avoid holding on to memory
-			files[blob.Mark] = newGitFile(&GitFile{blob: gb, size: size, logger: g.logger})
-		case libfastimport.CmdReset:
-			reset := cmd.(libfastimport.CmdReset)
-			g.logger.Infof("Reset: - %+v", reset)
-		case libfastimport.CmdCommit:
-			commit := cmd.(libfastimport.CmdCommit)
-			g.logger.Infof("Commit:  %+v, size: %d/%s", commit, commitSize, Humanize(commitSize))
-			currCommit = newGitCommit(&commit, commitSize)
-			commitSize = 0
-			commits[commit.Mark] = currCommit
-		case libfastimport.CmdCommitEnd:
-			commit := cmd.(libfastimport.CmdCommitEnd)
-			g.logger.Infof("CommitEnd:  %+v", commit)
-			g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
-				currCommit.commit.Mark, len(currCommit.files), currCommit.commitSize, Humanize(currCommit.commitSize))
-			for _, f := range currCommit.files {
-				extSizes[filepath.Ext(f.name)] += f.size
+			switch ctype := cmd.(type) {
+			case libfastimport.CmdBlob:
+				blob := cmd.(libfastimport.CmdBlob)
+				g.logger.Infof("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
+				size := len(blob.Data)
+				commitSize += size
+				gb := newGitBlob(&blob)
+				// We write the blobs as we go to avoid using up too much memory
+				if saveFiles {
+					err = writeBlob(g.opts.archiveRoot, blob.Mark, &blob.Data)
+					if err != nil {
+						g.logger.Errorf("writeBlob: %+v", err)
+					}
+				}
+				blob.Data = "" // Allow GC to avoid holding on to memory
+				files[blob.Mark] = newGitFile(&GitFile{blob: gb, size: size, logger: g.logger})
+			case libfastimport.CmdReset:
+				reset := cmd.(libfastimport.CmdReset)
+				g.logger.Infof("Reset: - %+v", reset)
+			case libfastimport.CmdCommit:
+				commit := cmd.(libfastimport.CmdCommit)
+				g.logger.Infof("Commit:  %+v, size: %d/%s", commit, commitSize, Humanize(commitSize))
+				currCommit = newGitCommit(&commit, commitSize)
+				commitSize = 0
+				commits[commit.Mark] = currCommit
+			case libfastimport.CmdCommitEnd:
+				commit := cmd.(libfastimport.CmdCommitEnd)
+				g.logger.Infof("CommitEnd:  %+v", commit)
+				g.logger.Debugf("CommitSummary: Mark:%d Files:%d Size:%d/%s",
+					currCommit.commit.Mark, len(currCommit.files), currCommit.commitSize, Humanize(currCommit.commitSize))
+				for _, f := range currCommit.files {
+					extSizes[filepath.Ext(f.name)] += f.size
+				}
+			case libfastimport.FileModify:
+				f := cmd.(libfastimport.FileModify)
+				g.logger.Infof("FileModify:  %+v", f)
+				oid, err := getOID(f.DataRef)
+				if err != nil {
+					g.logger.Errorf("Failed to get oid: %+v", f)
+				}
+				gf, ok := files[oid]
+				if ok {
+					gf.name = string(f.Path)
+					_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.blob.Mark)
+					gf.p4.archiveFile = archName
+					g.logger.Infof("Path:%s Size:%d/%s Archive:%s", gf.name, gf.size, Humanize(gf.size), gf.p4.archiveFile)
+					currCommit.files = append(currCommit.files, gf)
+				}
+			case libfastimport.FileDelete:
+				f := cmd.(libfastimport.FileDelete)
+				g.logger.Infof("FileDelete: Path:%s", f.Path)
+			case libfastimport.FileCopy:
+				f := cmd.(libfastimport.FileCopy)
+				g.logger.Infof("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
+			case libfastimport.FileRename:
+				f := cmd.(libfastimport.FileRename)
+				g.logger.Infof("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
+			case libfastimport.CmdTag:
+				t := cmd.(libfastimport.CmdTag)
+				g.logger.Infof("CmdTag: %+v", t)
+			default:
+				g.logger.Errorf("Not handled - found ctype %s cmd %+v", ctype, cmd)
+				g.logger.Infof("Cmd type %T", cmd)
 			}
-		case libfastimport.FileModify:
-			f := cmd.(libfastimport.FileModify)
-			g.logger.Infof("FileModify:  %+v", f)
-			oid, err := getOID(f.DataRef)
+		}
+	}
+
+	if g.testInput != "" {
+		dumpStream(strings.NewReader(g.testInput))
+	} else {
+		for _, importFile := range filesToProcess {
+			file, err := os.Open(importFile)
 			if err != nil {
-				g.logger.Errorf("Failed to get oid: %+v", f)
+				fmt.Printf("ERROR: Failed to open file '%s': %v\n", importFile, err)
+				os.Exit(1)
 			}
-			gf, ok := files[oid]
-			if ok {
-				gf.name = string(f.Path)
-				_, archName := getBlobIDPath(g.opts.archiveRoot, gf.blob.blob.Mark)
-				gf.p4.archiveFile = archName
-				g.logger.Infof("Path:%s Size:%d/%s Archive:%s", gf.name, gf.size, Humanize(gf.size), gf.p4.archiveFile)
-				currCommit.files = append(currCommit.files, gf)
-			}
-		case libfastimport.FileDelete:
-			f := cmd.(libfastimport.FileDelete)
-			g.logger.Infof("FileDelete: Path:%s", f.Path)
-		case libfastimport.FileCopy:
-			f := cmd.(libfastimport.FileCopy)
-			g.logger.Infof("FileCopy: Src:%s Dst:%s", f.Src, f.Dst)
-		case libfastimport.FileRename:
-			f := cmd.(libfastimport.FileRename)
-			g.logger.Infof("FileRename: Src:%s Dst:%s", f.Src, f.Dst)
-		case libfastimport.CmdTag:
-			t := cmd.(libfastimport.CmdTag)
-			g.logger.Infof("CmdTag: %+v", t)
-		default:
-			g.logger.Errorf("Not handled - found ctype %s cmd %+v", ctype, cmd)
-			g.logger.Infof("Cmd type %T", cmd)
+			dumpStream(bufio.NewReader(file))
+			file.Close()
 		}
 	}
 	for ext, size := range extSizes {
@@ -1099,11 +1110,11 @@ func (g *GitP4Transfer) updateDepotRevs(opts GitParserOptions, gf *GitFile, chgN
 		// Determine filetype based on Typemap (if specified)
 		for _, r := range opts.config.ReTypeMaps {
 			if r.RePath.MatchString(gf.p4.depotFile) {
-				if r.Filetype == journal.Binary {
+				if r.Filetype == journal.Binary || r.Filetype == journal.UBinary {
 					if gf.baseFileType == journal.Binary || gf.baseFileType == journal.UBinary {
 						gf.fileType = gf.baseFileType
 					} else {
-						gf.fileType = journal.Binary
+						gf.fileType = r.Filetype
 					}
 				} else { // Text
 					if gf.baseFileType == journal.UText || gf.baseFileType == journal.CText {
@@ -1960,19 +1971,11 @@ func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
 
 // GitParse - returns channel which contains commits with associated files.
 func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
-	var buf io.Reader
-	var file *os.File
-	var err error
-
-	if g.testInput != "" {
-		buf = strings.NewReader(g.testInput)
-	} else {
-		file, err = os.Open(g.opts.gitImportFile) // Note deferred close in go routine below.
-		if err != nil {
-			fmt.Printf("ERROR: Failed to open file '%s': %v\n", g.opts.gitImportFile, err)
-			os.Exit(1)
-		}
-		buf = bufio.NewReader(file)
+	var filesToProcess []string
+	if len(g.opts.gitImportFiles) > 0 {
+		filesToProcess = g.opts.gitImportFiles
+	} else if g.opts.gitImportFile != "" {
+		filesToProcess = []string{g.opts.gitImportFile}
 	}
 
 	g.gitChan = make(chan GitCommit, 50)
@@ -1993,127 +1996,190 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 		g.graph = dot.NewGraph(dot.Directed)
 	}
 
-	f := libfastimport.NewFrontend(buf, nil, nil)
 	go func() {
-		defer file.Close()
 		defer close(g.gitChan)
 		if weCreatedPool {
 			defer pool.StopAndWait()
 		}
-	CmdLoop:
-		for {
-			cmd, err := f.ReadCmd()
-			if err != nil {
-				if err == io.EOF {
+
+		markOffset := 0
+
+		parseReader := func(buf io.Reader) bool {
+			f := libfastimport.NewFrontend(buf, nil, nil)
+			fileMarks := make(map[int]int) // local mark -> offset mark for this file
+			maxMarkInFile := 0
+
+			getOffsetMark := func(m int) int {
+				if om, ok := fileMarks[m]; ok {
+					return om
+				}
+				if m > maxMarkInFile {
+					maxMarkInFile = m
+				}
+				om := m + markOffset
+				fileMarks[m] = om
+				return om
+			}
+
+		CmdLoop:
+			for {
+				cmd, err := f.ReadCmd()
+				if err != nil {
+					if err == io.EOF {
+						break
+					}
+					g.logger.Errorf("Failed to read cmd2: %v", err)
+					panic("Unrecoverable error")
+				}
+				switch ctype := cmd.(type) {
+				case libfastimport.CmdBlob:
+					blob := cmd.(libfastimport.CmdBlob)
+					blob.Mark = getOffsetMark(blob.Mark)
+					g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
+					b := newGitBlob(&blob)
+					g.blobFileMatcher.addBlob(b)
+					commitSize += len(blob.Data)
+					b.SaveBlob(pool, g.opts, g.blobFileMatcher)
+
+				case libfastimport.CmdReset:
+					reset := cmd.(libfastimport.CmdReset)
+					g.logger.Debugf("Reset: - %+v", reset)
+					reset.RefName = strings.ReplaceAll(reset.RefName, " ", "_") // For consistency with Commits even though unused
+
+				case libfastimport.CmdCommit:
+					g.validateCommit(currCommit)
+					g.processCommit(currCommit)
+					commit := cmd.(libfastimport.CmdCommit)
+					g.logger.Debugf("Commit: %+v", commit)
+					commit.Ref = strings.ReplaceAll(commit.Ref, " ", "_")
+					commit.Mark = getOffsetMark(commit.Mark)
+
+					// Remap parent 'From' commit mark if present
+					if commit.From != "" {
+						if fromMark, err := getOID(commit.From); err == nil {
+							if om, ok := fileMarks[fromMark]; ok {
+								commit.From = fmt.Sprintf(":%d", om)
+							}
+						}
+					}
+
+					// Remap merge commit marks if present
+					for i, mergeRef := range commit.Merge {
+						if mMark, err := getOID(mergeRef); err == nil {
+							if om, ok := fileMarks[mMark]; ok {
+								commit.Merge[i] = fmt.Sprintf(":%d", om)
+							}
+						}
+					}
+
+					currCommit = newGitCommit(&commit, commitSize)
+					commitSize = 0
+					g.commits[commit.Mark] = currCommit
+					if g.opts.debugCommit != 0 && g.opts.debugCommit == commit.Mark {
+						g.logger.Debugf("Commit breakpoint: %d", commit.Mark)
+					}
+
+				case libfastimport.CmdCommitEnd:
+					commit := cmd.(libfastimport.CmdCommitEnd)
+					g.logger.Debugf("CommitEnd: %+v", commit)
+					commitCount += 1
+					if g.opts.maxCommits > 0 && commitCount >= g.opts.maxCommits {
+						g.logger.Infof("Processed %d commits", commitCount)
+						break CmdLoop
+					}
+
+				case libfastimport.FileModify:
+					f := cmd.(libfastimport.FileModify)
+					g.logger.Debugf("FileModify: %s %+v", currCommit.ref(), f)
+					oid, err := getOID(f.DataRef)
+					if err != nil {
+						g.logger.Errorf("Failed to get oid: %+v", f)
+					}
+					if om, ok := fileMarks[oid]; ok {
+						oid = om
+					}
+					var gf *GitFile
+					b := g.blobFileMatcher.getBlob(oid)
+					if b != nil {
+						if len(b.gitFileIDs) == 0 { // First ref to this blob
+							gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
+								blob: b, baseFileType: b.baseFileType, compressed: b.compressed,
+								logger: g.logger})
+						} else { // Duplicate ref
+							gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
+								blob: b, baseFileType: b.baseFileType, compressed: b.compressed,
+								duplicateArchive: true, logger: g.logger})
+						}
+					} else {
+						g.logger.Errorf("Failed to find blob: %d", oid)
+					}
+					g.blobFileMatcher.addGitFile(gf)
+					g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
+						currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.baseFileType)
+					currCommit.files = append(currCommit.files, gf)
+
+				case libfastimport.FileDelete:
+					f := cmd.(libfastimport.FileDelete)
+					g.logger.Debugf("FileDelete: %s Path:%s", currCommit.ref(), f.Path)
+					gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
+					currCommit.files = append(currCommit.files, gf)
+
+				case libfastimport.FileCopy:
+					f := cmd.(libfastimport.FileCopy)
+					g.logger.Debugf("FileCopy: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
+					gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: copy, logger: g.logger})
+					currCommit.files = append(currCommit.files, gf)
+
+				case libfastimport.FileRename:
+					f := cmd.(libfastimport.FileRename)
+					g.logger.Debugf("FileRename: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
+					gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: rename, logger: g.logger})
+					currCommit.files = append(currCommit.files, gf)
+
+				case libfastimport.CmdTag:
+					t := cmd.(libfastimport.CmdTag)
+					g.logger.Debugf("CmdTag: %+v", t)
+					t.RefName = strings.ReplaceAll(t.RefName, " ", "_")
+
+				default:
+					g.logger.Errorf("Not handled: Found ctype %v cmd %+v", ctype, cmd)
+					g.logger.Errorf("Cmd type %T", cmd)
+				}
+			}
+			markOffset += maxMarkInFile
+			return true
+		}
+
+		if g.testInput != "" {
+			parseReader(strings.NewReader(g.testInput))
+		} else {
+			for _, importFile := range filesToProcess {
+				g.logger.Infof("Processing fast-export file: %s", importFile)
+				file, err := os.Open(importFile)
+				if err != nil {
+					fmt.Printf("ERROR: Failed to open file '%s': %v\n", importFile, err)
+					os.Exit(1)
+				}
+				cont := parseReader(bufio.NewReader(file))
+				file.Close()
+				if !cont {
 					break
 				}
-				g.logger.Errorf("Failed to read cmd2: %v", err)
-				panic("Unrecoverable error")
-			}
-			switch ctype := cmd.(type) {
-			case libfastimport.CmdBlob:
-				blob := cmd.(libfastimport.CmdBlob)
-				g.logger.Debugf("Blob: Mark:%d OriginalOID:%s Size:%s", blob.Mark, blob.OriginalOID, Humanize(len(blob.Data)))
-				b := newGitBlob(&blob)
-				g.blobFileMatcher.addBlob(b)
-				commitSize += len(blob.Data)
-				b.SaveBlob(pool, g.opts, g.blobFileMatcher)
-
-			case libfastimport.CmdReset:
-				reset := cmd.(libfastimport.CmdReset)
-				g.logger.Debugf("Reset: - %+v", reset)
-				reset.RefName = strings.ReplaceAll(reset.RefName, " ", "_") // For consistency with Commits even though unused
-
-			case libfastimport.CmdCommit:
-				g.validateCommit(currCommit)
-				g.processCommit(currCommit)
-				commit := cmd.(libfastimport.CmdCommit)
-				g.logger.Debugf("Commit: %+v", commit)
-				commit.Ref = strings.ReplaceAll(commit.Ref, " ", "_")
-				currCommit = newGitCommit(&commit, commitSize)
-				commitSize = 0
-				g.commits[commit.Mark] = currCommit
-				if g.opts.debugCommit != 0 && g.opts.debugCommit == commit.Mark {
-					g.logger.Debugf("Commit breakpoint: %d", commit.Mark)
-				}
-
-			case libfastimport.CmdCommitEnd:
-				commit := cmd.(libfastimport.CmdCommitEnd)
-				g.logger.Debugf("CommitEnd: %+v", commit)
-				commitCount += 1
-				if g.opts.maxCommits > 0 && commitCount >= g.opts.maxCommits {
-					g.logger.Infof("Processed %d commits", commitCount)
-					break CmdLoop
-				}
-
-			case libfastimport.FileModify:
-				f := cmd.(libfastimport.FileModify)
-				g.logger.Debugf("FileModify: %s %+v", currCommit.ref(), f)
-				oid, err := getOID(f.DataRef)
-				if err != nil {
-					g.logger.Errorf("Failed to get oid: %+v", f)
-				}
-				var gf *GitFile
-				b := g.blobFileMatcher.getBlob(oid)
-				if b != nil {
-					if len(b.gitFileIDs) == 0 { // First ref to this blob
-						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
-							blob: b, baseFileType: b.baseFileType, compressed: b.compressed,
-							logger: g.logger})
-					} else { // Duplicate ref
-						gf = newGitFile(&GitFile{name: string(f.Path), action: modify,
-							blob: b, baseFileType: b.baseFileType, compressed: b.compressed,
-							duplicateArchive: true, logger: g.logger})
-					}
-				} else {
-					g.logger.Errorf("Failed to find blob: %d", oid)
-				}
-				g.blobFileMatcher.addGitFile(gf)
-				g.logger.Debugf("GitFile: %s ID %d, %s, blobID %d, filetype: %s",
-					currCommit.ref(), gf.ID, gf.name, gf.blob.blob.Mark, gf.blob.baseFileType)
-				currCommit.files = append(currCommit.files, gf)
-
-			case libfastimport.FileDelete:
-				f := cmd.(libfastimport.FileDelete)
-				g.logger.Debugf("FileDelete: %s Path:%s", currCommit.ref(), f.Path)
-				gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
-				currCommit.files = append(currCommit.files, gf)
-
-			case libfastimport.FileCopy:
-				f := cmd.(libfastimport.FileCopy)
-				g.logger.Debugf("FileCopy: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
-				gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: copy, logger: g.logger})
-				currCommit.files = append(currCommit.files, gf)
-
-			case libfastimport.FileRename:
-				f := cmd.(libfastimport.FileRename)
-				g.logger.Debugf("FileRename: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
-				gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: rename, logger: g.logger})
-				currCommit.files = append(currCommit.files, gf)
-
-			case libfastimport.CmdTag:
-				t := cmd.(libfastimport.CmdTag)
-				g.logger.Debugf("CmdTag: %+v", t)
-				t.RefName = strings.ReplaceAll(t.RefName, " ", "_")
-
-			default:
-				g.logger.Errorf("Not handled: Found ctype %v cmd %+v", ctype, cmd)
-				g.logger.Errorf("Cmd type %T", cmd)
 			}
 		}
+
 		g.validateCommit(currCommit)
 		g.processCommit(currCommit)
 		// Render/close Graphviz if required
-		if g.opts.graphFile == "" {
-			return
+		if g.opts.graphFile != "" {
+			f, err := os.OpenFile(g.opts.graphFile, os.O_CREATE|os.O_WRONLY, 0644)
+			if err != nil {
+				g.logger.Error(err)
+			} else {
+				defer f.Close()
+				f.Write([]byte(g.graph.String()))
+			}
 		}
-		f, err := os.OpenFile(g.opts.graphFile, os.O_CREATE|os.O_WRONLY, 0644)
-		if err != nil {
-			g.logger.Error(err)
-		}
-		defer f.Close()
-
-		f.Write([]byte(g.graph.String()))
 	}()
 
 	return g.gitChan
@@ -2147,8 +2213,8 @@ func main() {
 		).Default("gitp4transfer.yaml").Short('c').String()
 		gitimport = kingpin.Arg(
 			"gitimport",
-			"Git fast-export file to process.",
-		).String()
+			"Git fast-export file(s) to process.",
+		).Strings()
 		importDepot = kingpin.Flag(
 			"import.depot",
 			"Depot into which to import (overrides config).",
@@ -2244,7 +2310,7 @@ func main() {
 
 	opts := &GitParserOptions{
 		config:          cfg,
-		gitImportFile:   *gitimport,
+		gitImportFiles:  *gitimport,
 		archiveRoot:     *archive,
 		dryRun:          *dryrun,
 		dummyArchives:   *dummyArchives,

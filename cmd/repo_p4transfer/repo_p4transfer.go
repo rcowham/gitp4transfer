@@ -600,7 +600,7 @@ func (r *RepoP4Transfer) createAndImportFastExport(batch *CommitBatch, project *
 		targetExportDir = os.TempDir()
 	}
 
-	exportFile := filepath.Join(targetExportDir, fmt.Sprintf("export_batch%d_%s.txt", batchNum, strings.ReplaceAll(project.Path, "/", "_")))
+	exportFile := filepath.Join(targetExportDir, fmt.Sprintf("export_batch%04d_%s.txt", batchNum, strings.ReplaceAll(project.Path, "/", "_")))
 	marksFile := filepath.Join(targetExportDir, fmt.Sprintf("marks_%s.txt", strings.ReplaceAll(project.Path, "/", "_")))
 
 	if r.exportDir == "" {

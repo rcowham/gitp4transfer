@@ -31,7 +31,7 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export> [-p <P4Root>] [-d] [-c <configfile>] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
+run_conversion.sh <git_fast_export_file...> [-p <P4Root>] [-d] [-c <configfile>] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
     [-depot <import depot>] [-graph <graphFile>] [-m <max commits>] [-t <parallel threads>]
 
    or
@@ -50,16 +50,14 @@ run_conversion.sh -h
     -m           <max commits> - Max no of commits to process (stops after this number is reached)
     -t           <parallel threads> - No of parallel threads to use (default is No of CPUs)
     -p          <P4Root> - directory to use as resulting P4Root - will default to a tmp dir if not set
-    <git_fast_export> The (input) git fast-export format file (required)
+    <git_fast_export_file...> One or more (input) git fast-export format files (required)
 
 Examples:
 
 ./run_conversion.sh export.git
-./run_conversion.sh export.git -p P4Root
+./run_conversion.sh export_batch*.txt -p P4Root
 
-nohup ./run_conversion.sh export.git -p P4Root -d -c config.yaml > out1 &
-
-"
+nohup ./run_conversion.sh export_batch*.txt -p P4Root -d -c config.yaml > out1 &"
 }
 
 # Command Line Processing
@@ -75,7 +73,7 @@ declare -i MaxCommits=0
 declare -i ParallelThreads=0
 declare ConfigFile=""
 declare P4Root=""
-declare GitFile=""
+declare -a GitFiles=()
 declare GraphFile=""
 declare ImportDepot="import"
 
@@ -97,7 +95,7 @@ while [[ $# -gt 0 ]]; do
         (-m) MaxCommits=$2; shiftArgs=1;;
         (-t) ParallelThreads=$2; shiftArgs=1;;
         (-*) usage -h "Unknown command line option ($1)." && exit 1;;
-        (*) GitFile=$1;;
+        (*) GitFiles+=("$1");;
     esac
  
     # Shift (modify $#) the appropriate number of times.
@@ -114,6 +112,10 @@ check_cmd gitp4transfer
 check_cmd p4d
 check_cmd p4
 check_cmd parallel
+
+if [[ ${#GitFiles[@]} -eq 0 ]]; then
+    usage -h "No git fast-export file(s) specified." && exit 1
+fi
 
 if [[ -z $P4Root ]]; then
     P4Root=$(mktemp -d 2>/dev/null || mktemp -d -t 'myP4Root')
@@ -158,8 +160,8 @@ if [[ ! -z $ConfigFile ]]; then
     ConfigArgs="--config=$ConfigFile"
 fi
 
-echo gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
-gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "$GitFile"
+echo gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "${GitFiles[@]}"
+gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "${GitFiles[@]}"
 
 if [[ $? -ne 0 ]]; then
     echo "Server is in directory:"

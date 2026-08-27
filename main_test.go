@@ -5917,3 +5917,71 @@ func TestBranchNameMapping(t *testing.T) {
 ... ... branch from //testimport/subdir/branches/dev/targ.txt#1`, result)
 
 }
+
+func TestMultipleFastExportFiles(t *testing.T) {
+	logger := createLogger()
+	tmpDir := t.TempDir()
+
+	file1Path := filepath.Join(tmpDir, "export1.txt")
+	file2Path := filepath.Join(tmpDir, "export2.txt")
+
+	export1Content := `blob
+mark :1
+data 5
+hello
+
+commit refs/heads/main
+mark :2
+author Test <test@example.com> 1600000000 +0000
+committer Test <test@example.com> 1600000000 +0000
+data 8
+commit 1
+M 100644 :1 file1.txt
+
+`
+
+	export2Content := `blob
+mark :1
+data 5
+world
+
+commit refs/heads/main
+mark :2
+author Test <test@example.com> 1600000100 +0000
+committer Test <test@example.com> 1600000100 +0000
+data 8
+commit 2
+from :2
+M 100644 :1 file2.txt
+
+`
+
+	if err := os.WriteFile(file1Path, []byte(export1Content), 0644); err != nil {
+		t.Fatalf("Failed to write export1: %v", err)
+	}
+	if err := os.WriteFile(file2Path, []byte(export2Content), 0644); err != nil {
+		t.Fatalf("Failed to write export2: %v", err)
+	}
+
+	p4t := MakeP4Test(tmpDir)
+
+	opts := &GitParserOptions{
+		config:         &config.Config{ImportDepot: "import", DefaultBranch: "main"},
+		gitImportFiles: []string{file1Path, file2Path},
+		archiveRoot:    p4t.serverRoot,
+	}
+
+	g, err := NewGitP4Transfer(logger, opts)
+	assert.NoError(t, err)
+
+	commitChan := g.GitParse(nil)
+
+	var commits []GitCommit
+	for c := range commitChan {
+		commits = append(commits, c)
+	}
+
+	assert.Equal(t, 2, len(commits))
+	assert.Equal(t, 2, commits[0].commit.Mark) // mark :2 in file 1
+	assert.Equal(t, 4, commits[1].commit.Mark) // mark :2 in file 2 -> 2 + offset 2 = 4
+}
