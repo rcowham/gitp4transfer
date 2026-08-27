@@ -8,6 +8,9 @@ For a single test (with debug output):
 
     go test -run TestBranch -debug
 
+    ~/go/bin/dlv debug github.com/rcowham/gitp4transfer -- --archive.root=/data/work/OnwardRepo.p4/p4root --debug=1 --max.commits=50 --import.depot=import --journal=/data/work/OnwardRepo.p4/p4root/jnl.0 /data/work/git-OnwardRepo
+
+
 ## Todo
 
 * Report on everything
