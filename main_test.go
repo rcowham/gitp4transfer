@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/rcowham/gitp4transfer/config"
+	"github.com/rcowham/gitp4transfer/internal/importer"
 	"github.com/rcowham/gitp4transfer/journal"
 	node "github.com/rcowham/gitp4transfer/node"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
@@ -41,7 +42,7 @@ func runCmd(cmdLine string) (string, error) {
 }
 
 func TestFastExportSource(t *testing.T) {
-	source := NewFastExportSource(strings.NewReader("blob\nmark :1\ndata 5\nhello\n\n"))
+	source := importer.NewFastExportSource(strings.NewReader("blob\nmark :1\ndata 5\nhello\n\n"))
 
 	cmd, err := source.Next()
 	if err != nil {

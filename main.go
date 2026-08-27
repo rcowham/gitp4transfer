@@ -50,6 +50,7 @@ import (
 	"github.com/h2non/filetype"
 	"github.com/h2non/filetype/types"
 	"github.com/rcowham/gitp4transfer/config"
+	"github.com/rcowham/gitp4transfer/internal/importer"
 	journal "github.com/rcowham/gitp4transfer/journal"
 	node "github.com/rcowham/gitp4transfer/node"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
@@ -90,20 +91,6 @@ type GitParserOptions struct {
 	maxCommits      int
 	debugCommit     int // For debug breakpoint
 }
-
-// FastExportSource reads records from a git fast-export stream.
-type FastExportSource struct {
-	frontend *libfastimport.Frontend
-}
-
-func NewFastExportSource(input io.Reader) *FastExportSource {
-	return &FastExportSource{frontend: libfastimport.NewFrontend(input, nil, nil)}
-}
-
-func (s *FastExportSource) Next() (libfastimport.Cmd, error) {
-	return s.frontend.ReadCmd()
-}
-
 type GitAction int
 
 const (
@@ -2050,7 +2037,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 		}
 
 		parseReader := func(buf io.Reader, importFile string) bool {
-			source := NewFastExportSource(buf)
+			source := importer.NewFastExportSource(buf)
 			fileMarks := make(map[int]int) // local mark -> offset mark for this file
 			maxMarkInFile := 0
 
