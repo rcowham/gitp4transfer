@@ -6,6 +6,8 @@ import (
 	"sort"
 	"testing"
 	"time"
+
+	yaml "gopkg.in/yaml.v2"
 )
 
 func TestManifestLoading(t *testing.T) {
@@ -220,5 +222,39 @@ func TestContiguousGrouping(t *testing.T) {
 	}
 	if batches[2].Commits[0].Hash != "a3" {
 		t.Errorf("Batch 3 commit mismatch")
+	}
+}
+
+func TestBatchMappingOutput(t *testing.T) {
+	tmpDir := t.TempDir()
+	mapFile := filepath.Join(tmpDir, "batch_mapping.yaml")
+
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", tmpDir, nil)
+	transfer.batchMapFile = mapFile
+
+	batchMap := map[string]string{
+		"export_batch0001_packages_services_Car.txt":      "packages/services/Car",
+		"export_batch0002_packages_apps_Car_Settings.txt": "packages/apps/Car/Settings",
+	}
+
+	if err := transfer.writeBatchMap(batchMap, mapFile); err != nil {
+		t.Fatalf("Failed to write batch map: %v", err)
+	}
+
+	data, err := os.ReadFile(mapFile)
+	if err != nil {
+		t.Fatalf("Failed to read generated batch map file: %v", err)
+	}
+
+	readMap := make(map[string]string)
+	if err := yaml.Unmarshal(data, &readMap); err != nil {
+		t.Fatalf("Failed to unmarshal batch map: %v", err)
+	}
+
+	if readMap["export_batch0001_packages_services_Car.txt"] != "packages/services/Car" {
+		t.Errorf("Mismatch for Car batch mapping: %s", readMap["export_batch0001_packages_services_Car.txt"])
+	}
+	if readMap["export_batch0002_packages_apps_Car_Settings.txt"] != "packages/apps/Car/Settings" {
+		t.Errorf("Mismatch for Settings batch mapping: %s", readMap["export_batch0002_packages_apps_Car_Settings.txt"])
 	}
 }

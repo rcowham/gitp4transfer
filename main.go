@@ -57,6 +57,7 @@ import (
 	"github.com/perforce/p4prometheus/version"
 	"github.com/rcowham/kingpin"
 	"github.com/sirupsen/logrus"
+	yaml "gopkg.in/yaml.v2"
 )
 
 var defaultP4user = "git-user" // Default user if non found
@@ -79,6 +80,7 @@ type GitParserOptions struct {
 	config          *config.Config
 	gitImportFile   string
 	gitImportFiles  []string
+	batchMapFile    string
 	archiveRoot     string
 	dryRun          bool
 	dummyArchives   bool
@@ -1980,6 +1982,21 @@ func (g *GitP4Transfer) processCommit(cmt *GitCommit) {
 	g.gitChan <- *cmt
 }
 
+func loadBatchMap(filename string) (map[string]string, error) {
+	if filename == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(filename)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read batch map file: %w", err)
+	}
+	m := make(map[string]string)
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("failed to parse batch map YAML: %w", err)
+	}
+	return m, nil
+}
+
 // GitParse - returns channel which contains commits with associated files.
 func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 	var filesToProcess []string
@@ -2014,11 +2031,24 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 		}
 
 		markOffset := 0
+		batchMap, err := loadBatchMap(g.opts.batchMapFile)
+		if err != nil {
+			g.logger.Errorf("Error loading batch map: %v", err)
+		}
 
-		parseReader := func(buf io.Reader) bool {
+		parseReader := func(buf io.Reader, importFile string) bool {
 			f := libfastimport.NewFrontend(buf, nil, nil)
 			fileMarks := make(map[int]int) // local mark -> offset mark for this file
 			maxMarkInFile := 0
+
+			prefix := ""
+			if batchMap != nil {
+				if p, ok := batchMap[importFile]; ok {
+					prefix = p
+				} else if p, ok := batchMap[filepath.Base(importFile)]; ok {
+					prefix = p
+				}
+			}
 
 			getOffsetMark := func(m int) int {
 				if om, ok := fileMarks[m]; ok {
@@ -2101,6 +2131,9 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 
 				case libfastimport.FileModify:
 					f := cmd.(libfastimport.FileModify)
+					if prefix != "" {
+						f.Path = libfastimport.Path(path.Join(prefix, string(f.Path)))
+					}
 					g.logger.Debugf("FileModify: %s %+v", currCommit.ref(), f)
 					oid, err := getOID(f.DataRef)
 					if err != nil {
@@ -2131,18 +2164,29 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 
 				case libfastimport.FileDelete:
 					f := cmd.(libfastimport.FileDelete)
+					if prefix != "" {
+						f.Path = libfastimport.Path(path.Join(prefix, string(f.Path)))
+					}
 					g.logger.Debugf("FileDelete: %s Path:%s", currCommit.ref(), f.Path)
 					gf := newGitFile(&GitFile{name: string(f.Path), action: delete, logger: g.logger})
 					currCommit.files = append(currCommit.files, gf)
 
 				case libfastimport.FileCopy:
 					f := cmd.(libfastimport.FileCopy)
+					if prefix != "" {
+						f.Src = libfastimport.Path(path.Join(prefix, string(f.Src)))
+						f.Dst = libfastimport.Path(path.Join(prefix, string(f.Dst)))
+					}
 					g.logger.Debugf("FileCopy: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
 					gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: copy, logger: g.logger})
 					currCommit.files = append(currCommit.files, gf)
 
 				case libfastimport.FileRename:
 					f := cmd.(libfastimport.FileRename)
+					if prefix != "" {
+						f.Src = libfastimport.Path(path.Join(prefix, string(f.Src)))
+						f.Dst = libfastimport.Path(path.Join(prefix, string(f.Dst)))
+					}
 					g.logger.Debugf("FileRename: %s Src:%s Dst:%s", currCommit.ref(), f.Src, f.Dst)
 					gf := newGitFile(&GitFile{name: string(f.Dst), srcName: string(f.Src), action: rename, logger: g.logger})
 					currCommit.files = append(currCommit.files, gf)
@@ -2162,7 +2206,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 		}
 
 		if g.testInput != "" {
-			parseReader(strings.NewReader(g.testInput))
+			parseReader(strings.NewReader(g.testInput), "")
 		} else {
 			for _, importFile := range filesToProcess {
 				g.logger.Infof("Processing fast-export file: %s", importFile)
@@ -2171,7 +2215,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 					fmt.Printf("ERROR: Failed to open file '%s': %v\n", importFile, err)
 					os.Exit(1)
 				}
-				cont := parseReader(bufio.NewReader(file))
+				cont := parseReader(bufio.NewReader(file), importFile)
 				file.Close()
 				if !cont {
 					break
@@ -2290,6 +2334,10 @@ func main() {
 			"debug.commit",
 			"For debugging - to allow breakpoints to be set - only valid if debug > 0.",
 		).Default("0").Int()
+		batchMapFile = kingpin.Flag(
+			"batch.map",
+			"YAML file mapping fast-export file path/name to repo path prefix.",
+		).String()
 	)
 	kingpin.UsageTemplate(kingpin.CompactUsageTemplate).Version(version.Print("gitp4transfer")).Author("Robert Cowham")
 	kingpin.CommandLine.Help = "Parses one or more git fast-export files to create a Perforce Helix Core import\n"
@@ -2322,6 +2370,7 @@ func main() {
 	opts := &GitParserOptions{
 		config:          cfg,
 		gitImportFiles:  *gitimport,
+		batchMapFile:    *batchMapFile,
 		archiveRoot:     *archive,
 		dryRun:          *dryrun,
 		dummyArchives:   *dummyArchives,

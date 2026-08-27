@@ -31,7 +31,7 @@ function usage
  
    echo "USAGE for run_conversion.sh:
  
-run_conversion.sh <git_fast_export_file...> [-p <P4Root>] [-d] [-c <configfile>] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
+run_conversion.sh <git_fast_export_file...> [-p <P4Root>] [-d] [-c <configfile>] [-batchmap <batch_mapping.yaml>] [-dummy] [-crlf] [ [-insensitive] | [-sensitive] ]
     [-depot <import depot>] [-graph <graphFile>] [-m <max commits>] [-t <parallel threads>]
 
    or
@@ -39,6 +39,7 @@ run_conversion.sh <git_fast_export_file...> [-p <P4Root>] [-d] [-c <configfile>]
 run_conversion.sh -h
 
     -c           <configfile> name of Yaml config file to control conversion (means parameters below don't need to be provided)
+    -batchmap    <batch_mapping.yaml> YAML file mapping batch export files to target repo paths
     -d           Debug
     -depot       <import depot> - Depot to use for this import (default is 'import')
     -crlf        Convert CRLF to just LF for text files - useful for importing Plastic Windows exports to a Linux p4d
@@ -72,6 +73,7 @@ declare -i ConvertUnicode=0     # Convert resulting repo to unicode mode p4d -xi
 declare -i MaxCommits=0
 declare -i ParallelThreads=0
 declare ConfigFile=""
+declare BatchMapFile=""
 declare P4Root=""
 declare -a GitFiles=()
 declare GraphFile=""
@@ -83,6 +85,7 @@ while [[ $# -gt 0 ]]; do
         (-h) usage -h  && exit 1;;
         # (-man) usage -man;;
         (-c) ConfigFile=$2; shiftArgs=1;;
+        (-batchmap) BatchMapFile=$2; shiftArgs=1;;
         (-crlf) ConvertCRLF=1;;
         (-unicode) ConvertUnicode=1;;
         (-p) P4Root=$2; shiftArgs=1;;
@@ -159,9 +162,13 @@ ConfigArgs=""
 if [[ ! -z $ConfigFile ]]; then
     ConfigArgs="--config=$ConfigFile"
 fi
+BatchMapArg=""
+if [[ ! -z $BatchMapFile ]]; then
+    BatchMapArg="--batch.map=$BatchMapFile"
+fi
 
-echo gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "${GitFiles[@]}"
-gitp4transfer --archive.root="$P4Root" $ConfigArgs $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "${GitFiles[@]}"
+echo gitp4transfer --archive.root="$P4Root" $ConfigArgs $BatchMapArg $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "${GitFiles[@]}"
+gitp4transfer --archive.root="$P4Root" $ConfigArgs $BatchMapArg $DebugFlag $DummyFlag $CaseInsensitiveFlag $CRLFFlag $MaxCommitArgs $ParallelThreadArgs $GraphArgs --import.depot="$ImportDepot" --journal="$P4Root/jnl.0" "${GitFiles[@]}"
 
 if [[ $? -ne 0 ]]; then
     echo "Server is in directory:"

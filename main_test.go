@@ -6033,3 +6033,77 @@ M 100644 :1 file1.txt
 	assert.Equal(t, 1, len(commits))
 	assert.Equal(t, "main", commits[0].branch)
 }
+
+func TestBatchMapPathPrefixing(t *testing.T) {
+	logger := createLogger()
+	tmpDir := t.TempDir()
+
+	file1Path := filepath.Join(tmpDir, "export_batch0001_Car.txt")
+	file2Path := filepath.Join(tmpDir, "export_batch0002_Settings.txt")
+	mapFilePath := filepath.Join(tmpDir, "batch_mapping.yaml")
+
+	export1Content := `blob
+mark :1
+data 5
+hello
+
+commit refs/heads/main
+mark :2
+author Test <test@example.com> 1600000000 +0000
+committer Test <test@example.com> 1600000000 +0000
+data 8
+commit 1
+M 100644 :1 src/CarService.java
+
+`
+
+	export2Content := `blob
+mark :1
+data 5
+world
+
+commit refs/heads/main
+mark :2
+author Test <test@example.com> 1600000100 +0000
+committer Test <test@example.com> 1600000100 +0000
+data 8
+commit 2
+from :2
+M 100644 :1 src/SettingsActivity.java
+
+`
+
+	batchMapContent := `export_batch0001_Car.txt: packages/services/Car
+export_batch0002_Settings.txt: packages/apps/Car/Settings
+`
+
+	os.WriteFile(file1Path, []byte(export1Content), 0644)
+	os.WriteFile(file2Path, []byte(export2Content), 0644)
+	os.WriteFile(mapFilePath, []byte(batchMapContent), 0644)
+
+	p4t := MakeP4Test(tmpDir)
+
+	opts := &GitParserOptions{
+		config:         &config.Config{ImportDepot: "import", DefaultBranch: "main"},
+		gitImportFiles: []string{file1Path, file2Path},
+		batchMapFile:   mapFilePath,
+		archiveRoot:    p4t.serverRoot,
+	}
+
+	g, err := NewGitP4Transfer(logger, opts)
+	assert.NoError(t, err)
+
+	commitChan := g.GitParse(nil)
+
+	var commits []GitCommit
+	for c := range commitChan {
+		commits = append(commits, c)
+	}
+
+	assert.Equal(t, 2, len(commits))
+	assert.Equal(t, 1, len(commits[0].files))
+	assert.Equal(t, "packages/services/Car/src/CarService.java", commits[0].files[0].name)
+
+	assert.Equal(t, 1, len(commits[1].files))
+	assert.Equal(t, "packages/apps/Car/Settings/src/SettingsActivity.java", commits[1].files[0].name)
+}

@@ -35,6 +35,8 @@ var (
 			Required().String()
 	exportDir = app.Flag("export-dir", "Directory where to store export files").
 			String()
+	batchMapFile = app.Flag("batch-map", "Output YAML file for batch to repo path mapping").
+			String()
 	logLevel = app.Flag("log-level", "Log level").
 			Default("info").String()
 
@@ -118,6 +120,7 @@ type RepoP4Transfer struct {
 	configFile   string
 	repoRoot     string
 	exportDir    string
+	batchMapFile string
 	manifest     *RepoManifest
 	cfg          *RepoP4TransferConfig
 	projects     map[string]*ManifestProject // key: project path
@@ -515,6 +518,9 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	batches := r.groupContiguousCommits()
 	r.logger.Infof("Grouped %d commits into %d contiguous time-ordered batches across repos", len(r.commits), len(batches))
 
+	batchMap := make(map[string]string)
+	var lastExportDir string
+
 	for i, batch := range batches {
 		project, ok := r.projects[batch.RepoPath]
 		if !ok {
@@ -531,9 +537,33 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 			r.logger.Debugf("  Last commit: %s at %s", batch.Commits[len(batch.Commits)-1].Hash[:8], batch.Commits[len(batch.Commits)-1].Timestamp.Format("2006-01-02 15:04:05"))
 		}
 
-		if err := r.createAndImportFastExport(batch, project, repoFullPath, i+1); err != nil {
+		exportFile, err := r.createAndImportFastExport(batch, project, repoFullPath, i+1)
+		if err != nil {
 			r.logger.Errorf("Failed to export/import batch %d for repo %s: %v", i+1, batch.RepoPath, err)
 			continue
+		}
+		cleanPath := strings.Trim(project.Path, "/")
+		batchMap[exportFile] = cleanPath
+		batchMap[filepath.Base(exportFile)] = cleanPath
+		lastExportDir = filepath.Dir(exportFile)
+	}
+
+	if len(batchMap) > 0 {
+		var mapFilePath string
+		if r.batchMapFile != "" {
+			mapFilePath = r.batchMapFile
+		} else if r.exportDir != "" {
+			mapFilePath = filepath.Join(r.exportDir, "batch_mapping.yaml")
+		} else if lastExportDir != "" {
+			mapFilePath = filepath.Join(lastExportDir, "batch_mapping.yaml")
+		} else {
+			mapFilePath = filepath.Join(os.TempDir(), "batch_mapping.yaml")
+		}
+
+		if err := r.writeBatchMap(batchMap, mapFilePath); err != nil {
+			r.logger.Warnf("Failed to write batch map file: %v", err)
+		} else {
+			r.logger.Infof("Batch mapping file written to: %s", mapFilePath)
 		}
 	}
 
@@ -588,13 +618,29 @@ func (r *RepoP4Transfer) hasParentCommit(repoPath, hash string) bool {
 	return err == nil
 }
 
+// writeBatchMap writes the batch mapping to a YAML file
+func (r *RepoP4Transfer) writeBatchMap(batchMap map[string]string, outputFile string) error {
+	dir := filepath.Dir(outputFile)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("failed to create directory for batch map %s: %w", dir, err)
+	}
+	data, err := yaml.Marshal(batchMap)
+	if err != nil {
+		return fmt.Errorf("failed to marshal batch map: %w", err)
+	}
+	if err := os.WriteFile(outputFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write batch map file: %w", err)
+	}
+	return nil
+}
+
 // createAndImportFastExport creates fast-export dump for a batch and imports to P4
-func (r *RepoP4Transfer) createAndImportFastExport(batch *CommitBatch, project *ManifestProject, repoPath string, batchNum int) error {
+func (r *RepoP4Transfer) createAndImportFastExport(batch *CommitBatch, project *ManifestProject, repoPath string, batchNum int) (string, error) {
 	var targetExportDir string
 	if r.exportDir != "" {
 		targetExportDir = r.exportDir
 		if err := os.MkdirAll(targetExportDir, 0755); err != nil {
-			return fmt.Errorf("failed to create export directory %s: %w", targetExportDir, err)
+			return "", fmt.Errorf("failed to create export directory %s: %w", targetExportDir, err)
 		}
 	} else {
 		targetExportDir = os.TempDir()
@@ -628,7 +674,7 @@ func (r *RepoP4Transfer) createAndImportFastExport(batch *CommitBatch, project *
 
 	// Create fast-export dump using range specs and marks
 	if err := r.createFastExport(repoPath, revSpecs, marksFile, exportFile); err != nil {
-		return fmt.Errorf("failed to create fast-export: %w", err)
+		return "", fmt.Errorf("failed to create fast-export: %w", err)
 	}
 
 	r.logger.Debugf("Fast-export dump created: %s", exportFile)
@@ -637,7 +683,7 @@ func (r *RepoP4Transfer) createAndImportFastExport(batch *CommitBatch, project *
 	// For now, just log the path
 	r.logger.Infof("Would import %s to P4 depot %s at path %s", exportFile, r.cfg.ImportDepot, project.Path)
 
-	return nil
+	return exportFile, nil
 }
 
 // createFastExport creates a git fast-export dump file with configured options, range specs, and marks
@@ -746,6 +792,7 @@ func main() {
 
 	// Create transfer coordinator
 	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, logger)
+	transfer.batchMapFile = *batchMapFile
 
 	// Initialize from config and manifest
 	if err := transfer.Init(); err != nil {
