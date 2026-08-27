@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ import_depot: "//depot/test"`
 	}
 
 	// Create transfer instance and load manifest
-	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, "", nil)
+	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, "", false, nil)
 
 	if err := transfer.loadManifest(); err != nil {
 		t.Fatalf("Failed to load manifest: %v", err)
@@ -96,7 +97,7 @@ default_branch: "main"`
 	}
 
 	// Create transfer instance
-	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, "", nil)
+	transfer := NewRepoP4Transfer(manifestFile, configFile, tmpDir, "", false, nil)
 
 	// Load both manifest and config
 	if err := transfer.loadManifest(); err != nil {
@@ -174,7 +175,7 @@ func TestExportDirSetting(t *testing.T) {
 	tmpDir := t.TempDir()
 	customExportDir := filepath.Join(tmpDir, "custom_exports")
 
-	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", tmpDir, customExportDir, nil)
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", tmpDir, customExportDir, false, nil)
 
 	if transfer.exportDir != customExportDir {
 		t.Errorf("Expected exportDir %s, got %s", customExportDir, transfer.exportDir)
@@ -191,7 +192,7 @@ func TestContiguousGrouping(t *testing.T) {
 		{Hash: "a3", RepoPath: "repoA", Timestamp: time.Date(2024, 1, 1, 10, 20, 0, 0, time.UTC)},
 	}
 
-	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", nil)
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", false, nil)
 	transfer.commits = commits
 
 	batches := transfer.groupContiguousCommits()
@@ -229,7 +230,7 @@ func TestBatchMappingOutput(t *testing.T) {
 	tmpDir := t.TempDir()
 	mapFile := filepath.Join(tmpDir, "batch_mapping.yaml")
 
-	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", tmpDir, nil)
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", tmpDir, false, nil)
 	transfer.batchMapFile = mapFile
 
 	batchMap := map[string]string{
@@ -256,5 +257,34 @@ func TestBatchMappingOutput(t *testing.T) {
 	}
 	if readMap["export_batch0002_packages_apps_Car_Settings.txt"] != "packages/apps/Car/Settings" {
 		t.Errorf("Mismatch for Settings batch mapping: %s", readMap["export_batch0002_packages_apps_Car_Settings.txt"])
+	}
+}
+
+func TestDummyFastExport(t *testing.T) {
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", true, nil)
+
+	inputExport := `blob
+mark :1
+data 12
+hello world!
+
+commit refs/heads/main
+mark :2
+author Test <test@example.com> 1600000000 +0000
+committer Test <test@example.com> 1600000000 +0000
+data 6
+commit
+M 100644 :1 file.txt
+
+`
+
+	dummyOutput, err := transfer.processDummyFastExport([]byte(inputExport))
+	if err != nil {
+		t.Fatalf("Failed to process dummy fast-export: %v", err)
+	}
+
+	dummyStr := string(dummyOutput)
+	if !strings.Contains(dummyStr, "blob\nmark :1\ndata 2\n1\n") {
+		t.Errorf("Expected dummy blob output with mark content, got:\n%s", dummyStr)
 	}
 }

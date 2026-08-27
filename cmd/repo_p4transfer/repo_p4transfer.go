@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/xml"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -19,6 +20,7 @@ import (
 	"github.com/rcowham/gitp4transfer/config"
 
 	"github.com/perforce/p4prometheus/version"
+	libfastimport "github.com/rcowham/go-libgitfastimport"
 	"github.com/rcowham/kingpin"
 	"github.com/sirupsen/logrus"
 	yaml "gopkg.in/yaml.v2"
@@ -37,6 +39,8 @@ var (
 			String()
 	batchMapFile = app.Flag("batch-map", "Output YAML file for batch to repo path mapping").
 			String()
+	dummy = app.Flag("dummy", "Write placeholder text for blob contents in export files").
+		Bool()
 	logLevel = app.Flag("log-level", "Log level").
 			Default("info").String()
 
@@ -121,6 +125,7 @@ type RepoP4Transfer struct {
 	repoRoot     string
 	exportDir    string
 	batchMapFile string
+	dummy        bool
 	manifest     *RepoManifest
 	cfg          *RepoP4TransferConfig
 	projects     map[string]*ManifestProject // key: project path
@@ -130,13 +135,14 @@ type RepoP4Transfer struct {
 }
 
 // NewRepoP4Transfer creates a new transfer coordinator
-func NewRepoP4Transfer(manifestFile, configFile, repoRoot, exportDir string, logger *logrus.Logger) *RepoP4Transfer {
+func NewRepoP4Transfer(manifestFile, configFile, repoRoot, exportDir string, dummy bool, logger *logrus.Logger) *RepoP4Transfer {
 	return &RepoP4Transfer{
 		logger:       logger,
 		manifestFile: manifestFile,
 		configFile:   configFile,
 		repoRoot:     repoRoot,
 		exportDir:    exportDir,
+		dummy:        dummy,
 		projects:     make(map[string]*ManifestProject),
 		commits:      make([]*CommitMetadata, 0),
 	}
@@ -686,6 +692,40 @@ func (r *RepoP4Transfer) createAndImportFastExport(batch *CommitBatch, project *
 	return exportFile, nil
 }
 
+type nopWriteCloser struct {
+	io.Writer
+}
+
+func (nopWriteCloser) Close() error { return nil }
+
+// processDummyFastExport replaces blob data with placeholder text in fast-export stream
+func (r *RepoP4Transfer) processDummyFastExport(input []byte) ([]byte, error) {
+	inBuf := bytes.NewReader(input)
+	var outBuf bytes.Buffer
+	frontend := libfastimport.NewFrontend(inBuf, nil, nil)
+	backend := libfastimport.NewBackend(nopWriteCloser{&outBuf}, nil, nil)
+
+	for {
+		cmd, err := frontend.ReadCmd()
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, fmt.Errorf("failed reading fast-export stream for dummy conversion: %w", err)
+		}
+		switch ctype := cmd.(type) {
+		case libfastimport.CmdBlob:
+			blob := cmd.(libfastimport.CmdBlob)
+			blob.Data = fmt.Sprintf("%d\n", blob.Mark)
+			backend.Do(blob)
+		default:
+			backend.Do(ctype)
+		}
+	}
+
+	return outBuf.Bytes(), nil
+}
+
 // createFastExport creates a git fast-export dump file with configured options, range specs, and marks
 func (r *RepoP4Transfer) createFastExport(repoPath string, revSpecs []string, marksFile string, outputFile string) error {
 	// Build git fast-export command with configured options
@@ -724,6 +764,15 @@ func (r *RepoP4Transfer) createFastExport(repoPath string, revSpecs []string, ma
 	output, err := r.executeGitCommand(repoPath, args...)
 	if err != nil {
 		return fmt.Errorf("git fast-export failed: %w", err)
+	}
+
+	if r.dummy {
+		r.logger.Debugf("[%s] Writing dummy placeholder text for blob contents", repoPath)
+		dummyOutput, err := r.processDummyFastExport(output)
+		if err != nil {
+			return fmt.Errorf("failed to process dummy fast-export: %w", err)
+		}
+		output = dummyOutput
 	}
 
 	r.logger.Debugf("[%s] Fast-export output size: %d bytes", repoPath, len(output))
@@ -791,7 +840,7 @@ func main() {
 	logger.SetLevel(level)
 
 	// Create transfer coordinator
-	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, logger)
+	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, *dummy, logger)
 	transfer.batchMapFile = *batchMapFile
 
 	// Initialize from config and manifest
