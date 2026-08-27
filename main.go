@@ -1356,30 +1356,37 @@ func (g *GitP4Transfer) setBranch(currCommit *GitCommit) {
 	if currCommit.commit.From != "" {
 		if intVar, err := strconv.Atoi(currCommit.commit.From[1:]); err == nil {
 			parent := g.commits[intVar]
-			if currCommit.branch == "" {
-				currCommit.branch = parent.branch
-			}
-			if currCommit.branch != parent.branch {
-				currCommit.prevBranch = parent.branch
-			}
-			currCommit.parentBranch = parent.parentBranch
-			if currCommit.parentBranch == "" {
-				currCommit.parentBranch = parent.branch
+			if parent != nil {
+				if currCommit.branch == "" {
+					currCommit.branch = parent.branch
+				}
+				if currCommit.branch != parent.branch {
+					currCommit.prevBranch = parent.branch
+				}
+				currCommit.parentBranch = parent.parentBranch
+				if currCommit.parentBranch == "" {
+					currCommit.parentBranch = parent.branch
+				}
 			}
 		}
 	} else {
+		currCommit.branch = g.opts.config.DefaultBranch
+	}
+	if currCommit.branch == "" {
 		currCommit.branch = g.opts.config.DefaultBranch
 	}
 	if len(currCommit.commit.Merge) >= 1 {
 		firstMerge := currCommit.commit.Merge[0]
 		if intVar, err := strconv.Atoi(firstMerge[1:]); err == nil {
 			mergeFrom := g.commits[intVar]
-			if mergeFrom.branch == "" {
-				g.logger.Errorf("Merge Commit mark %d has no branch", intVar)
-			} else if mergeFrom.branch != currCommit.branch {
-				currCommit.mergeBranch = mergeFrom.branch
-			} else {
-				g.logger.Warnf("Ignoring Merge Commit mark %d as same branch %s", intVar, mergeFrom.branch)
+			if mergeFrom != nil {
+				if mergeFrom.branch == "" {
+					g.logger.Errorf("Merge Commit mark %d has no branch", intVar)
+				} else if mergeFrom.branch != currCommit.branch {
+					currCommit.mergeBranch = mergeFrom.branch
+				} else {
+					g.logger.Warnf("Ignoring Merge Commit mark %d as same branch %s", intVar, mergeFrom.branch)
+				}
 			}
 		}
 	}
@@ -1393,7 +1400,9 @@ func (g *GitP4Transfer) createGraphEdges(cmt *GitCommit) {
 	if cmt.commit.From != "" {
 		if intVar, err := strconv.Atoi(cmt.commit.From[1:]); err == nil {
 			parent := g.commits[intVar]
-			g.graph.Edge(parent.gNode, cmt.gNode, "p")
+			if parent != nil {
+				g.graph.Edge(parent.gNode, cmt.gNode, "p")
+			}
 		}
 	}
 	if len(cmt.commit.Merge) < 1 {
@@ -1402,7 +1411,9 @@ func (g *GitP4Transfer) createGraphEdges(cmt *GitCommit) {
 	for _, merge := range cmt.commit.Merge {
 		if intVar, err := strconv.Atoi(merge[1:]); err == nil {
 			mergeFrom := g.commits[intVar]
-			g.graph.Edge(mergeFrom.gNode, cmt.gNode, "m")
+			if mergeFrom != nil {
+				g.graph.Edge(mergeFrom.gNode, cmt.gNode, "m")
+			}
 		}
 	}
 }

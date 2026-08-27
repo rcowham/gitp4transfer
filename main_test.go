@@ -5985,3 +5985,51 @@ M 100644 :1 file2.txt
 	assert.Equal(t, 2, commits[0].commit.Mark) // mark :2 in file 1
 	assert.Equal(t, 4, commits[1].commit.Mark) // mark :2 in file 2 -> 2 + offset 2 = 4
 }
+
+func TestCommitParentNotInMap(t *testing.T) {
+	// Tests that a commit referencing an unparsed or external parent/merge mark does not cause a nil pointer panic in setBranch
+	logger := createLogger()
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "export_batch.txt")
+
+	exportContent := `blob
+mark :1
+data 5
+hello
+
+commit refs/heads/main
+mark :10
+author Test <test@example.com> 1600000000 +0000
+committer Test <test@example.com> 1600000000 +0000
+data 8
+commit 1
+from :999
+merge :888
+M 100644 :1 file1.txt
+
+`
+	if err := os.WriteFile(filePath, []byte(exportContent), 0644); err != nil {
+		t.Fatalf("Failed to write export_batch: %v", err)
+	}
+
+	p4t := MakeP4Test(tmpDir)
+
+	opts := &GitParserOptions{
+		config:         &config.Config{ImportDepot: "import", DefaultBranch: "main"},
+		gitImportFiles: []string{filePath},
+		archiveRoot:    p4t.serverRoot,
+	}
+
+	g, err := NewGitP4Transfer(logger, opts)
+	assert.NoError(t, err)
+
+	commitChan := g.GitParse(nil)
+
+	var commits []GitCommit
+	for c := range commitChan {
+		commits = append(commits, c)
+	}
+
+	assert.Equal(t, 1, len(commits))
+	assert.Equal(t, "main", commits[0].branch)
+}
