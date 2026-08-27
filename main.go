@@ -2062,16 +2062,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 				return om
 			}
 
-		CmdLoop:
-			for {
-				cmd, err := source.Next()
-				if err != nil {
-					if err == io.EOF {
-						break
-					}
-					g.logger.Errorf("Failed to read cmd2: %v", err)
-					panic("Unrecoverable error")
-				}
+			err := importer.Process(source, func(cmd libfastimport.Cmd) error {
 				switch ctype := cmd.(type) {
 				case libfastimport.CmdBlob:
 					blob := cmd.(libfastimport.CmdBlob)
@@ -2126,7 +2117,7 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 					commitCount += 1
 					if g.opts.maxCommits > 0 && commitCount >= g.opts.maxCommits {
 						g.logger.Infof("Processed %d commits", commitCount)
-						break CmdLoop
+						return importer.ErrStop
 					}
 
 				case libfastimport.FileModify:
@@ -2200,6 +2191,11 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 					g.logger.Errorf("Not handled: Found ctype %v cmd %+v", ctype, cmd)
 					g.logger.Errorf("Cmd type %T", cmd)
 				}
+				return nil
+			})
+			if err != nil {
+				g.logger.Errorf("Failed to read fast-export stream: %v", err)
+				panic("Unrecoverable error")
 			}
 			markOffset += maxMarkInFile
 			return true

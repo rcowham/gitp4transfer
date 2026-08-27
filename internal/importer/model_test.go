@@ -1,10 +1,13 @@
 package importer
 
 import (
+	"errors"
 	"io"
 	"strings"
 	"testing"
 	"time"
+
+	libfastimport "github.com/rcowham/go-libgitfastimport"
 )
 
 func TestFileActionString(t *testing.T) {
@@ -62,5 +65,48 @@ func TestCommitMetadata(t *testing.T) {
 
 	if commit.ID != "commit-id" || commit.Parents[0] != "parent-id" || !commit.Author.When.Equal(when) {
 		t.Errorf("Commit metadata was not retained: %+v", commit)
+	}
+}
+
+type testCommandSource struct {
+	commands []libfastimport.Cmd
+	index    int
+}
+
+func (s *testCommandSource) Next() (libfastimport.Cmd, error) {
+	if s.index >= len(s.commands) {
+		return nil, io.EOF
+	}
+	cmd := s.commands[s.index]
+	s.index++
+	return cmd, nil
+}
+
+func TestProcess(t *testing.T) {
+	source := &testCommandSource{commands: []libfastimport.Cmd{
+		libfastimport.CmdBlob{Mark: 1},
+		libfastimport.CmdBlob{Mark: 2},
+	}}
+	var marks []int
+
+	err := Process(source, func(cmd libfastimport.Cmd) error {
+		marks = append(marks, cmd.(libfastimport.CmdBlob).Mark)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Process() returned an error: %v", err)
+	}
+	if len(marks) != 2 || marks[0] != 1 || marks[1] != 2 {
+		t.Errorf("Process() handled unexpected marks: %v", marks)
+	}
+}
+
+func TestProcessPropagatesError(t *testing.T) {
+	want := errors.New("handler failure")
+	source := &testCommandSource{commands: []libfastimport.Cmd{libfastimport.CmdBlob{Mark: 1}}}
+
+	err := Process(source, func(libfastimport.Cmd) error { return want })
+	if !errors.Is(err, want) {
+		t.Errorf("Process() error = %v, want %v", err, want)
 	}
 }
