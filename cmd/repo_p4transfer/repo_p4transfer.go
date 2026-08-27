@@ -431,10 +431,24 @@ func (r *RepoP4Transfer) getRepoBranches(repoPath string) ([]string, error) {
 		scanner := bufio.NewScanner(bytes.NewReader(output))
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
-			if line != "" && !strings.Contains(line, "/HEAD") && !strings.Contains(line, "->") {
-				addRef(line)
-				if idx := strings.Index(line, "/"); idx != -1 && idx < len(line)-1 {
-					addRef(line[idx+1:])
+			if line != "" && !strings.Contains(line, "/HEAD") {
+				if strings.Contains(line, "->") {
+					parts := strings.Split(line, "->")
+					left := strings.TrimSpace(parts[0])
+					right := strings.TrimSpace(parts[1])
+					addRef(left)
+					addRef(right)
+					if idx := strings.Index(left, "/"); idx != -1 && idx < len(left)-1 {
+						addRef(left[idx+1:])
+					}
+					if idx := strings.Index(right, "/"); idx != -1 && idx < len(right)-1 {
+						addRef(right[idx+1:])
+					}
+				} else {
+					addRef(line)
+					if idx := strings.Index(line, "/"); idx != -1 && idx < len(line)-1 {
+						addRef(line[idx+1:])
+					}
 				}
 			}
 		}
