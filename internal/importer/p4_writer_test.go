@@ -75,6 +75,33 @@ func TestP4WriterWritesArchivesAndDuplicateReferences(t *testing.T) {
 	}
 }
 
+func TestP4WriterBoundedArchiveWorkers(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &output, ParallelWorkers: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func(value string) BlobContent {
+		return func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(value)), nil }
+	}
+	when := time.Now()
+	if err := writer.WriteCommit(&Commit{ID: "one", Author: Identity{When: when}, Files: []FileChange{
+		{Action: FileModify, Path: "one.txt", ObjectID: "one", Content: content("one")},
+		{Action: FileModify, Path: "two.txt", ObjectID: "two", Content: content("two")},
+		{Action: FileModify, Path: "three.txt", ObjectID: "three", Content: content("three")},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"one.txt", "two.txt", "three.txt"} {
+		if _, err := os.Stat(filepath.Join(archiveRoot, "import", name+",d", "1.1.gz")); err != nil {
+			t.Errorf("Archive for %s missing: %v", name, err)
+		}
+	}
+}
 func TestP4WriterTypeMapAndCRLFConversion(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer
@@ -91,6 +118,9 @@ func TestP4WriterTypeMapAndCRLFConversion(t *testing.T) {
 	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("one\r\ntwo\r\n")), nil }
 	commit := &Commit{ID: "one", Author: Identity{When: time.Now()}, Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "text", Content: content}}}
 	if err := writer.WriteCommit(commit); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
 		t.Fatal(err)
 	}
 	archive, err := os.Open(filepath.Join(archiveRoot, "import/file.txt,d", "1.1.gz"))

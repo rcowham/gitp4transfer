@@ -9,6 +9,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/rcowham/gitp4transfer/journal"
 )
@@ -20,12 +21,13 @@ type CommitSource interface {
 
 // P4WriterOptions configures a linear Perforce journal and archive import.
 type P4WriterOptions struct {
-	ImportDepot string
-	ArchiveRoot string
-	Journal     io.Writer
-	User        string
-	TypeMaps    []TypeMap
-	ConvertCRLF bool
+	ImportDepot     string
+	ArchiveRoot     string
+	Journal         io.Writer
+	User            string
+	TypeMaps        []TypeMap
+	ConvertCRLF     bool
+	ParallelWorkers int
 }
 
 // TypeMap selects a Perforce file type for paths matching Pattern.
@@ -45,6 +47,12 @@ type blobArchive struct {
 	lbrRev  int
 }
 
+type archiveJob struct {
+	stagedFile  string
+	archiveFile string
+	fileType    journal.FileType
+}
+
 // P4Writer writes source-neutral commits to Perforce journal and archive paths.
 // It handles linear add, edit, and delete history plus duplicate blob librarian
 // references. Branch and merge integration records remain a later migration step.
@@ -55,9 +63,15 @@ type P4Writer struct {
 	user          string
 	typeMaps      []TypeMap
 	convertCRLF   bool
+	stagingDir    string
 	changeNumber  int
 	fileRevisions map[string]fileRevision
 	blobArchives  map[string]blobArchive
+	archiveJobs   chan archiveJob
+	archiveWG     sync.WaitGroup
+	archiveMu     sync.Mutex
+	archiveErr    error
+	closed        bool
 }
 
 // NewP4Writer creates a source-neutral Perforce writer.
@@ -74,17 +88,26 @@ func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 	if options.User == "" {
 		options.User = "git-user"
 	}
+	if options.ParallelWorkers < 1 {
+		options.ParallelWorkers = 1
+	}
 	writer := &P4Writer{
 		importDepot:   strings.Trim(options.ImportDepot, "/"),
 		archiveRoot:   options.ArchiveRoot,
 		user:          options.User,
 		typeMaps:      options.TypeMaps,
 		convertCRLF:   options.ConvertCRLF,
+		stagingDir:    path.Join(options.ArchiveRoot, ".gitp4transfer-staging"),
 		fileRevisions: make(map[string]fileRevision),
 		blobArchives:  make(map[string]blobArchive),
+		archiveJobs:   make(chan archiveJob, options.ParallelWorkers),
 	}
 	writer.journal.SetWriter(options.Journal)
 	writer.journal.WriteHeader(strings.TrimPrefix(options.ImportDepot, "//"), false)
+	for range options.ParallelWorkers {
+		writer.archiveWG.Add(1)
+		go writer.runArchiveWorker()
+	}
 	return writer, nil
 }
 
@@ -93,12 +116,14 @@ func (w *P4Writer) WriteSource(source CommitSource) error {
 	for {
 		commit, err := source.Next()
 		if err == io.EOF {
-			return nil
+			return w.Close()
 		}
 		if err != nil {
+			_ = w.Close()
 			return err
 		}
 		if err := w.WriteCommit(commit); err != nil {
+			_ = w.Close()
 			return err
 		}
 	}
@@ -106,6 +131,12 @@ func (w *P4Writer) WriteSource(source CommitSource) error {
 
 // WriteCommit writes one source commit as a Perforce changelist.
 func (w *P4Writer) WriteCommit(commit *Commit) error {
+	if err := w.archiveError(); err != nil {
+		return err
+	}
+	if w.closed {
+		return fmt.Errorf("writer is closed")
+	}
 	if commit == nil {
 		return fmt.Errorf("commit is required")
 	}
@@ -163,7 +194,7 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 		if fileType == journal.CText || fileType == journal.Binary {
 			archiveFile += ".gz"
 		}
-		if err := w.writeArchive(archiveFile, content, fileType); err != nil {
+		if err := w.stageArchive(archiveFile, content, fileType); err != nil {
 			return err
 		}
 		lbr = blobArchive{lbrFile: depotFile, lbrRev: changeNumber}
@@ -244,4 +275,68 @@ func copyNormalizingCRLF(destination io.Writer, source io.Reader) error {
 			return err
 		}
 	}
+}
+
+// Close waits for all staged archive work to complete. It is safe to call more
+// than once.
+func (w *P4Writer) Close() error {
+	w.archiveMu.Lock()
+	if w.closed {
+		w.archiveMu.Unlock()
+		return w.archiveError()
+	}
+	w.closed = true
+	close(w.archiveJobs)
+	w.archiveMu.Unlock()
+	w.archiveWG.Wait()
+	return w.archiveError()
+}
+
+func (w *P4Writer) stageArchive(archiveFile string, content io.ReadCloser, fileType journal.FileType) error {
+	defer content.Close()
+	if err := os.MkdirAll(w.stagingDir, 0755); err != nil {
+		return err
+	}
+	stagedFile, err := os.CreateTemp(w.stagingDir, "blob-")
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(stagedFile, content)
+	closeErr := stagedFile.Close()
+	if copyErr != nil {
+		os.Remove(stagedFile.Name())
+		return copyErr
+	}
+	if closeErr != nil {
+		os.Remove(stagedFile.Name())
+		return closeErr
+	}
+	w.archiveJobs <- archiveJob{stagedFile: stagedFile.Name(), archiveFile: archiveFile, fileType: fileType}
+	return w.archiveError()
+}
+
+func (w *P4Writer) runArchiveWorker() {
+	defer w.archiveWG.Done()
+	for job := range w.archiveJobs {
+		staged, err := os.Open(job.stagedFile)
+		if err == nil {
+			err = w.writeArchive(job.archiveFile, staged, job.fileType)
+		}
+		if removeErr := os.Remove(job.stagedFile); err == nil {
+			err = removeErr
+		}
+		if err != nil {
+			w.archiveMu.Lock()
+			if w.archiveErr == nil {
+				w.archiveErr = err
+			}
+			w.archiveMu.Unlock()
+		}
+	}
+}
+
+func (w *P4Writer) archiveError() error {
+	w.archiveMu.Lock()
+	defer w.archiveMu.Unlock()
+	return w.archiveErr
 }
