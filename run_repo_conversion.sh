@@ -144,12 +144,12 @@ if [[ $ConvertUnicode -ne 0 ]]; then
     p4d -r . -xi || bail "Failed to convert repository to Unicode mode; see jnl.invalid-utf8"
 fi
 
-p4 -p "$P4PORT" dirs "//..." | while IFS= read -r directory; do
+p4 -p "$P4PORT" dirs "//*" | while IFS= read -r directory; do
     printf '%s/...\n' "$directory"
 done > dirs.txt
 if [[ -s dirs.txt ]]; then
     msg "Verifying with -qu ..."
-    parallel -a dirs.txt p4 -p "$P4PORT" verify -qu {} > verify.out 2>&1
+    parallel -a dirs.txt p4 verify -qu {} > verify.out 2>&1
     msg "Verify errors: $(wc -l < verify.out)"
 else
     : > verify.out

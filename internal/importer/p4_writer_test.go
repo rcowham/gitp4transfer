@@ -173,6 +173,25 @@ func TestP4WriterCopyAndRename(t *testing.T) {
 	}
 }
 
+func TestP4WriterIgnoresDeleteBeforeImportRange(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := &Commit{ID: "delete", Author: Identity{When: time.Now()}, Files: []FileChange{{Action: FileDelete, Path: "OWNERS_networking"}}}
+	if err := writer.WriteCommit(commit); err != nil {
+		t.Fatalf("WriteCommit() returned an error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "@//import/OWNERS_networking@") {
+		t.Errorf("Unexpected delete revision for pre-range path:\n%s", output.String())
+	}
+}
+
 func TestP4WriterBranchPath(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer

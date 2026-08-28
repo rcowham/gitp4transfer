@@ -193,7 +193,9 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, m
 
 	if change.Action == FileDelete {
 		if !exists {
-			return fmt.Errorf("cannot delete path with no previous revision")
+			// Date-filtered imports may begin after the file was added. Deleting
+			// an unimported path leaves the selected-range Perforce state unchanged.
+			return nil
 		}
 		w.journal.WriteRev(depotFile, revision, journal.Delete, w.fileTypeFor(depotFile), changeNumber, previous.lbrFile, previous.lbrRev, changeTime)
 		w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: previous.lbrFile, lbrRev: previous.lbrRev, objectID: previous.objectID}
