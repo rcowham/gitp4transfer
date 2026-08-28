@@ -132,6 +132,35 @@ func TestGitRepositorySourcePathPrefix(t *testing.T) {
 	}
 }
 
+func TestGitRepositorySourceRef(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("content"), 0644)
+	runGit("add", "file.txt")
+	runGit("commit", "-m", "add file")
+	output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := NewGitRepositorySourceWithOptions(repoDir, []string{string(output[:len(output)-1])}, GitRepositorySourceOptions{Ref: "refs/heads/android17-release"})
+	commit, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit.Ref != "refs/heads/android17-release" {
+		t.Errorf("Commit ref = %q", commit.Ref)
+	}
+}
+
 func TestGitRepositorySourceDuplicateBlob(t *testing.T) {
 	repoDir := t.TempDir()
 	runGit := func(args ...string) {

@@ -18,6 +18,7 @@ import (
 // GitRepositorySourceOptions configures native Git source lifecycle behavior.
 type GitRepositorySourceOptions struct {
 	PathPrefix     string
+	Ref            string
 	Context        context.Context
 	CheckpointFile string
 	Dummy          bool
@@ -33,6 +34,7 @@ type gitRepositoryCheckpoint struct {
 type GitRepositorySource struct {
 	repository string
 	pathPrefix string
+	ref        string
 	commitIDs  []string
 	index      int
 	context    context.Context
@@ -69,6 +71,7 @@ func NewGitRepositorySourceWithOptions(repository string, commitIDs []string, op
 	return &GitRepositorySource{
 		repository: repository,
 		pathPrefix: strings.Trim(options.PathPrefix, "/"),
+		ref:        options.Ref,
 		commitIDs:  commitIDs,
 		context:    ctx,
 		checkpoint: options.CheckpointFile,
@@ -210,6 +213,7 @@ func (s *GitRepositorySource) readCommit(commitID string) (*Commit, error) {
 	commit := &Commit{
 		ID:        fields[0],
 		Parents:   strings.Fields(fields[1]),
+		Ref:       s.ref,
 		Author:    Identity{Name: fields[2], Email: fields[3], When: authorTime},
 		Committer: Identity{Name: fields[5], Email: fields[6], When: committerTime},
 		Message:   fields[8],
