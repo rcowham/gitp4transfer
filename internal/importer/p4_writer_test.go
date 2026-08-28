@@ -141,3 +141,34 @@ func TestP4WriterTypeMapAndCRLFConversion(t *testing.T) {
 		t.Errorf("Normalized archive = %q", data)
 	}
 }
+
+func TestP4WriterCopyAndRename(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("content")), nil }
+	when := time.Now()
+	source := &commitSliceSource{commits: []*Commit{
+		{ID: "one", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "source.txt", ObjectID: "source", Content: content}}},
+		{ID: "two", Author: Identity{When: when}, Files: []FileChange{{Action: FileCopy, SourcePath: "source.txt", Path: "copy.txt"}}},
+		{ID: "three", Author: Identity{When: when}, Files: []FileChange{{Action: FileRename, SourcePath: "source.txt", Path: "renamed.txt"}}},
+	}}
+	if err := writer.WriteSource(source); err != nil {
+		t.Fatal(err)
+	}
+	journalOutput := output.String()
+	for _, depotFile := range []string{"//import/source.txt", "//import/copy.txt", "//import/renamed.txt"} {
+		if !strings.Contains(journalOutput, "@"+depotFile+"@") {
+			t.Errorf("Journal missing %s:\n%s", depotFile, journalOutput)
+		}
+	}
+	if strings.Count(journalOutput, "@db.integed@") != 4 {
+		t.Errorf("Expected two integration record pairs, got:\n%s", journalOutput)
+	}
+	if _, err := os.Stat(filepath.Join(archiveRoot, "import/copy.txt,d", "1.2.gz")); !os.IsNotExist(err) {
+		t.Errorf("Copy unexpectedly created an archive: %v", err)
+	}
+}

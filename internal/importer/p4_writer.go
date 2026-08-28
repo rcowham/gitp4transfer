@@ -169,6 +169,9 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 		w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: previous.lbrFile, lbrRev: previous.lbrRev}
 		return nil
 	}
+	if change.Action == FileCopy || change.Action == FileRename {
+		return w.writeCopyOrRename(change, depotFile, exists, revision, changeNumber, changeTime)
+	}
 	if change.Action != FileModify {
 		return fmt.Errorf("unsupported source action %s", change.Action)
 	}
@@ -207,6 +210,32 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 	}
 	w.journal.WriteRev(depotFile, revision, action, w.fileTypeFor(depotFile), changeNumber, lbr.lbrFile, lbr.lbrRev, changeTime)
 	w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: lbr.lbrFile, lbrRev: lbr.lbrRev}
+	return nil
+}
+
+func (w *P4Writer) writeCopyOrRename(change FileChange, depotFile string, destinationExists bool, destinationRev, changeNumber, changeTime int) error {
+	if change.SourcePath == "" {
+		return fmt.Errorf("missing source path")
+	}
+	if destinationExists {
+		return fmt.Errorf("destination path already exists")
+	}
+	sourceDepotFile := "//" + path.Join(w.importDepot, strings.TrimPrefix(change.SourcePath, "/"))
+	source, sourceExists := w.fileRevisions[sourceDepotFile]
+	if !sourceExists {
+		return fmt.Errorf("source path has no previous revision")
+	}
+	fileType := w.fileTypeFor(sourceDepotFile)
+
+	if change.Action == FileRename {
+		sourceDeleteRev := source.revision + 1
+		w.journal.WriteRev(sourceDepotFile, sourceDeleteRev, journal.Delete, fileType, changeNumber, source.lbrFile, source.lbrRev, changeTime)
+		w.fileRevisions[sourceDepotFile] = fileRevision{revision: sourceDeleteRev, lbrFile: source.lbrFile, lbrRev: source.lbrRev}
+	}
+
+	w.journal.WriteRev(depotFile, destinationRev, journal.Add, fileType, changeNumber, source.lbrFile, source.lbrRev, changeTime)
+	w.journal.WriteInteg(depotFile, sourceDepotFile, 0, source.revision, 0, destinationRev, journal.BranchFrom, journal.BranchInto, changeNumber)
+	w.fileRevisions[depotFile] = fileRevision{revision: destinationRev, lbrFile: source.lbrFile, lbrRev: source.lbrRev}
 	return nil
 }
 
