@@ -265,3 +265,35 @@ func TestP4WriterMergeIntegration(t *testing.T) {
 		t.Errorf("Expected merge integration pair:\n%s", journalOutput)
 	}
 }
+
+func TestP4WriterMaterializesUnchangedBranchFiles(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{
+		ImportDepot: "import",
+		ArchiveRoot: archiveRoot,
+		Journal:     &output,
+		BranchPath:  func(ref string) string { return strings.TrimPrefix(ref, "refs/heads/") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func(value string) BlobContent {
+		return func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(value)), nil }
+	}
+	when := time.Now()
+	source := &commitSliceSource{commits: []*Commit{
+		{ID: "main-1", Ref: "refs/heads/main", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "unchanged.txt", ObjectID: "base", Content: content("base")}}},
+		{ID: "dev-1", Parents: []string{"main-1"}, Ref: "refs/heads/dev", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "dev.txt", ObjectID: "dev", Content: content("dev")}}},
+	}}
+	if err := writer.WriteSource(source); err != nil {
+		t.Fatal(err)
+	}
+	journalOutput := output.String()
+	if !strings.Contains(journalOutput, "@//import/dev/unchanged.txt@ @//import/main/unchanged.txt@") {
+		t.Errorf("Missing unchanged branch integration:\n%s", journalOutput)
+	}
+	if _, err := os.Stat(filepath.Join(archiveRoot, "import/dev/unchanged.txt,d", "1.2.gz")); !os.IsNotExist(err) {
+		t.Errorf("Unchanged branched file unexpectedly created archive: %v", err)
+	}
+}

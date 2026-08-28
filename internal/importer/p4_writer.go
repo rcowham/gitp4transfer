@@ -42,6 +42,7 @@ type fileRevision struct {
 	lbrFile  string
 	lbrRev   int
 	objectID string
+	active   bool
 }
 
 type blobArchive struct {
@@ -70,6 +71,7 @@ type P4Writer struct {
 	changeNumber   int
 	fileRevisions  map[string]fileRevision
 	commitBranches map[string]string
+	branchReady    map[string]bool
 	blobArchives   map[string]blobArchive
 	archiveJobs    chan archiveJob
 	archiveWG      sync.WaitGroup
@@ -105,6 +107,7 @@ func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 		stagingDir:     path.Join(options.ArchiveRoot, ".gitp4transfer-staging"),
 		fileRevisions:  make(map[string]fileRevision),
 		commitBranches: make(map[string]string),
+		branchReady:    make(map[string]bool),
 		blobArchives:   make(map[string]blobArchive),
 		archiveJobs:    make(chan archiveJob, options.ParallelWorkers),
 	}
@@ -168,6 +171,9 @@ func (w *P4Writer) WriteCommit(commit *Commit) error {
 		}
 	}
 	w.journal.WriteChange(changeNumber, w.user, commit.Message, changeTime)
+	if err := w.materializeBranch(branch, parentBranch, commit.Files, changeNumber, changeTime); err != nil {
+		return fmt.Errorf("commit %s: %w", commit.ID, err)
+	}
 
 	for _, change := range commit.Files {
 		if err := w.writeChange(change, branch, parentBranch, mergeBranches, changeNumber, changeTime); err != nil {
@@ -190,7 +196,7 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, m
 			return fmt.Errorf("cannot delete path with no previous revision")
 		}
 		w.journal.WriteRev(depotFile, revision, journal.Delete, w.fileTypeFor(depotFile), changeNumber, previous.lbrFile, previous.lbrRev, changeTime)
-		w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: previous.lbrFile, lbrRev: previous.lbrRev}
+		w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: previous.lbrFile, lbrRev: previous.lbrRev, objectID: previous.objectID}
 		return nil
 	}
 	if change.Action == FileCopy || change.Action == FileRename {
@@ -208,7 +214,7 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, m
 			fileType := w.fileTypeFor(parentDepotFile)
 			w.journal.WriteRev(depotFile, revision, journal.Add, fileType, changeNumber, parent.lbrFile, parent.lbrRev, changeTime)
 			w.journal.WriteInteg(depotFile, parentDepotFile, 0, parent.revision, 0, revision, journal.BranchFrom, journal.BranchInto, changeNumber)
-			w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: parent.lbrFile, lbrRev: parent.lbrRev, objectID: change.ObjectID}
+			w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: parent.lbrFile, lbrRev: parent.lbrRev, objectID: change.ObjectID, active: true}
 			return nil
 		}
 	}
@@ -243,7 +249,7 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, m
 		action = journal.Edit
 	}
 	w.journal.WriteRev(depotFile, revision, action, w.fileTypeFor(depotFile), changeNumber, lbr.lbrFile, lbr.lbrRev, changeTime)
-	w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: lbr.lbrFile, lbrRev: lbr.lbrRev, objectID: change.ObjectID}
+	w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: lbr.lbrFile, lbrRev: lbr.lbrRev, objectID: change.ObjectID, active: true}
 	w.writeMergeIntegrations(depotFile, change.Path, change.ObjectID, branch, mergeBranches, revision, changeNumber)
 	return nil
 }
@@ -276,12 +282,44 @@ func (w *P4Writer) writeCopyOrRename(change FileChange, branch, depotFile string
 	if change.Action == FileRename {
 		sourceDeleteRev := source.revision + 1
 		w.journal.WriteRev(sourceDepotFile, sourceDeleteRev, journal.Delete, fileType, changeNumber, source.lbrFile, source.lbrRev, changeTime)
-		w.fileRevisions[sourceDepotFile] = fileRevision{revision: sourceDeleteRev, lbrFile: source.lbrFile, lbrRev: source.lbrRev}
+		w.fileRevisions[sourceDepotFile] = fileRevision{revision: sourceDeleteRev, lbrFile: source.lbrFile, lbrRev: source.lbrRev, objectID: source.objectID}
 	}
 
 	w.journal.WriteRev(depotFile, destinationRev, journal.Add, fileType, changeNumber, source.lbrFile, source.lbrRev, changeTime)
 	w.journal.WriteInteg(depotFile, sourceDepotFile, 0, source.revision, 0, destinationRev, journal.BranchFrom, journal.BranchInto, changeNumber)
-	w.fileRevisions[depotFile] = fileRevision{revision: destinationRev, lbrFile: source.lbrFile, lbrRev: source.lbrRev}
+	w.fileRevisions[depotFile] = fileRevision{revision: destinationRev, lbrFile: source.lbrFile, lbrRev: source.lbrRev, objectID: source.objectID, active: true}
+	return nil
+}
+
+func (w *P4Writer) materializeBranch(branch, parentBranch string, changes []FileChange, changeNumber, changeTime int) error {
+	if branch == "" || parentBranch == "" || branch == parentBranch || w.branchReady[branch] || !w.branchReady[parentBranch] {
+		if branch != "" {
+			w.branchReady[branch] = true
+		}
+		return nil
+	}
+	affected := make(map[string]bool)
+	for _, change := range changes {
+		affected[change.Path] = true
+		if change.SourcePath != "" {
+			affected[change.SourcePath] = true
+		}
+	}
+	parentPrefix := w.depotPath(parentBranch, "") + "/"
+	for parentDepotFile, parent := range w.fileRevisions {
+		if !parent.active || !strings.HasPrefix(parentDepotFile, parentPrefix) {
+			continue
+		}
+		sourcePath := strings.TrimPrefix(parentDepotFile, parentPrefix)
+		if affected[sourcePath] {
+			continue
+		}
+		depotFile := w.depotPath(branch, sourcePath)
+		w.journal.WriteRev(depotFile, 1, journal.Add, w.fileTypeFor(parentDepotFile), changeNumber, parent.lbrFile, parent.lbrRev, changeTime)
+		w.journal.WriteInteg(depotFile, parentDepotFile, 0, parent.revision, 0, 1, journal.BranchFrom, journal.BranchInto, changeNumber)
+		w.fileRevisions[depotFile] = fileRevision{revision: 1, lbrFile: parent.lbrFile, lbrRev: parent.lbrRev, objectID: parent.objectID, active: true}
+	}
+	w.branchReady[branch] = true
 	return nil
 }
 
