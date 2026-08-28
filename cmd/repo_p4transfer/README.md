@@ -30,6 +30,10 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 - `--batch-map`: Output YAML file path for batch to repo path mapping
 - `--dummy`: Write placeholder text for blob contents in export files (for quick testing)
 - `--dry-run`: Write `batch_summary.tsv` and `batch_mapping.yaml` without creating fast-export files
+- `--native-git`: Import directly from Git objects; requires `--archive-root` and writes `--journal`
+- `--journal`: Perforce journal path for `--native-git` (default: `jnl.0`)
+- `--archive-root`: Perforce archive root for `--native-git`
+- `--parallel-workers`: Bounded archive worker count for `--native-git` (default: 1)
 - `--first-parent`: Follow only the first parent commit when scanning git history
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
 

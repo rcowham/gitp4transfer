@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/rcowham/gitp4transfer/config"
+	"github.com/rcowham/gitp4transfer/internal/importer"
 
 	"github.com/perforce/p4prometheus/version"
 	libfastimport "github.com/rcowham/go-libgitfastimport"
@@ -43,6 +44,14 @@ var (
 		Bool()
 	dryRun = app.Flag("dry-run", "Write batch summary without creating fast-export files").
 		Bool()
+	nativeGit = app.Flag("native-git", "Import directly from Git objects without creating fast-export files").
+			Bool()
+	journalFile = app.Flag("journal", "Perforce journal file for --native-git imports").
+			Default("jnl.0").String()
+	archiveRoot = app.Flag("archive-root", "Perforce archive root for --native-git imports").
+			String()
+	parallelWorkers = app.Flag("parallel-workers", "Archive worker count for --native-git imports").
+			Default("1").Int()
 	firstParent = app.Flag("first-parent", "Follow only the first parent commit when scanning git history").
 			Bool()
 	logLevel = app.Flag("log-level", "Log level").
@@ -124,21 +133,25 @@ func (c CommitsByTime) Swap(i, j int)      { c[i], c[j] = c[j], c[i] }
 
 // RepoP4Transfer orchestrates the entire transfer process
 type RepoP4Transfer struct {
-	logger       *logrus.Logger
-	manifestFile string
-	configFile   string
-	repoRoot     string
-	exportDir    string
-	batchMapFile string
-	dummy        bool
-	dryRun       bool
-	firstParent  bool
-	manifest     *RepoManifest
-	cfg          *RepoP4TransferConfig
-	projects     map[string]*ManifestProject // key: project path
-	commits      []*CommitMetadata
-	startDate    time.Time
-	endDate      time.Time
+	logger          *logrus.Logger
+	manifestFile    string
+	configFile      string
+	repoRoot        string
+	exportDir       string
+	batchMapFile    string
+	dummy           bool
+	dryRun          bool
+	nativeGit       bool
+	journalFile     string
+	archiveRoot     string
+	parallelWorkers int
+	firstParent     bool
+	manifest        *RepoManifest
+	cfg             *RepoP4TransferConfig
+	projects        map[string]*ManifestProject // key: project path
+	commits         []*CommitMetadata
+	startDate       time.Time
+	endDate         time.Time
 }
 
 // NewRepoP4Transfer creates a new transfer coordinator
@@ -616,6 +629,9 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	if r.dryRun {
 		return nil
 	}
+	if r.nativeGit {
+		return r.importNativeGit(batches)
+	}
 
 	for i, batch := range batches {
 		project, ok := r.projects[batch.RepoPath]
@@ -641,6 +657,75 @@ func (r *RepoP4Transfer) ExportAndImport() error {
 	}
 
 	r.logger.Info("Export and import completed")
+	return nil
+}
+
+func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
+	if r.archiveRoot == "" {
+		return fmt.Errorf("--archive-root is required with --native-git")
+	}
+	journalOutput, err := os.Create(r.journalFile)
+	if err != nil {
+		return fmt.Errorf("create journal %s: %w", r.journalFile, err)
+	}
+	defer journalOutput.Close()
+
+	writer, err := importer.NewP4Writer(importer.P4WriterOptions{
+		ImportDepot:     r.cfg.ImportDepot,
+		ArchiveRoot:     r.archiveRoot,
+		Journal:         journalOutput,
+		ParallelWorkers: r.parallelWorkers,
+		BranchPath: func(ref string) string {
+			return strings.TrimPrefix(ref, "refs/heads/")
+		},
+	})
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	for index, batch := range batches {
+		project, ok := r.projects[batch.RepoPath]
+		if !ok {
+			return fmt.Errorf("batch %d: repo %s not found in manifest", index+1, batch.RepoPath)
+		}
+		commitIDs := make([]string, 0, len(batch.Commits))
+		commitRefs := make(map[string]string)
+		for _, commit := range batch.Commits {
+			commitIDs = append(commitIDs, commit.Hash)
+			commitRefs[commit.Hash] = commit.Branch
+		}
+		source := importer.NewGitRepositorySourceWithOptions(filepath.Join(r.repoRoot, batch.RepoPath), commitIDs, importer.GitRepositorySourceOptions{
+			PathPrefix: project.Path,
+			CommitRefs: commitRefs,
+			Dummy:      r.dummy,
+		})
+		if err := source.Validate(); err != nil {
+			return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
+		}
+		for {
+			commit, err := source.Next()
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				_ = source.Close()
+				return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
+			}
+			if err := writer.WriteCommit(commit); err != nil {
+				_ = source.Close()
+				return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
+			}
+		}
+		if err := source.Close(); err != nil {
+			return fmt.Errorf("close source for batch %d: %w", index+1, err)
+		}
+		r.logger.Infof("[%d/%d] Imported native Git batch for %s", index+1, len(batches), batch.RepoPath)
+	}
+	if err := writer.Close(); err != nil {
+		return err
+	}
+	r.logger.Infof("Native Git import journal written to: %s", r.journalFile)
 	return nil
 }
 
@@ -964,6 +1049,10 @@ func main() {
 	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, *dummy, logger)
 	transfer.batchMapFile = *batchMapFile
 	transfer.dryRun = *dryRun
+	transfer.nativeGit = *nativeGit
+	transfer.journalFile = *journalFile
+	transfer.archiveRoot = *archiveRoot
+	transfer.parallelWorkers = *parallelWorkers
 	transfer.firstParent = *firstParent
 
 	// Initialize from config and manifest
