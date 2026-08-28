@@ -294,3 +294,52 @@ func TestGitRepositorySourceCancellation(t *testing.T) {
 		t.Errorf("Next() error = %v, want context.Canceled", err)
 	}
 }
+
+func TestGitRepositorySourceDummyBlobContent(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("real blob content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file.txt")
+	runGit("commit", "-m", "add file")
+	output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source := NewGitRepositorySourceWithOptions(repoDir, []string{string(output[:len(output)-1])}, GitRepositorySourceOptions{Dummy: true})
+	if err := source.Validate(); err != nil {
+		t.Fatalf("Validate() in dummy mode failed: %v", err)
+	}
+	commit, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	content, err := commit.Files[0].Content()
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content.Close()
+
+	want := commit.Files[0].ObjectID + "\n"
+	if string(data) != want {
+		t.Errorf("Dummy content = %q, want %q", data, want)
+	}
+	if source.catFile != nil {
+		t.Error("Dummy mode unexpectedly started git cat-file")
+	}
+}

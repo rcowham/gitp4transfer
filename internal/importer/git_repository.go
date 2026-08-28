@@ -20,6 +20,7 @@ type GitRepositorySourceOptions struct {
 	PathPrefix     string
 	Context        context.Context
 	CheckpointFile string
+	Dummy          bool
 }
 
 type gitRepositoryCheckpoint struct {
@@ -37,6 +38,7 @@ type GitRepositorySource struct {
 	context    context.Context
 	checkpoint string
 	lastCommit string
+	dummy      bool
 	seenBlobs  map[string]struct{}
 	catFile    *exec.Cmd
 	catInput   io.WriteCloser
@@ -70,6 +72,7 @@ func NewGitRepositorySourceWithOptions(repository string, commitIDs []string, op
 		commitIDs:  commitIDs,
 		context:    ctx,
 		checkpoint: options.CheckpointFile,
+		dummy:      options.Dummy,
 		seenBlobs:  make(map[string]struct{}),
 	}
 }
@@ -96,8 +99,9 @@ func (s *GitRepositorySource) Next() (*Commit, error) {
 	return commit, nil
 }
 
-// Validate checks that all objects reachable from planned commits are local.
-// It prevents promisor lazy fetches so an import cannot begin with missing data.
+// Validate checks that planned commits are available locally. In normal mode it
+// also checks all reachable objects. Dummy mode intentionally skips blob
+// validation because it never reads blob content.
 func (s *GitRepositorySource) Validate() error {
 	if err := s.context.Err(); err != nil {
 		return err
@@ -105,7 +109,11 @@ func (s *GitRepositorySource) Validate() error {
 	if len(s.commitIDs) == 0 {
 		return nil
 	}
-	args := append([]string{"rev-list", "--objects", "--no-object-names"}, s.commitIDs...)
+	args := []string{"rev-list", "--no-object-names"}
+	if !s.dummy {
+		args = append(args, "--objects")
+	}
+	args = append(args, s.commitIDs...)
 	objectOutput, err := s.gitOutput(args...)
 	if err != nil {
 		return fmt.Errorf("enumerate repository objects: %w", err)
@@ -282,6 +290,9 @@ func (s *GitRepositorySource) prefixedPath(filePath string) string {
 func (s *GitRepositorySource) OpenBlob(objectID string) (io.ReadCloser, error) {
 	if s.activeBlob {
 		return nil, fmt.Errorf("previous blob content has not been closed")
+	}
+	if s.dummy {
+		return io.NopCloser(strings.NewReader(objectID + "\n")), nil
 	}
 	if err := s.startCatFile(); err != nil {
 		return nil, err
