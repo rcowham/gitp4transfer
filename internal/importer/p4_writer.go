@@ -175,7 +175,7 @@ func (w *P4Writer) WriteCommit(commit *Commit) error {
 			}
 		}
 	}
-	w.journal.WriteChange(changeNumber, w.user, commit.Message, changeTime)
+	w.journal.WriteChange(changeNumber, userForCommit(commit, w.user), commit.Message, changeTime)
 	if err := w.materializeBranch(branch, parentBranch, commit.Files, changeNumber, changeTime); err != nil {
 		return fmt.Errorf("commit %s: %w", commit.ID, err)
 	}
@@ -186,6 +186,17 @@ func (w *P4Writer) WriteCommit(commit *Commit) error {
 		}
 	}
 	return nil
+}
+
+func userForCommit(commit *Commit, fallback string) string {
+	if commit == nil || commit.Author.Email == "" {
+		return fallback
+	}
+	parts := strings.SplitN(commit.Author.Email, "@", 2)
+	if parts[0] == "" {
+		return fallback
+	}
+	return parts[0]
 }
 
 func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, mergeBranches []string, changeNumber, changeTime int) error {

@@ -75,6 +75,28 @@ func TestP4WriterWritesArchivesAndDuplicateReferences(t *testing.T) {
 	}
 }
 
+func TestP4WriterUsesAuthorEmailAsChangeUser(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := &Commit{
+		ID:     "author-commit",
+		Author: Identity{Email: "sanketa@google.com", When: time.Now()},
+		Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "blob", Content: func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("content")), nil
+		}}},
+	}
+	if err := writer.WriteSource(&commitSliceSource{commits: []*Commit{commit}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "@git-client@ @sanketa@") {
+		t.Fatalf("journal does not contain author user:\n%s", output.String())
+	}
+}
+
 func TestP4WriterBoundedArchiveWorkers(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer
