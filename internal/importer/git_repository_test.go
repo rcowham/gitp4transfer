@@ -130,8 +130,15 @@ func TestGitRepositorySourceInitialSnapshotIsSeparateCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if commit.ID != secondID || strings.TrimSpace(commit.Message) != "second" || len(commit.Files) != 1 {
+	if commit.ID != firstID || strings.TrimSpace(commit.Message) != "first" || len(commit.Files) != 1 {
 		t.Errorf("unexpected commit after snapshot: %+v", commit)
+	}
+	commit, err = source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit.ID != secondID || strings.TrimSpace(commit.Message) != "second" || len(commit.Files) != 1 {
+		t.Errorf("unexpected second commit after snapshot: %+v", commit)
 	}
 }
 

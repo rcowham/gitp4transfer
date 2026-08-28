@@ -121,7 +121,6 @@ func (s *GitRepositorySource) Next() (*Commit, error) {
 			s.snapshotPending = snapshotPending
 			return nil, err
 		}
-		s.index = 1
 		return commit, nil
 	}
 	s.index++
