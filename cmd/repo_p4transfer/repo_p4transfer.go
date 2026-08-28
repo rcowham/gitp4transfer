@@ -134,25 +134,27 @@ func (c CommitsByTime) Swap(i, j int)      { c[i], c[j] = c[j], c[i] }
 
 // RepoP4Transfer orchestrates the entire transfer process
 type RepoP4Transfer struct {
-	logger          *logrus.Logger
-	manifestFile    string
-	configFile      string
-	repoRoot        string
-	exportDir       string
-	batchMapFile    string
-	dummy           bool
-	dryRun          bool
-	nativeGit       bool
-	journalFile     string
-	archiveRoot     string
-	parallelWorkers int
-	firstParent     bool
-	manifest        *RepoManifest
-	cfg             *RepoP4TransferConfig
-	projects        map[string]*ManifestProject // key: project path
-	commits         []*CommitMetadata
-	startDate       time.Time
-	endDate         time.Time
+	logger           *logrus.Logger
+	manifestFile     string
+	configFile       string
+	repoRoot         string
+	exportDir        string
+	batchMapFile     string
+	dummy            bool
+	dryRun           bool
+	nativeGit        bool
+	journalFile      string
+	archiveRoot      string
+	parallelWorkers  int
+	firstParent      bool
+	manifest         *RepoManifest
+	cfg              *RepoP4TransferConfig
+	projects         map[string]*ManifestProject // key: project path
+	commits          []*CommitMetadata
+	startDate        time.Time
+	endDate          time.Time
+	startDateDefault bool
+	endDateDefault   bool
 }
 
 // NewRepoP4Transfer creates a new transfer coordinator
@@ -284,14 +286,24 @@ func (r *RepoP4Transfer) validateGitExportOptions(cfg *RepoP4TransferConfig) err
 // parseDateRange parses the date range from config
 func (r *RepoP4Transfer) parseDateRange() error {
 	var err error
-	r.startDate, err = time.Parse("2006-01-02", r.cfg.DateRange.StartDate)
-	if err != nil {
-		return fmt.Errorf("invalid start_date: %w", err)
+	r.startDateDefault = strings.TrimSpace(r.cfg.DateRange.StartDate) == ""
+	if r.startDateDefault {
+		r.startDate = time.Date(1, time.January, 1, 0, 0, 0, 0, time.UTC)
+	} else {
+		r.startDate, err = time.Parse("2006-01-02", r.cfg.DateRange.StartDate)
+		if err != nil {
+			return fmt.Errorf("invalid start_date: %w", err)
+		}
 	}
 
-	r.endDate, err = time.Parse("2006-01-02", r.cfg.DateRange.EndDate)
-	if err != nil {
-		return fmt.Errorf("invalid end_date: %w", err)
+	r.endDateDefault = strings.TrimSpace(r.cfg.DateRange.EndDate) == ""
+	if r.endDateDefault {
+		r.endDate = time.Date(2100, time.January, 1, 0, 0, 0, 0, time.UTC)
+	} else {
+		r.endDate, err = time.Parse("2006-01-02", r.cfg.DateRange.EndDate)
+		if err != nil {
+			return fmt.Errorf("invalid end_date: %w", err)
+		}
 	}
 
 	// Extend end date to include entire day
@@ -331,6 +343,14 @@ func (r *RepoP4Transfer) BuildTimeline() error {
 	// Sort commits by timestamp
 	r.logger.Debugf("Sorting %d total commits chronologically", len(r.commits))
 	sort.Sort(CommitsByTime(r.commits))
+	if len(r.commits) > 0 {
+		if r.startDateDefault {
+			r.startDate = r.commits[0].Timestamp
+		}
+		if r.endDateDefault {
+			r.endDate = r.commits[len(r.commits)-1].Timestamp.Add(24 * time.Hour)
+		}
+	}
 
 	r.logger.Infof("Found %d commits across all repos in date range", len(r.commits))
 

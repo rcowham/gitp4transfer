@@ -129,6 +129,34 @@ default_branch: "main"`
 	}
 }
 
+func TestBlankDateRangeUsesWideScanBounds(t *testing.T) {
+	transfer := NewRepoP4Transfer("", "", "", "", false, nil)
+	transfer.cfg = &RepoP4TransferConfig{}
+	if err := transfer.parseDateRange(); err != nil {
+		t.Fatalf("parseDateRange() failed: %v", err)
+	}
+	if !transfer.startDateDefault || !transfer.endDateDefault {
+		t.Fatalf("blank dates were not marked as defaults")
+	}
+	if transfer.startDate.Year() != 1 || transfer.endDate.Year() != 2100 {
+		t.Fatalf("wide date bounds = %v to %v", transfer.startDate, transfer.endDate)
+	}
+
+	first := time.Date(2024, time.January, 2, 10, 0, 0, 0, time.UTC)
+	last := time.Date(2024, time.January, 5, 15, 0, 0, 0, time.UTC)
+	transfer.commits = []*CommitMetadata{{Timestamp: last}, {Timestamp: first}}
+	sort.Sort(CommitsByTime(transfer.commits))
+	if transfer.startDateDefault {
+		transfer.startDate = transfer.commits[0].Timestamp
+	}
+	if transfer.endDateDefault {
+		transfer.endDate = transfer.commits[len(transfer.commits)-1].Timestamp.Add(24 * time.Hour)
+	}
+	if !transfer.startDate.Equal(first) || !transfer.endDate.Equal(last.Add(24*time.Hour)) {
+		t.Fatalf("resolved date bounds = %v to %v", transfer.startDate, transfer.endDate)
+	}
+}
+
 func TestBranchPatternMatching(t *testing.T) {
 	testCases := []struct {
 		branch  string
