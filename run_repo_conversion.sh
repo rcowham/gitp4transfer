@@ -28,6 +28,8 @@ Required:
 Options:
   -p <P4Root>         Resulting P4ROOT; defaults to a temporary directory
   -j <workers>        Bounded native archive worker count; defaults to 1
+    -progress-commits <n>
+                                            Log native import progress every n commits; defaults to 100
   -dummy               Write placeholder blob data; does not read Git blob contents
   -first-parent        Follow only first-parent history when planning commits
   -unicode             Convert the restored server to Unicode mode
@@ -53,6 +55,7 @@ ConfigFile=""
 RepoRoot=""
 P4Root=""
 ParallelWorkers=1
+ProgressCommits=100
 Debug=0
 Dummy=0
 FirstParent=0
@@ -68,6 +71,7 @@ while [[ $# -gt 0 ]]; do
         -repo-root) RepoRoot=${2:-}; shift 2 ;;
         -p) P4Root=${2:-}; shift 2 ;;
         -j) ParallelWorkers=${2:-}; shift 2 ;;
+        -progress-commits) ProgressCommits=${2:-}; shift 2 ;;
         -d) Debug=1; shift ;;
         -dummy) Dummy=1; shift ;;
         -first-parent) FirstParent=1; shift ;;
@@ -85,6 +89,7 @@ done
 [[ -f "$ConfigFile" ]] || bail "Config file does not exist: $ConfigFile"
 [[ -d "$RepoRoot" ]] || bail "Repo root does not exist: $RepoRoot"
 [[ "$ParallelWorkers" =~ ^[1-9][0-9]*$ ]] || bail "-j must be a positive integer"
+[[ "$ProgressCommits" =~ ^[0-9]+$ ]] || bail "-progress-commits must be a non-negative integer"
 [[ $CaseInsensitive -eq 0 || $CaseSensitive -eq 0 ]] || bail "Specify only one of -insensitive or -sensitive"
 
 RepoP4TransferBin=${REPO_P4TRANSFER_BIN:-repo_p4transfer}
@@ -113,6 +118,7 @@ NativeArgs=(
     --archive-root "$P4Root"
     --journal "$P4Root/jnl.0"
     --parallel-workers "$ParallelWorkers"
+    --progress-commits "$ProgressCommits"
 )
 [[ $Debug -ne 0 ]] && NativeArgs+=(--log-level debug)
 [[ $Dummy -ne 0 ]] && NativeArgs+=(--dummy)

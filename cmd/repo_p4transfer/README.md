@@ -34,8 +34,11 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 - `--journal`: Perforce journal path for `--native-git` (default: `jnl.0`)
 - `--archive-root`: Perforce archive root for `--native-git`
 - `--parallel-workers`: Bounded archive worker count for `--native-git` (default: 1)
+- `--progress-commits`: Log native import progress every N processed commits (default: 100; 0 disables periodic progress)
 - `--first-parent`: Follow only the first parent commit when scanning git history
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
+
+Native imports also log progress at every batch boundary. Progress messages include completed work, throughput, elapsed time, and an ETA calculated from the observed processing rate.
 
 ## Debug Mode
 

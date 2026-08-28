@@ -53,6 +53,8 @@ var (
 			String()
 	parallelWorkers = app.Flag("parallel-workers", "Archive worker count for --native-git imports").
 			Default("1").Int()
+	progressCommits = app.Flag("progress-commits", "Log native import progress every N commits (0 disables periodic progress)").
+			Default("100").Int()
 	firstParent = app.Flag("first-parent", "Follow only the first parent commit when scanning git history").
 			Bool()
 	logLevel = app.Flag("log-level", "Log level").
@@ -146,6 +148,7 @@ type RepoP4Transfer struct {
 	journalFile      string
 	archiveRoot      string
 	parallelWorkers  int
+	progressCommits  int
 	firstParent      bool
 	manifest         *RepoManifest
 	cfg              *RepoP4TransferConfig
@@ -705,6 +708,17 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	}
 	defer writer.Close()
 
+	progressTotal := len(r.commits)
+	progressRepos := make(map[string]bool)
+	for _, batch := range batches {
+		if !progressRepos[batch.RepoPath] {
+			progressRepos[batch.RepoPath] = true
+			progressTotal++ // Each repository contributes one starting snapshot.
+		}
+	}
+	progressDone := 0
+	progressStart := time.Now()
+	lastProgress := 0
 	snapshotsCreated := make(map[string]bool)
 	for index, batch := range batches {
 		project, ok := r.projects[batch.RepoPath]
@@ -723,6 +737,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			firstCommit := batch.Commits[0]
 			r.logger.Debugf("Creating starting snapshot for %s at Git commit %s (%s)", project.Path, firstCommit.Hash, firstCommit.Timestamp.Format(time.RFC3339))
 		}
+		r.logger.Infof("Starting batch %d/%d for %s (%d %s)", index+1, len(batches), project.Path, len(batch.Commits), commitLabel(len(batch.Commits)))
 		source := importer.NewGitRepositorySourceWithOptions(filepath.Join(r.repoRoot, batch.RepoPath), commitIDs, importer.GitRepositorySourceOptions{
 			PathPrefix:      project.Path,
 			CommitRefs:      commitRefs,
@@ -745,21 +760,58 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 				_ = source.Close()
 				return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
 			}
+			progressDone++
 			if strings.HasPrefix(commit.ID, "snapshot:") {
 				r.logger.Debugf("Starting snapshot written as changelist %d for %s: %d files", writer.ChangeCount(), project.Path, len(commit.Files))
 			}
 			r.logger.Debugf("Native commit %s -> changelist %d: %s (%d file changes)", commit.ID, writer.ChangeCount(), strings.TrimSpace(commit.Message), len(commit.Files))
+			if r.progressCommits > 0 && progressDone%r.progressCommits == 0 {
+				r.logNativeProgress(progressDone, progressTotal, progressStart)
+				lastProgress = progressDone
+			}
 		}
 		if err := source.Close(); err != nil {
 			return fmt.Errorf("close source for batch %d: %w", index+1, err)
 		}
 		r.logger.Infof("[%d/%d] Imported native Git batch for %s", index+1, len(batches), batch.RepoPath)
+		if progressDone != lastProgress {
+			r.logNativeProgress(progressDone, progressTotal, progressStart)
+			lastProgress = progressDone
+		}
 	}
 	if err := writer.Close(); err != nil {
 		return err
 	}
 	r.logger.Infof("Native Git import journal written to: %s", r.journalFile)
 	return nil
+}
+
+func (r *RepoP4Transfer) logNativeProgress(completed, total int, started time.Time) {
+	if completed == 0 {
+		return
+	}
+	elapsed := time.Since(started)
+	rate := float64(completed) / elapsed.Seconds()
+	remaining := time.Duration(0)
+	if rate > 0 && total > completed {
+		remaining = time.Duration(float64(total-completed)/rate) * time.Second
+	}
+	r.logger.Infof("Native import progress: %d/%d commits (%.2f commits/s, elapsed %s, ETA %s)",
+		completed, total, rate, formatDuration(elapsed), formatDuration(remaining))
+}
+
+func formatDuration(duration time.Duration) string {
+	if duration <= 0 {
+		return "00:00:00"
+	}
+	return duration.Round(time.Second).String()
+}
+
+func commitLabel(count int) string {
+	if count == 1 {
+		return "commit"
+	}
+	return "commits"
 }
 
 // batchMapForBatches builds the import mapping using the names assigned to export files.
@@ -1087,6 +1139,7 @@ func main() {
 	transfer.journalFile = *journalFile
 	transfer.archiveRoot = *archiveRoot
 	transfer.parallelWorkers = *parallelWorkers
+	transfer.progressCommits = *progressCommits
 	transfer.firstParent = *firstParent
 
 	// Initialize from config and manifest
