@@ -278,7 +278,16 @@ func (w *P4Writer) writeCopyOrRename(change FileChange, branch, parentBranch str
 		return fmt.Errorf("missing source path")
 	}
 	if destinationExists {
-		return fmt.Errorf("destination path already exists")
+		if change.Content == nil || change.ObjectID == "" {
+			return fmt.Errorf("destination path already exists")
+		}
+		return w.writeChange(FileChange{
+			Action:   FileModify,
+			Path:     change.Path,
+			Mode:     change.Mode,
+			ObjectID: change.ObjectID,
+			Content:  change.Content,
+		}, branch, parentBranch, mergeBranches, changeNumber, changeTime)
 	}
 	sourceDepotFile := w.depotPath(branch, change.SourcePath)
 	source, sourceExists := w.fileRevisions[sourceDepotFile]

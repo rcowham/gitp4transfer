@@ -221,6 +221,26 @@ func TestP4WriterCopyFallsBackToBlobWhenSourceIsNotImported(t *testing.T) {
 	}
 }
 
+func TestP4WriterCopyUpdatesExistingDestination(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("replacement")), nil }
+	commits := []*Commit{
+		{ID: "existing", Author: Identity{When: time.Now()}, Files: []FileChange{{Action: FileModify, Path: "copy.txt", ObjectID: "old", Content: content}}},
+		{ID: "copy", Author: Identity{When: time.Now()}, Files: []FileChange{{Action: FileCopy, SourcePath: "omitted/source.txt", Path: "copy.txt", ObjectID: "new", Content: content}}},
+	}
+	if err := writer.WriteSource(&commitSliceSource{commits: commits}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(output.String(), "@db.rev@ @//import/copy.txt@") != 2 {
+		t.Fatalf("expected add and edit for existing destination:\n%s", output.String())
+	}
+}
+
 func TestP4WriterIgnoresDeleteBeforeImportRange(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer
