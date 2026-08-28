@@ -698,6 +698,10 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		}
 		initialSnapshot := !snapshotsCreated[batch.RepoPath]
 		snapshotsCreated[batch.RepoPath] = true
+		if initialSnapshot {
+			firstCommit := batch.Commits[0]
+			r.logger.Debugf("Creating starting snapshot for %s at Git commit %s (%s)", project.Path, firstCommit.Hash, firstCommit.Timestamp.Format(time.RFC3339))
+		}
 		source := importer.NewGitRepositorySourceWithOptions(filepath.Join(r.repoRoot, batch.RepoPath), commitIDs, importer.GitRepositorySourceOptions{
 			PathPrefix:      project.Path,
 			CommitRefs:      commitRefs,
@@ -719,6 +723,9 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			if err := writer.WriteCommit(commit); err != nil {
 				_ = source.Close()
 				return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
+			}
+			if strings.HasPrefix(commit.ID, "snapshot:") {
+				r.logger.Debugf("Starting snapshot written as changelist %d for %s: %d files", writer.ChangeCount(), project.Path, len(commit.Files))
 			}
 			r.logger.Debugf("Native commit %s -> changelist %d: %s (%d file changes)", commit.ID, writer.ChangeCount(), strings.TrimSpace(commit.Message), len(commit.Files))
 		}
