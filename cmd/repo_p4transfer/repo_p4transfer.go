@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -1056,6 +1057,7 @@ func main() {
 		os.Exit(1)
 	}
 	logger.SetLevel(level)
+	logger.Infof("Starting repo_p4transfer: %s (Go %s, %s/%s)", version.Print("repo_p4transfer"), runtime.Version(), runtime.GOOS, runtime.GOARCH)
 
 	// Create transfer coordinator
 	transfer := NewRepoP4Transfer(*manifestFile, *configFile, *repoRoot, *exportDir, *dummy, logger)
