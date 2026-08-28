@@ -172,3 +172,33 @@ func TestP4WriterCopyAndRename(t *testing.T) {
 		t.Errorf("Copy unexpectedly created an archive: %v", err)
 	}
 }
+
+func TestP4WriterBranchPath(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{
+		ImportDepot: "import",
+		ArchiveRoot: archiveRoot,
+		Journal:     &output,
+		BranchPath: func(ref string) string {
+			return strings.TrimPrefix(ref, "refs/heads/")
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("content")), nil }
+	commit := &Commit{ID: "commit-id", Ref: "refs/heads/android17-release", Author: Identity{When: time.Now()}, Files: []FileChange{{Action: FileModify, Path: "packages/services/Car/file.txt", ObjectID: "blob", Content: content}}}
+	if err := writer.WriteCommit(commit); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "@//import/android17-release/packages/services/Car/file.txt@") {
+		t.Errorf("Journal missing branch-prefixed depot path:\n%s", output.String())
+	}
+	if writer.commitBranches["commit-id"] != "android17-release" {
+		t.Errorf("Commit branch = %q", writer.commitBranches["commit-id"])
+	}
+}

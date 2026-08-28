@@ -28,6 +28,7 @@ type P4WriterOptions struct {
 	TypeMaps        []TypeMap
 	ConvertCRLF     bool
 	ParallelWorkers int
+	BranchPath      func(ref string) string
 }
 
 // TypeMap selects a Perforce file type for paths matching Pattern.
@@ -57,21 +58,23 @@ type archiveJob struct {
 // It handles linear add, edit, and delete history plus duplicate blob librarian
 // references. Branch and merge integration records remain a later migration step.
 type P4Writer struct {
-	journal       journal.Journal
-	importDepot   string
-	archiveRoot   string
-	user          string
-	typeMaps      []TypeMap
-	convertCRLF   bool
-	stagingDir    string
-	changeNumber  int
-	fileRevisions map[string]fileRevision
-	blobArchives  map[string]blobArchive
-	archiveJobs   chan archiveJob
-	archiveWG     sync.WaitGroup
-	archiveMu     sync.Mutex
-	archiveErr    error
-	closed        bool
+	journal        journal.Journal
+	importDepot    string
+	archiveRoot    string
+	user           string
+	typeMaps       []TypeMap
+	convertCRLF    bool
+	branchPath     func(ref string) string
+	stagingDir     string
+	changeNumber   int
+	fileRevisions  map[string]fileRevision
+	commitBranches map[string]string
+	blobArchives   map[string]blobArchive
+	archiveJobs    chan archiveJob
+	archiveWG      sync.WaitGroup
+	archiveMu      sync.Mutex
+	archiveErr     error
+	closed         bool
 }
 
 // NewP4Writer creates a source-neutral Perforce writer.
@@ -92,15 +95,17 @@ func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 		options.ParallelWorkers = 1
 	}
 	writer := &P4Writer{
-		importDepot:   strings.Trim(options.ImportDepot, "/"),
-		archiveRoot:   options.ArchiveRoot,
-		user:          options.User,
-		typeMaps:      options.TypeMaps,
-		convertCRLF:   options.ConvertCRLF,
-		stagingDir:    path.Join(options.ArchiveRoot, ".gitp4transfer-staging"),
-		fileRevisions: make(map[string]fileRevision),
-		blobArchives:  make(map[string]blobArchive),
-		archiveJobs:   make(chan archiveJob, options.ParallelWorkers),
+		importDepot:    strings.Trim(options.ImportDepot, "/"),
+		archiveRoot:    options.ArchiveRoot,
+		user:           options.User,
+		typeMaps:       options.TypeMaps,
+		convertCRLF:    options.ConvertCRLF,
+		branchPath:     options.BranchPath,
+		stagingDir:     path.Join(options.ArchiveRoot, ".gitp4transfer-staging"),
+		fileRevisions:  make(map[string]fileRevision),
+		commitBranches: make(map[string]string),
+		blobArchives:   make(map[string]blobArchive),
+		archiveJobs:    make(chan archiveJob, options.ParallelWorkers),
 	}
 	writer.journal.SetWriter(options.Journal)
 	writer.journal.WriteHeader(strings.TrimPrefix(options.ImportDepot, "//"), false)
@@ -143,18 +148,23 @@ func (w *P4Writer) WriteCommit(commit *Commit) error {
 	w.changeNumber++
 	changeNumber := w.changeNumber
 	changeTime := int(commit.Author.When.Unix())
+	branch := ""
+	if w.branchPath != nil {
+		branch = strings.Trim(w.branchPath(commit.Ref), "/")
+	}
+	w.commitBranches[commit.ID] = branch
 	w.journal.WriteChange(changeNumber, w.user, commit.Message, changeTime)
 
 	for _, change := range commit.Files {
-		if err := w.writeChange(change, changeNumber, changeTime); err != nil {
+		if err := w.writeChange(change, branch, changeNumber, changeTime); err != nil {
 			return fmt.Errorf("commit %s, path %s: %w", commit.ID, change.Path, err)
 		}
 	}
 	return nil
 }
 
-func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) error {
-	depotFile := "//" + path.Join(w.importDepot, strings.TrimPrefix(change.Path, "/"))
+func (w *P4Writer) writeChange(change FileChange, branch string, changeNumber, changeTime int) error {
+	depotFile := w.depotPath(branch, change.Path)
 	if !strings.HasPrefix(depotFile, "//") {
 		return fmt.Errorf("invalid depot path %q", change.Path)
 	}
@@ -170,7 +180,7 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 		return nil
 	}
 	if change.Action == FileCopy || change.Action == FileRename {
-		return w.writeCopyOrRename(change, depotFile, exists, revision, changeNumber, changeTime)
+		return w.writeCopyOrRename(change, branch, depotFile, exists, revision, changeNumber, changeTime)
 	}
 	if change.Action != FileModify {
 		return fmt.Errorf("unsupported source action %s", change.Action)
@@ -213,14 +223,14 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 	return nil
 }
 
-func (w *P4Writer) writeCopyOrRename(change FileChange, depotFile string, destinationExists bool, destinationRev, changeNumber, changeTime int) error {
+func (w *P4Writer) writeCopyOrRename(change FileChange, branch, depotFile string, destinationExists bool, destinationRev, changeNumber, changeTime int) error {
 	if change.SourcePath == "" {
 		return fmt.Errorf("missing source path")
 	}
 	if destinationExists {
 		return fmt.Errorf("destination path already exists")
 	}
-	sourceDepotFile := "//" + path.Join(w.importDepot, strings.TrimPrefix(change.SourcePath, "/"))
+	sourceDepotFile := w.depotPath(branch, change.SourcePath)
 	source, sourceExists := w.fileRevisions[sourceDepotFile]
 	if !sourceExists {
 		return fmt.Errorf("source path has no previous revision")
@@ -237,6 +247,13 @@ func (w *P4Writer) writeCopyOrRename(change FileChange, depotFile string, destin
 	w.journal.WriteInteg(depotFile, sourceDepotFile, 0, source.revision, 0, destinationRev, journal.BranchFrom, journal.BranchInto, changeNumber)
 	w.fileRevisions[depotFile] = fileRevision{revision: destinationRev, lbrFile: source.lbrFile, lbrRev: source.lbrRev}
 	return nil
+}
+
+func (w *P4Writer) depotPath(branch, sourcePath string) string {
+	if branch == "" {
+		return "//" + path.Join(w.importDepot, strings.TrimPrefix(sourcePath, "/"))
+	}
+	return "//" + path.Join(w.importDepot, branch, strings.TrimPrefix(sourcePath, "/"))
 }
 
 func (w *P4Writer) fileTypeFor(depotFile string) journal.FileType {
