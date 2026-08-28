@@ -33,12 +33,13 @@ type BlobContent func() (io.ReadCloser, error)
 
 // FileChange is one file-level change in a commit.
 type FileChange struct {
-	Action     FileAction
-	Path       string
-	SourcePath string
-	Mode       string
-	ObjectID   string
-	Content    BlobContent
+	Action      FileAction
+	Path        string
+	SourcePath  string
+	Mode        string
+	ObjectID    string
+	DuplicateOf string
+	Content     BlobContent
 }
 
 // Commit is the source-neutral representation consumed by the import writer.

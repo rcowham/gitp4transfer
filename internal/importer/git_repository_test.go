@@ -130,3 +130,47 @@ func TestGitRepositorySourcePathPrefix(t *testing.T) {
 		t.Errorf("Settings path = %q", got)
 	}
 }
+
+func TestGitRepositorySourceDuplicateBlob(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	for _, name := range []string{"first.txt", "second.txt"} {
+		if err := os.WriteFile(filepath.Join(repoDir, name), []byte("same content"), 0644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runGit("add", "first.txt", "second.txt")
+	runGit("commit", "-m", "add duplicate content")
+	output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	source := NewGitRepositorySource(repoDir, []string{string(output[:len(output)-1])})
+	defer source.Close()
+	commit, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(commit.Files) != 2 {
+		t.Fatalf("Expected 2 changes, got %d", len(commit.Files))
+	}
+	if commit.Files[0].ObjectID != commit.Files[1].ObjectID {
+		t.Fatalf("Expected matching blob IDs, got %q and %q", commit.Files[0].ObjectID, commit.Files[1].ObjectID)
+	}
+	if commit.Files[0].DuplicateOf != "" {
+		t.Errorf("First use unexpectedly marked duplicate: %q", commit.Files[0].DuplicateOf)
+	}
+	if commit.Files[1].DuplicateOf != commit.Files[0].ObjectID {
+		t.Errorf("DuplicateOf = %q, want %q", commit.Files[1].DuplicateOf, commit.Files[0].ObjectID)
+	}
+}

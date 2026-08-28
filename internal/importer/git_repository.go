@@ -20,6 +20,7 @@ type GitRepositorySource struct {
 	pathPrefix string
 	commitIDs  []string
 	index      int
+	seenBlobs  map[string]struct{}
 	catFile    *exec.Cmd
 	catInput   io.WriteCloser
 	catWriter  *bufio.Writer
@@ -40,6 +41,7 @@ func NewGitRepositorySourceWithPrefix(repository string, commitIDs []string, pat
 		repository: repository,
 		pathPrefix: strings.Trim(pathPrefix, "/"),
 		commitIDs:  commitIDs,
+		seenBlobs:  make(map[string]struct{}),
 	}
 }
 
@@ -115,6 +117,11 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 		case 'A', 'M', 'T':
 			change.Action = FileModify
 			change.ObjectID = metadata[3]
+			if _, seen := s.seenBlobs[change.ObjectID]; seen {
+				change.DuplicateOf = change.ObjectID
+			} else {
+				s.seenBlobs[change.ObjectID] = struct{}{}
+			}
 			objectID := change.ObjectID
 			change.Content = func() (io.ReadCloser, error) { return s.OpenBlob(objectID) }
 		case 'D':
