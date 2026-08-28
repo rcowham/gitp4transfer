@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path"
 	"strconv"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 // is intentionally deferred to a later migration step.
 type GitRepositorySource struct {
 	repository string
+	pathPrefix string
 	commitIDs  []string
 	index      int
 	catFile    *exec.Cmd
@@ -28,7 +30,17 @@ type GitRepositorySource struct {
 
 // NewGitRepositorySource creates a source for commits in the caller-provided order.
 func NewGitRepositorySource(repository string, commitIDs []string) *GitRepositorySource {
-	return &GitRepositorySource{repository: repository, commitIDs: commitIDs}
+	return NewGitRepositorySourceWithPrefix(repository, commitIDs, "")
+}
+
+// NewGitRepositorySourceWithPrefix creates a source that prefixes every
+// emitted file path with a manifest project path.
+func NewGitRepositorySourceWithPrefix(repository string, commitIDs []string, pathPrefix string) *GitRepositorySource {
+	return &GitRepositorySource{
+		repository: repository,
+		pathPrefix: strings.Trim(pathPrefix, "/"),
+		commitIDs:  commitIDs,
+	}
 }
 
 // Next returns the next planned commit, or io.EOF after the final commit.
@@ -98,7 +110,7 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 		if len(status) == 0 {
 			return nil, fmt.Errorf("missing diff-tree status for commit %s", commitID)
 		}
-		change := FileChange{Path: parts[index+1], Mode: metadata[1]}
+		change := FileChange{Path: s.prefixedPath(parts[index+1]), Mode: metadata[1]}
 		switch status[0] {
 		case 'A', 'M', 'T':
 			change.Action = FileModify
@@ -113,6 +125,13 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 		changes = append(changes, change)
 	}
 	return changes, nil
+}
+
+func (s *GitRepositorySource) prefixedPath(filePath string) string {
+	if s.pathPrefix == "" {
+		return filePath
+	}
+	return path.Join(s.pathPrefix, filePath)
 }
 
 // OpenBlob opens a blob through one persistent git cat-file process. The reader

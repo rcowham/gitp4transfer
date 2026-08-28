@@ -83,3 +83,50 @@ func TestGitRepositorySource(t *testing.T) {
 		t.Errorf("Next() error = %v, want io.EOF", err)
 	}
 }
+
+func TestGitRepositorySourcePathPrefix(t *testing.T) {
+	createRepository := func(contents string) (string, string) {
+		repoDir := t.TempDir()
+		runGit := func(args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = repoDir
+			if output, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, output)
+			}
+		}
+		runGit("init", "-b", "main")
+		runGit("config", "user.name", "Test User")
+		runGit("config", "user.email", "test@example.com")
+		if err := os.WriteFile(filepath.Join(repoDir, "Android.bp"), []byte(contents), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "Android.bp")
+		runGit("commit", "-m", "add Android.bp")
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return repoDir, string(output[:len(output)-1])
+	}
+
+	carRepo, carCommit := createRepository("car")
+	settingsRepo, settingsCommit := createRepository("settings")
+	carSource := NewGitRepositorySourceWithPrefix(carRepo, []string{carCommit}, "packages/services/Car")
+	settingsSource := NewGitRepositorySourceWithPrefix(settingsRepo, []string{settingsCommit}, "packages/apps/Car/Settings")
+
+	car, err := carSource.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings, err := settingsSource.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := car.Files[0].Path; got != "packages/services/Car/Android.bp" {
+		t.Errorf("Car path = %q", got)
+	}
+	if got := settings.Files[0].Path; got != "packages/apps/Car/Settings/Android.bp" {
+		t.Errorf("Settings path = %q", got)
+	}
+}
