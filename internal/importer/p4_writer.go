@@ -1,10 +1,13 @@
 package importer
 
 import (
+	"bufio"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"os"
 	"path"
+	"regexp"
 	"strings"
 
 	"github.com/rcowham/gitp4transfer/journal"
@@ -21,6 +24,14 @@ type P4WriterOptions struct {
 	ArchiveRoot string
 	Journal     io.Writer
 	User        string
+	TypeMaps    []TypeMap
+	ConvertCRLF bool
+}
+
+// TypeMap selects a Perforce file type for paths matching Pattern.
+type TypeMap struct {
+	Pattern  *regexp.Regexp
+	FileType journal.FileType
 }
 
 type fileRevision struct {
@@ -42,6 +53,8 @@ type P4Writer struct {
 	importDepot   string
 	archiveRoot   string
 	user          string
+	typeMaps      []TypeMap
+	convertCRLF   bool
 	changeNumber  int
 	fileRevisions map[string]fileRevision
 	blobArchives  map[string]blobArchive
@@ -65,6 +78,8 @@ func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 		importDepot:   strings.Trim(options.ImportDepot, "/"),
 		archiveRoot:   options.ArchiveRoot,
 		user:          options.User,
+		typeMaps:      options.TypeMaps,
+		convertCRLF:   options.ConvertCRLF,
 		fileRevisions: make(map[string]fileRevision),
 		blobArchives:  make(map[string]blobArchive),
 	}
@@ -119,7 +134,7 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 		if !exists {
 			return fmt.Errorf("cannot delete path with no previous revision")
 		}
-		w.journal.WriteRev(depotFile, revision, journal.Delete, journal.UBinary, changeNumber, previous.lbrFile, previous.lbrRev, changeTime)
+		w.journal.WriteRev(depotFile, revision, journal.Delete, w.fileTypeFor(depotFile), changeNumber, previous.lbrFile, previous.lbrRev, changeTime)
 		w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: previous.lbrFile, lbrRev: previous.lbrRev}
 		return nil
 	}
@@ -143,23 +158,13 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 			content.Close()
 			return err
 		}
+		fileType := w.fileTypeFor(depotFile)
 		archiveFile := path.Join(depotRoot, fmt.Sprintf("1.%d", changeNumber))
-		archive, err := os.Create(archiveFile)
-		if err != nil {
-			content.Close()
+		if fileType == journal.CText || fileType == journal.Binary {
+			archiveFile += ".gz"
+		}
+		if err := w.writeArchive(archiveFile, content, fileType); err != nil {
 			return err
-		}
-		_, copyErr := io.Copy(archive, content)
-		closeErr := content.Close()
-		archiveErr := archive.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if archiveErr != nil {
-			return archiveErr
 		}
 		lbr = blobArchive{lbrFile: depotFile, lbrRev: changeNumber}
 		w.blobArchives[change.ObjectID] = lbr
@@ -169,7 +174,74 @@ func (w *P4Writer) writeChange(change FileChange, changeNumber, changeTime int) 
 	if exists {
 		action = journal.Edit
 	}
-	w.journal.WriteRev(depotFile, revision, action, journal.UBinary, changeNumber, lbr.lbrFile, lbr.lbrRev, changeTime)
+	w.journal.WriteRev(depotFile, revision, action, w.fileTypeFor(depotFile), changeNumber, lbr.lbrFile, lbr.lbrRev, changeTime)
 	w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: lbr.lbrFile, lbrRev: lbr.lbrRev}
 	return nil
+}
+
+func (w *P4Writer) fileTypeFor(depotFile string) journal.FileType {
+	fileType := journal.CText
+	for _, typeMap := range w.typeMaps {
+		if typeMap.Pattern != nil && typeMap.Pattern.MatchString(depotFile) {
+			fileType = typeMap.FileType
+		}
+	}
+	return fileType
+}
+
+func (w *P4Writer) writeArchive(filename string, content io.ReadCloser, fileType journal.FileType) error {
+	defer content.Close()
+	archive, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer archive.Close()
+
+	var destination io.Writer = archive
+	var compressor *gzip.Writer
+	if fileType == journal.CText || fileType == journal.Binary {
+		compressor = gzip.NewWriter(archive)
+		destination = compressor
+	}
+	if w.convertCRLF && (fileType == journal.CText || fileType == journal.UText) {
+		err = copyNormalizingCRLF(destination, content)
+	} else {
+		_, err = io.Copy(destination, content)
+	}
+	if closeErr := closeGzip(compressor); err == nil {
+		err = closeErr
+	}
+	return err
+}
+
+func closeGzip(writer *gzip.Writer) error {
+	if writer == nil {
+		return nil
+	}
+	return writer.Close()
+}
+
+func copyNormalizingCRLF(destination io.Writer, source io.Reader) error {
+	reader := bufio.NewReader(source)
+	for {
+		value, err := reader.ReadByte()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if value == '\r' {
+			next, err := reader.Peek(1)
+			if err == nil && next[0] == '\n' {
+				if _, err := reader.ReadByte(); err != nil {
+					return err
+				}
+				value = '\n'
+			}
+		}
+		if _, err := destination.Write([]byte{value}); err != nil {
+			return err
+		}
+	}
 }
