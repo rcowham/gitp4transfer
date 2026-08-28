@@ -161,6 +161,53 @@ func TestGitRepositorySourceRef(t *testing.T) {
 	}
 }
 
+func TestGitRepositorySourceCommitRefs(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	commitID := func() string {
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(output[:len(output)-1])
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	os.WriteFile(filepath.Join(repoDir, "one.txt"), []byte("one"), 0644)
+	runGit("add", "one.txt")
+	runGit("commit", "-m", "one")
+	firstID := commitID()
+	os.WriteFile(filepath.Join(repoDir, "two.txt"), []byte("two"), 0644)
+	runGit("add", "two.txt")
+	runGit("commit", "-m", "two")
+	secondID := commitID()
+
+	source := NewGitRepositorySourceWithOptions(repoDir, []string{firstID, secondID}, GitRepositorySourceOptions{
+		Ref: "refs/heads/main",
+		CommitRefs: map[string]string{
+			secondID: "refs/heads/release",
+		},
+	})
+	first, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Ref != "refs/heads/main" || second.Ref != "refs/heads/release" {
+		t.Errorf("Unexpected refs: %q, %q", first.Ref, second.Ref)
+	}
+}
+
 func TestGitRepositorySourceDuplicateBlob(t *testing.T) {
 	repoDir := t.TempDir()
 	runGit := func(args ...string) {

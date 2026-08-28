@@ -19,6 +19,7 @@ import (
 type GitRepositorySourceOptions struct {
 	PathPrefix     string
 	Ref            string
+	CommitRefs     map[string]string
 	Context        context.Context
 	CheckpointFile string
 	Dummy          bool
@@ -35,6 +36,7 @@ type GitRepositorySource struct {
 	repository string
 	pathPrefix string
 	ref        string
+	commitRefs map[string]string
 	commitIDs  []string
 	index      int
 	context    context.Context
@@ -72,6 +74,7 @@ func NewGitRepositorySourceWithOptions(repository string, commitIDs []string, op
 		repository: repository,
 		pathPrefix: strings.Trim(options.PathPrefix, "/"),
 		ref:        options.Ref,
+		commitRefs: options.CommitRefs,
 		commitIDs:  commitIDs,
 		context:    ctx,
 		checkpoint: options.CheckpointFile,
@@ -94,7 +97,11 @@ func (s *GitRepositorySource) Next() (*Commit, error) {
 
 	commitID := s.commitIDs[s.index]
 	s.index++
-	commit, err := s.readCommit(commitID)
+	ref := s.ref
+	if commitRef, ok := s.commitRefs[commitID]; ok {
+		ref = commitRef
+	}
+	commit, err := s.readCommit(commitID, ref)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +199,7 @@ func (s *GitRepositorySource) Resume() error {
 	return fmt.Errorf("checkpoint commit %s is not in source plan", checkpoint.CommitID)
 }
 
-func (s *GitRepositorySource) readCommit(commitID string) (*Commit, error) {
+func (s *GitRepositorySource) readCommit(commitID, ref string) (*Commit, error) {
 	output, err := s.gitOutput("show", "-s", "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", commitID)
 	if err != nil {
 		return nil, fmt.Errorf("read commit %s: %w", commitID, err)
@@ -213,7 +220,7 @@ func (s *GitRepositorySource) readCommit(commitID string) (*Commit, error) {
 	commit := &Commit{
 		ID:        fields[0],
 		Parents:   strings.Fields(fields[1]),
-		Ref:       s.ref,
+		Ref:       ref,
 		Author:    Identity{Name: fields[2], Email: fields[3], When: authorTime},
 		Committer: Identity{Name: fields[5], Email: fields[6], When: committerTime},
 		Message:   fields[8],
