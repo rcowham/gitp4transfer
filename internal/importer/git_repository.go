@@ -3,14 +3,28 @@ package importer
 import (
 	"bufio"
 	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path"
 	"strconv"
 	"strings"
 	"time"
 )
+
+// GitRepositorySourceOptions configures native Git source lifecycle behavior.
+type GitRepositorySourceOptions struct {
+	PathPrefix     string
+	Context        context.Context
+	CheckpointFile string
+}
+
+type gitRepositoryCheckpoint struct {
+	CommitID string `json:"commit_id"`
+}
 
 // GitRepositorySource reads planned commits directly from a Git repository.
 // It currently reports add, modify, and delete actions; rename/copy inference
@@ -20,6 +34,9 @@ type GitRepositorySource struct {
 	pathPrefix string
 	commitIDs  []string
 	index      int
+	context    context.Context
+	checkpoint string
+	lastCommit string
 	seenBlobs  map[string]struct{}
 	catFile    *exec.Cmd
 	catInput   io.WriteCloser
@@ -31,22 +48,37 @@ type GitRepositorySource struct {
 
 // NewGitRepositorySource creates a source for commits in the caller-provided order.
 func NewGitRepositorySource(repository string, commitIDs []string) *GitRepositorySource {
-	return NewGitRepositorySourceWithPrefix(repository, commitIDs, "")
+	return NewGitRepositorySourceWithOptions(repository, commitIDs, GitRepositorySourceOptions{})
 }
 
 // NewGitRepositorySourceWithPrefix creates a source that prefixes every
 // emitted file path with a manifest project path.
 func NewGitRepositorySourceWithPrefix(repository string, commitIDs []string, pathPrefix string) *GitRepositorySource {
+	return NewGitRepositorySourceWithOptions(repository, commitIDs, GitRepositorySourceOptions{PathPrefix: pathPrefix})
+}
+
+// NewGitRepositorySourceWithOptions creates a source with optional cancellation
+// and checkpoint support.
+func NewGitRepositorySourceWithOptions(repository string, commitIDs []string, options GitRepositorySourceOptions) *GitRepositorySource {
+	ctx := options.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return &GitRepositorySource{
 		repository: repository,
-		pathPrefix: strings.Trim(pathPrefix, "/"),
+		pathPrefix: strings.Trim(options.PathPrefix, "/"),
 		commitIDs:  commitIDs,
+		context:    ctx,
+		checkpoint: options.CheckpointFile,
 		seenBlobs:  make(map[string]struct{}),
 	}
 }
 
 // Next returns the next planned commit, or io.EOF after the final commit.
 func (s *GitRepositorySource) Next() (*Commit, error) {
+	if err := s.context.Err(); err != nil {
+		return nil, err
+	}
 	if s.activeBlob {
 		return nil, fmt.Errorf("blob content must be closed before reading the next commit")
 	}
@@ -60,7 +92,93 @@ func (s *GitRepositorySource) Next() (*Commit, error) {
 	if err != nil {
 		return nil, err
 	}
+	s.lastCommit = commit.ID
 	return commit, nil
+}
+
+// Validate checks that all objects reachable from planned commits are local.
+// It prevents promisor lazy fetches so an import cannot begin with missing data.
+func (s *GitRepositorySource) Validate() error {
+	if err := s.context.Err(); err != nil {
+		return err
+	}
+	if len(s.commitIDs) == 0 {
+		return nil
+	}
+	args := append([]string{"rev-list", "--objects", "--no-object-names"}, s.commitIDs...)
+	objectOutput, err := s.gitOutput(args...)
+	if err != nil {
+		return fmt.Errorf("enumerate repository objects: %w", err)
+	}
+	cmd := exec.CommandContext(s.context, "git", "cat-file", "--batch-check")
+	cmd.Dir = s.repository
+	cmd.Env = append(os.Environ(), "GIT_NO_LAZY_FETCH=1")
+	cmd.Stdin = bytes.NewReader(objectOutput)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("validate repository objects: %w: %s", err, output)
+	}
+	var missing []string
+	for _, line := range strings.Split(string(output), "\n") {
+		if strings.HasSuffix(line, " missing") {
+			missing = append(missing, strings.TrimSuffix(line, " missing"))
+			if len(missing) == 10 {
+				break
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("repository has missing objects (first %d): %s", len(missing), strings.Join(missing, ", "))
+	}
+	return nil
+}
+
+// Checkpoint records the last successfully imported source commit. Call this
+// only after its journal and archive work has completed.
+func (s *GitRepositorySource) Checkpoint(commitID string) error {
+	if s.checkpoint == "" {
+		return nil
+	}
+	if commitID == "" || commitID != s.lastCommit {
+		return fmt.Errorf("checkpoint commit %q is not the last emitted commit", commitID)
+	}
+	data, err := json.Marshal(gitRepositoryCheckpoint{CommitID: commitID})
+	if err != nil {
+		return fmt.Errorf("marshal checkpoint: %w", err)
+	}
+	tempFile := s.checkpoint + ".tmp"
+	if err := os.WriteFile(tempFile, data, 0644); err != nil {
+		return fmt.Errorf("write checkpoint: %w", err)
+	}
+	if err := os.Rename(tempFile, s.checkpoint); err != nil {
+		return fmt.Errorf("replace checkpoint: %w", err)
+	}
+	return nil
+}
+
+// Resume advances the source past the commit stored in its checkpoint file.
+func (s *GitRepositorySource) Resume() error {
+	if s.checkpoint == "" {
+		return nil
+	}
+	data, err := os.ReadFile(s.checkpoint)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read checkpoint: %w", err)
+	}
+	var checkpoint gitRepositoryCheckpoint
+	if err := json.Unmarshal(data, &checkpoint); err != nil {
+		return fmt.Errorf("parse checkpoint: %w", err)
+	}
+	for index, commitID := range s.commitIDs {
+		if commitID == checkpoint.CommitID {
+			s.index = index + 1
+			return nil
+		}
+	}
+	return fmt.Errorf("checkpoint commit %s is not in source plan", checkpoint.CommitID)
 }
 
 func (s *GitRepositorySource) readCommit(commitID string) (*Commit, error) {
@@ -196,7 +314,7 @@ func (s *GitRepositorySource) startCatFile() error {
 	if s.catFile != nil {
 		return nil
 	}
-	cmd := exec.Command("git", "cat-file", "--batch-command")
+	cmd := exec.CommandContext(s.context, "git", "cat-file", "--batch-command")
 	cmd.Dir = s.repository
 	input, err := cmd.StdinPipe()
 	if err != nil {
@@ -237,7 +355,7 @@ func (s *GitRepositorySource) Close() error {
 }
 
 func (s *GitRepositorySource) gitOutput(args ...string) ([]byte, error) {
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(s.context, "git", args...)
 	cmd.Dir = s.repository
 	output, err := cmd.CombinedOutput()
 	if err != nil {

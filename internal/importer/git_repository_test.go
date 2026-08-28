@@ -1,6 +1,7 @@
 package importer
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
@@ -228,5 +229,68 @@ func TestGitRepositorySourceRenameAndCopy(t *testing.T) {
 	if len(copyCommit.Files) != 1 || copyCommit.Files[0].Action != FileCopy ||
 		copyCommit.Files[0].SourcePath != "renamed.txt" || copyCommit.Files[0].Path != "copy.txt" {
 		t.Errorf("Unexpected copy changes: %+v", copyCommit.Files)
+	}
+}
+
+func TestGitRepositorySourceCheckpointResumeAndValidation(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	commitID := func() string {
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(output[:len(output)-1])
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	os.WriteFile(filepath.Join(repoDir, "first.txt"), []byte("first"), 0644)
+	runGit("add", "first.txt")
+	runGit("commit", "-m", "first")
+	firstID := commitID()
+	os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("second"), 0644)
+	runGit("add", "second.txt")
+	runGit("commit", "-m", "second")
+	secondID := commitID()
+
+	checkpoint := filepath.Join(t.TempDir(), "checkpoint.json")
+	source := NewGitRepositorySourceWithOptions(repoDir, []string{firstID, secondID}, GitRepositorySourceOptions{CheckpointFile: checkpoint})
+	if err := source.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+	commit, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Checkpoint(commit.ID); err != nil {
+		t.Fatalf("Checkpoint() failed: %v", err)
+	}
+
+	resumed := NewGitRepositorySourceWithOptions(repoDir, []string{firstID, secondID}, GitRepositorySourceOptions{CheckpointFile: checkpoint})
+	if err := resumed.Resume(); err != nil {
+		t.Fatalf("Resume() failed: %v", err)
+	}
+	commit, err = resumed.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit.ID != secondID {
+		t.Errorf("Resumed commit = %s, want %s", commit.ID, secondID)
+	}
+}
+
+func TestGitRepositorySourceCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	source := NewGitRepositorySourceWithOptions(t.TempDir(), []string{"commit-id"}, GitRepositorySourceOptions{Context: ctx})
+	if _, err := source.Next(); err != context.Canceled {
+		t.Errorf("Next() error = %v, want context.Canceled", err)
 	}
 }
