@@ -202,3 +202,33 @@ func TestP4WriterBranchPath(t *testing.T) {
 		t.Errorf("Commit branch = %q", writer.commitBranches["commit-id"])
 	}
 }
+
+func TestP4WriterCrossBranchIntegration(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{
+		ImportDepot: "import",
+		ArchiveRoot: archiveRoot,
+		Journal:     &output,
+		BranchPath:  func(ref string) string { return strings.TrimPrefix(ref, "refs/heads/") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("content")), nil }
+	when := time.Now()
+	source := &commitSliceSource{commits: []*Commit{
+		{ID: "main-1", Ref: "refs/heads/main", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "blob", Content: content}}},
+		{ID: "dev-1", Parents: []string{"main-1"}, Ref: "refs/heads/dev", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "blob", Content: content}}},
+	}}
+	if err := writer.WriteSource(source); err != nil {
+		t.Fatal(err)
+	}
+	journalOutput := output.String()
+	if !strings.Contains(journalOutput, "@//import/dev/file.txt@ @//import/main/file.txt@") {
+		t.Errorf("Missing cross-branch integration:\n%s", journalOutput)
+	}
+	if _, err := os.Stat(filepath.Join(archiveRoot, "import/dev/file.txt,d", "1.2.gz")); !os.IsNotExist(err) {
+		t.Errorf("Cross-branch copy unexpectedly created archive: %v", err)
+	}
+}

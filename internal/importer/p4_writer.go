@@ -41,6 +41,7 @@ type fileRevision struct {
 	revision int
 	lbrFile  string
 	lbrRev   int
+	objectID string
 }
 
 type blobArchive struct {
@@ -153,17 +154,21 @@ func (w *P4Writer) WriteCommit(commit *Commit) error {
 		branch = strings.Trim(w.branchPath(commit.Ref), "/")
 	}
 	w.commitBranches[commit.ID] = branch
+	parentBranch := ""
+	if len(commit.Parents) > 0 {
+		parentBranch = w.commitBranches[commit.Parents[0]]
+	}
 	w.journal.WriteChange(changeNumber, w.user, commit.Message, changeTime)
 
 	for _, change := range commit.Files {
-		if err := w.writeChange(change, branch, changeNumber, changeTime); err != nil {
+		if err := w.writeChange(change, branch, parentBranch, changeNumber, changeTime); err != nil {
 			return fmt.Errorf("commit %s, path %s: %w", commit.ID, change.Path, err)
 		}
 	}
 	return nil
 }
 
-func (w *P4Writer) writeChange(change FileChange, branch string, changeNumber, changeTime int) error {
+func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, changeNumber, changeTime int) error {
 	depotFile := w.depotPath(branch, change.Path)
 	if !strings.HasPrefix(depotFile, "//") {
 		return fmt.Errorf("invalid depot path %q", change.Path)
@@ -187,6 +192,16 @@ func (w *P4Writer) writeChange(change FileChange, branch string, changeNumber, c
 	}
 	if change.Content == nil {
 		return fmt.Errorf("missing blob content")
+	}
+	if !exists && branch != "" && parentBranch != "" && branch != parentBranch {
+		parentDepotFile := w.depotPath(parentBranch, change.Path)
+		if parent, ok := w.fileRevisions[parentDepotFile]; ok && parent.objectID == change.ObjectID {
+			fileType := w.fileTypeFor(parentDepotFile)
+			w.journal.WriteRev(depotFile, revision, journal.Add, fileType, changeNumber, parent.lbrFile, parent.lbrRev, changeTime)
+			w.journal.WriteInteg(depotFile, parentDepotFile, 0, parent.revision, 0, revision, journal.BranchFrom, journal.BranchInto, changeNumber)
+			w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: parent.lbrFile, lbrRev: parent.lbrRev, objectID: change.ObjectID}
+			return nil
+		}
 	}
 
 	lbr := blobArchive{}
@@ -219,7 +234,7 @@ func (w *P4Writer) writeChange(change FileChange, branch string, changeNumber, c
 		action = journal.Edit
 	}
 	w.journal.WriteRev(depotFile, revision, action, w.fileTypeFor(depotFile), changeNumber, lbr.lbrFile, lbr.lbrRev, changeTime)
-	w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: lbr.lbrFile, lbrRev: lbr.lbrRev}
+	w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: lbr.lbrFile, lbrRev: lbr.lbrRev, objectID: change.ObjectID}
 	return nil
 }
 
