@@ -174,3 +174,59 @@ func TestGitRepositorySourceDuplicateBlob(t *testing.T) {
 		t.Errorf("DuplicateOf = %q, want %q", commit.Files[1].DuplicateOf, commit.Files[0].ObjectID)
 	}
 }
+
+func TestGitRepositorySourceRenameAndCopy(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	commitID := func() string {
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(output[:len(output)-1])
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "source.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "source.txt")
+	runGit("commit", "-m", "add source")
+
+	runGit("mv", "source.txt", "renamed.txt")
+	runGit("commit", "-m", "rename source")
+	renameID := commitID()
+
+	if err := os.WriteFile(filepath.Join(repoDir, "copy.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "copy.txt")
+	runGit("commit", "-m", "copy renamed")
+	copyID := commitID()
+
+	source := NewGitRepositorySource(repoDir, []string{renameID, copyID})
+	renameCommit, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(renameCommit.Files) != 1 || renameCommit.Files[0].Action != FileRename ||
+		renameCommit.Files[0].SourcePath != "source.txt" || renameCommit.Files[0].Path != "renamed.txt" {
+		t.Errorf("Unexpected rename changes: %+v", renameCommit.Files)
+	}
+
+	copyCommit, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(copyCommit.Files) != 1 || copyCommit.Files[0].Action != FileCopy ||
+		copyCommit.Files[0].SourcePath != "renamed.txt" || copyCommit.Files[0].Path != "copy.txt" {
+		t.Errorf("Unexpected copy changes: %+v", copyCommit.Files)
+	}
+}

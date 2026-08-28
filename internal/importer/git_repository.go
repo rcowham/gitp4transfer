@@ -96,14 +96,14 @@ func (s *GitRepositorySource) readCommit(commitID string) (*Commit, error) {
 }
 
 func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error) {
-	output, err := s.gitOutput("diff-tree", "--root", "--no-commit-id", "-r", "--raw", "-z", commitID)
+	output, err := s.gitOutput("diff-tree", "--root", "--no-commit-id", "-r", "--raw", "-z", "-M", "-C", "--find-copies-harder", commitID)
 	if err != nil {
 		return nil, fmt.Errorf("read changes for commit %s: %w", commitID, err)
 	}
 
 	parts := strings.Split(string(output), "\x00")
 	changes := make([]FileChange, 0)
-	for index := 0; index+1 < len(parts); index += 2 {
+	for index := 0; index < len(parts)-1; {
 		metadata := strings.Fields(parts[index])
 		if len(metadata) < 5 {
 			return nil, fmt.Errorf("unexpected diff-tree record for commit %s: %q", commitID, parts[index])
@@ -112,7 +112,13 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 		if len(status) == 0 {
 			return nil, fmt.Errorf("missing diff-tree status for commit %s", commitID)
 		}
-		change := FileChange{Path: s.prefixedPath(parts[index+1]), Mode: metadata[1]}
+		index++
+		if index >= len(parts) || parts[index] == "" {
+			return nil, fmt.Errorf("missing diff-tree path for commit %s", commitID)
+		}
+		firstPath := parts[index]
+		index++
+		change := FileChange{Path: s.prefixedPath(firstPath), Mode: metadata[1]}
 		switch status[0] {
 		case 'A', 'M', 'T':
 			change.Action = FileModify
@@ -126,6 +132,18 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 			change.Content = func() (io.ReadCloser, error) { return s.OpenBlob(objectID) }
 		case 'D':
 			change.Action = FileDelete
+		case 'R', 'C':
+			if index >= len(parts) || parts[index] == "" {
+				return nil, fmt.Errorf("missing destination path for diff-tree status %q in commit %s", status, commitID)
+			}
+			change.SourcePath = s.prefixedPath(firstPath)
+			change.Path = s.prefixedPath(parts[index])
+			index++
+			if status[0] == 'R' {
+				change.Action = FileRename
+			} else {
+				change.Action = FileCopy
+			}
 		default:
 			return nil, fmt.Errorf("unsupported diff-tree status %q for commit %s", status, commitID)
 		}
