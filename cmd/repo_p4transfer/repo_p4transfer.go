@@ -695,10 +695,12 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			commitIDs = append(commitIDs, commit.Hash)
 			commitRefs[commit.Hash] = commit.Branch
 		}
+		initialSnapshot := index == 0 || batches[index-1].RepoPath != batch.RepoPath
 		source := importer.NewGitRepositorySourceWithOptions(filepath.Join(r.repoRoot, batch.RepoPath), commitIDs, importer.GitRepositorySourceOptions{
-			PathPrefix: project.Path,
-			CommitRefs: commitRefs,
-			Dummy:      r.dummy,
+			PathPrefix:      project.Path,
+			CommitRefs:      commitRefs,
+			Dummy:           r.dummy,
+			InitialSnapshot: initialSnapshot,
 		})
 		if err := source.Validate(); err != nil {
 			return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
@@ -716,6 +718,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 				_ = source.Close()
 				return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
 			}
+			r.logger.Debugf("Native commit %s -> changelist %d: %s (%d file changes)", commit.ID, writer.ChangeCount(), strings.TrimSpace(commit.Message), len(commit.Files))
 		}
 		if err := source.Close(); err != nil {
 			return fmt.Errorf("close source for batch %d: %w", index+1, err)

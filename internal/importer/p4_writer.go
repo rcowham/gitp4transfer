@@ -80,6 +80,11 @@ type P4Writer struct {
 	closed         bool
 }
 
+// ChangeCount returns the number of changelists written so far.
+func (w *P4Writer) ChangeCount() int {
+	return w.changeNumber
+}
+
 // NewP4Writer creates a source-neutral Perforce writer.
 func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 	if options.ImportDepot == "" {
@@ -229,7 +234,8 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, m
 		if err != nil {
 			return err
 		}
-		depotRoot := path.Join(w.archiveRoot, strings.TrimPrefix(depotFile, "//")+",d")
+		archiveDepotFile := journal.ReplaceWildcards(depotFile)
+		depotRoot := path.Join(w.archiveRoot, strings.TrimPrefix(archiveDepotFile, "//")+",d")
 		if err := os.MkdirAll(depotRoot, 0755); err != nil {
 			content.Close()
 			return err

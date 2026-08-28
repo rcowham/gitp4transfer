@@ -17,12 +17,13 @@ import (
 
 // GitRepositorySourceOptions configures native Git source lifecycle behavior.
 type GitRepositorySourceOptions struct {
-	PathPrefix     string
-	Ref            string
-	CommitRefs     map[string]string
-	Context        context.Context
-	CheckpointFile string
-	Dummy          bool
+	PathPrefix      string
+	Ref             string
+	CommitRefs      map[string]string
+	Context         context.Context
+	CheckpointFile  string
+	Dummy           bool
+	InitialSnapshot bool
 }
 
 type gitRepositoryCheckpoint struct {
@@ -33,23 +34,24 @@ type gitRepositoryCheckpoint struct {
 // It currently reports add, modify, and delete actions; rename/copy inference
 // is intentionally deferred to a later migration step.
 type GitRepositorySource struct {
-	repository string
-	pathPrefix string
-	ref        string
-	commitRefs map[string]string
-	commitIDs  []string
-	index      int
-	context    context.Context
-	checkpoint string
-	lastCommit string
-	dummy      bool
-	seenBlobs  map[string]struct{}
-	catFile    *exec.Cmd
-	catInput   io.WriteCloser
-	catWriter  *bufio.Writer
-	catOutput  *bufio.Reader
-	catError   bytes.Buffer
-	activeBlob bool
+	repository      string
+	pathPrefix      string
+	ref             string
+	commitRefs      map[string]string
+	commitIDs       []string
+	index           int
+	context         context.Context
+	checkpoint      string
+	lastCommit      string
+	dummy           bool
+	initialSnapshot bool
+	seenBlobs       map[string]struct{}
+	catFile         *exec.Cmd
+	catInput        io.WriteCloser
+	catWriter       *bufio.Writer
+	catOutput       *bufio.Reader
+	catError        bytes.Buffer
+	activeBlob      bool
 }
 
 // NewGitRepositorySource creates a source for commits in the caller-provided order.
@@ -71,15 +73,16 @@ func NewGitRepositorySourceWithOptions(repository string, commitIDs []string, op
 		ctx = context.Background()
 	}
 	return &GitRepositorySource{
-		repository: repository,
-		pathPrefix: strings.Trim(options.PathPrefix, "/"),
-		ref:        options.Ref,
-		commitRefs: options.CommitRefs,
-		commitIDs:  commitIDs,
-		context:    ctx,
-		checkpoint: options.CheckpointFile,
-		dummy:      options.Dummy,
-		seenBlobs:  make(map[string]struct{}),
+		repository:      repository,
+		pathPrefix:      strings.Trim(options.PathPrefix, "/"),
+		ref:             options.Ref,
+		commitRefs:      options.CommitRefs,
+		commitIDs:       commitIDs,
+		context:         ctx,
+		checkpoint:      options.CheckpointFile,
+		dummy:           options.Dummy,
+		initialSnapshot: options.InitialSnapshot,
+		seenBlobs:       make(map[string]struct{}),
 	}
 }
 
@@ -225,11 +228,51 @@ func (s *GitRepositorySource) readCommit(commitID, ref string) (*Commit, error) 
 		Committer: Identity{Name: fields[5], Email: fields[6], When: committerTime},
 		Message:   fields[8],
 	}
-	commit.Files, err = s.readChanges(commitID)
+	if s.initialSnapshot && s.index == 1 {
+		commit.Files, err = s.readSnapshot(commitID)
+	} else {
+		commit.Files, err = s.readChanges(commitID)
+	}
 	if err != nil {
 		return nil, err
 	}
 	return commit, nil
+}
+
+func (s *GitRepositorySource) readSnapshot(commitID string) ([]FileChange, error) {
+	output, err := s.gitOutput("ls-tree", "-r", "-z", commitID)
+	if err != nil {
+		return nil, fmt.Errorf("read tree for commit %s: %w", commitID, err)
+	}
+	changes := make([]FileChange, 0)
+	for _, record := range strings.Split(string(output), "\x00") {
+		if record == "" {
+			continue
+		}
+		fields := strings.SplitN(record, "\t", 2)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("unexpected tree record for commit %s: %q", commitID, record)
+		}
+		metadata := strings.Fields(fields[0])
+		if len(metadata) != 3 || metadata[1] != "blob" {
+			continue
+		}
+		objectID := metadata[2]
+		change := FileChange{
+			Action:   FileModify,
+			Path:     s.prefixedPath(fields[1]),
+			Mode:     metadata[0],
+			ObjectID: objectID,
+		}
+		if _, seen := s.seenBlobs[objectID]; seen {
+			change.DuplicateOf = objectID
+		} else {
+			s.seenBlobs[objectID] = struct{}{}
+		}
+		change.Content = func() (io.ReadCloser, error) { return s.OpenBlob(objectID) }
+		changes = append(changes, change)
+	}
+	return changes, nil
 }
 
 func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error) {
