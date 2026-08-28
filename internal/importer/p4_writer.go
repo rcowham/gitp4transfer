@@ -283,7 +283,21 @@ func (w *P4Writer) writeCopyOrRename(change FileChange, branch, depotFile string
 	sourceDepotFile := w.depotPath(branch, change.SourcePath)
 	source, sourceExists := w.fileRevisions[sourceDepotFile]
 	if !sourceExists {
-		return fmt.Errorf("source path has no previous revision")
+		var matchedPath string
+		for candidatePath, candidate := range w.fileRevisions {
+			if candidate.active && strings.HasSuffix(candidatePath, "/"+strings.TrimPrefix(change.SourcePath, "/")) {
+				if matchedPath != "" {
+					matchedPath = ""
+					break
+				}
+				matchedPath = candidatePath
+				source = candidate
+			}
+		}
+		if matchedPath == "" {
+			return fmt.Errorf("source path has no previous revision")
+		}
+		sourceDepotFile = matchedPath
 	}
 	fileType := w.fileTypeFor(sourceDepotFile)
 

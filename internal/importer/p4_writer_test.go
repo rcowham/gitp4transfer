@@ -173,6 +173,32 @@ func TestP4WriterCopyAndRename(t *testing.T) {
 	}
 }
 
+func TestP4WriterCopyFindsSnapshotSourceAcrossRefSpellings(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{
+		ImportDepot: "import",
+		ArchiveRoot: archiveRoot,
+		Journal:     &output,
+		BranchPath:  func(ref string) string { return ref },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("content")), nil }
+	when := time.Now()
+	commits := []*Commit{
+		{ID: "snapshot", Ref: "main", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "source.txt", ObjectID: "source", Content: content}}},
+		{ID: "copy", Ref: "refs/heads/main", Author: Identity{When: when}, Files: []FileChange{{Action: FileCopy, SourcePath: "source.txt", Path: "copy.txt"}}},
+	}
+	if err := writer.WriteSource(&commitSliceSource{commits: commits}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "@//import/refs/heads/main/copy.txt@") {
+		t.Fatalf("copy revision missing after ref spelling change:\n%s", output.String())
+	}
+}
+
 func TestP4WriterIgnoresDeleteBeforeImportRange(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer
