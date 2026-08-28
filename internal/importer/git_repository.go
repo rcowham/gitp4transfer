@@ -352,6 +352,13 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 			} else {
 				change.Action = FileCopy
 			}
+			parent := commitID + "^"
+			objectID, err := s.gitOutput("rev-parse", parent+":"+firstPath)
+			if err == nil {
+				objectID = bytes.TrimSpace(objectID)
+				change.ObjectID = string(objectID)
+				change.Content = func() (io.ReadCloser, error) { return s.OpenBlob(string(objectID)) }
+			}
 		default:
 			return nil, fmt.Errorf("unsupported diff-tree status %q for commit %s", status, commitID)
 		}

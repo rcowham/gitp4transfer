@@ -207,7 +207,7 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, m
 		return nil
 	}
 	if change.Action == FileCopy || change.Action == FileRename {
-		return w.writeCopyOrRename(change, branch, depotFile, exists, revision, changeNumber, changeTime)
+		return w.writeCopyOrRename(change, branch, parentBranch, mergeBranches, depotFile, exists, revision, changeNumber, changeTime)
 	}
 	if change.Action != FileModify {
 		return fmt.Errorf("unsupported source action %s", change.Action)
@@ -273,7 +273,7 @@ func (w *P4Writer) writeMergeIntegrations(depotFile, sourcePath, objectID, branc
 	}
 }
 
-func (w *P4Writer) writeCopyOrRename(change FileChange, branch, depotFile string, destinationExists bool, destinationRev, changeNumber, changeTime int) error {
+func (w *P4Writer) writeCopyOrRename(change FileChange, branch, parentBranch string, mergeBranches []string, depotFile string, destinationExists bool, destinationRev, changeNumber, changeTime int) error {
 	if change.SourcePath == "" {
 		return fmt.Errorf("missing source path")
 	}
@@ -295,7 +295,16 @@ func (w *P4Writer) writeCopyOrRename(change FileChange, branch, depotFile string
 			}
 		}
 		if matchedPath == "" {
-			return fmt.Errorf("source path has no previous revision")
+			if change.Content == nil || change.ObjectID == "" {
+				return fmt.Errorf("source path has no previous revision")
+			}
+			return w.writeChange(FileChange{
+				Action:   FileModify,
+				Path:     change.Path,
+				Mode:     change.Mode,
+				ObjectID: change.ObjectID,
+				Content:  change.Content,
+			}, branch, parentBranch, mergeBranches, changeNumber, changeTime)
 		}
 		sourceDepotFile = matchedPath
 	}

@@ -199,6 +199,28 @@ func TestP4WriterCopyFindsSnapshotSourceAcrossRefSpellings(t *testing.T) {
 	}
 }
 
+func TestP4WriterCopyFallsBackToBlobWhenSourceIsNotImported(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &output})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("copied content")), nil }
+	commit := &Commit{ID: "copy", Author: Identity{When: time.Now()}, Files: []FileChange{{
+		Action: FileCopy, SourcePath: "omitted/source.txt", Path: "copy.txt", ObjectID: "source-blob", Content: content,
+	}}}
+	if err := writer.WriteCommit(commit); err != nil {
+		t.Fatalf("WriteCommit() returned an error: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "@//import/copy.txt@") {
+		t.Fatalf("fallback copy revision missing:\n%s", output.String())
+	}
+}
+
 func TestP4WriterIgnoresDeleteBeforeImportRange(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer
