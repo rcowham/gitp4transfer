@@ -486,11 +486,12 @@ func (g *GitFilter) RunGitFilter(options GitFilterOptions) {
 	}
 
 	g.opts = options
+	g.testBlobOutput = new(bytes.Buffer)
 	var rePathFilter *regexp.Regexp
 	filteringPaths := false
 	if g.opts.pathFilter != "" {
 		rePathFilter = regexp.MustCompile(g.opts.pathFilter)
-		filteringPaths = true
+		filteringPaths = g.opts.filterCommits
 	}
 
 	if filteringPaths {
