@@ -158,17 +158,26 @@ func (w *P4Writer) WriteCommit(commit *Commit) error {
 	if len(commit.Parents) > 0 {
 		parentBranch = w.commitBranches[commit.Parents[0]]
 	}
+	mergeBranches := make([]string, 0)
+	if len(commit.Parents) > 1 {
+		mergeBranches = make([]string, 0, len(commit.Parents)-1)
+		for _, parentID := range commit.Parents[1:] {
+			if mergeBranch := w.commitBranches[parentID]; mergeBranch != "" && mergeBranch != branch {
+				mergeBranches = append(mergeBranches, mergeBranch)
+			}
+		}
+	}
 	w.journal.WriteChange(changeNumber, w.user, commit.Message, changeTime)
 
 	for _, change := range commit.Files {
-		if err := w.writeChange(change, branch, parentBranch, changeNumber, changeTime); err != nil {
+		if err := w.writeChange(change, branch, parentBranch, mergeBranches, changeNumber, changeTime); err != nil {
 			return fmt.Errorf("commit %s, path %s: %w", commit.ID, change.Path, err)
 		}
 	}
 	return nil
 }
 
-func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, changeNumber, changeTime int) error {
+func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, mergeBranches []string, changeNumber, changeTime int) error {
 	depotFile := w.depotPath(branch, change.Path)
 	if !strings.HasPrefix(depotFile, "//") {
 		return fmt.Errorf("invalid depot path %q", change.Path)
@@ -235,7 +244,19 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, c
 	}
 	w.journal.WriteRev(depotFile, revision, action, w.fileTypeFor(depotFile), changeNumber, lbr.lbrFile, lbr.lbrRev, changeTime)
 	w.fileRevisions[depotFile] = fileRevision{revision: revision, lbrFile: lbr.lbrFile, lbrRev: lbr.lbrRev, objectID: change.ObjectID}
+	w.writeMergeIntegrations(depotFile, change.Path, change.ObjectID, branch, mergeBranches, revision, changeNumber)
 	return nil
+}
+
+func (w *P4Writer) writeMergeIntegrations(depotFile, sourcePath, objectID, branch string, mergeBranches []string, revision, changeNumber int) {
+	for _, mergeBranch := range mergeBranches {
+		mergeDepotFile := w.depotPath(mergeBranch, sourcePath)
+		mergeRevision, ok := w.fileRevisions[mergeDepotFile]
+		if !ok || mergeRevision.objectID != objectID {
+			continue
+		}
+		w.journal.WriteInteg(depotFile, mergeDepotFile, 0, mergeRevision.revision, revision-1, revision, journal.MergeFrom, journal.MergeInto, changeNumber)
+	}
 }
 
 func (w *P4Writer) writeCopyOrRename(change FileChange, branch, depotFile string, destinationExists bool, destinationRev, changeNumber, changeTime int) error {

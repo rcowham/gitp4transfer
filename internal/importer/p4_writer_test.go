@@ -232,3 +232,36 @@ func TestP4WriterCrossBranchIntegration(t *testing.T) {
 		t.Errorf("Cross-branch copy unexpectedly created archive: %v", err)
 	}
 }
+
+func TestP4WriterMergeIntegration(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{
+		ImportDepot: "import",
+		ArchiveRoot: archiveRoot,
+		Journal:     &output,
+		BranchPath:  func(ref string) string { return strings.TrimPrefix(ref, "refs/heads/") },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func(value string) BlobContent {
+		return func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(value)), nil }
+	}
+	when := time.Now()
+	source := &commitSliceSource{commits: []*Commit{
+		{ID: "main-1", Ref: "refs/heads/main", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "main", Content: content("main")}}},
+		{ID: "dev-1", Parents: []string{"main-1"}, Ref: "refs/heads/dev", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "dev", Content: content("dev")}}},
+		{ID: "main-2", Parents: []string{"main-1", "dev-1"}, Ref: "refs/heads/main", Author: Identity{When: when}, Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "dev", DuplicateOf: "dev", Content: content("dev")}}},
+	}}
+	if err := writer.WriteSource(source); err != nil {
+		t.Fatal(err)
+	}
+	journalOutput := output.String()
+	if !strings.Contains(journalOutput, "@//import/main/file.txt@ @//import/dev/file.txt@") {
+		t.Errorf("Missing merge integration:\n%s", journalOutput)
+	}
+	if strings.Count(journalOutput, "@db.integed@") < 2 {
+		t.Errorf("Expected merge integration pair:\n%s", journalOutput)
+	}
+}
