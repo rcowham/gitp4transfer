@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -82,6 +83,55 @@ func TestGitRepositorySource(t *testing.T) {
 
 	if _, err := source.Next(); err != io.EOF {
 		t.Errorf("Next() error = %v, want io.EOF", err)
+	}
+}
+
+func TestGitRepositorySourceInitialSnapshotIsSeparateCommit(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	commitID := func() string {
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(output[:len(output)-1])
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("first"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file.txt")
+	runGit("commit", "-m", "first")
+	firstID := commitID()
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("second"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("commit", "-am", "second")
+	secondID := commitID()
+
+	source := NewGitRepositorySourceWithOptions(repoDir, []string{firstID, secondID}, GitRepositorySourceOptions{InitialSnapshot: true})
+	defer source.Close()
+	snapshot, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.ID != "snapshot:"+firstID || !strings.HasPrefix(snapshot.Message, "Starting snapshot at Git commit "+firstID+" (") || len(snapshot.Files) != 1 {
+		t.Errorf("unexpected snapshot: %+v", snapshot)
+	}
+	commit, err := source.Next()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if commit.ID != secondID || strings.TrimSpace(commit.Message) != "second" || len(commit.Files) != 1 {
+		t.Errorf("unexpected commit after snapshot: %+v", commit)
 	}
 }
 

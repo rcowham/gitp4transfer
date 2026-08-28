@@ -45,6 +45,7 @@ type GitRepositorySource struct {
 	lastCommit      string
 	dummy           bool
 	initialSnapshot bool
+	snapshotPending bool
 	seenBlobs       map[string]struct{}
 	catFile         *exec.Cmd
 	catInput        io.WriteCloser
@@ -82,6 +83,7 @@ func NewGitRepositorySourceWithOptions(repository string, commitIDs []string, op
 		checkpoint:      options.CheckpointFile,
 		dummy:           options.Dummy,
 		initialSnapshot: options.InitialSnapshot,
+		snapshotPending: options.InitialSnapshot && len(commitIDs) > 0,
 		seenBlobs:       make(map[string]struct{}),
 	}
 }
@@ -99,6 +101,29 @@ func (s *GitRepositorySource) Next() (*Commit, error) {
 	}
 
 	commitID := s.commitIDs[s.index]
+	if s.snapshotPending {
+		snapshotPending := s.snapshotPending
+		s.snapshotPending = false
+		ref := s.ref
+		if commitRef, ok := s.commitRefs[commitID]; ok {
+			ref = commitRef
+		}
+		commit, err := s.readCommitMetadata(commitID, ref)
+		if err != nil {
+			s.snapshotPending = snapshotPending
+			return nil, err
+		}
+		commit.ID = "snapshot:" + commit.ID
+		commit.Parents = nil
+		commit.Message = fmt.Sprintf("Starting snapshot at Git commit %s (%s)", commitID, commit.Committer.When.Format(time.RFC3339))
+		commit.Files, err = s.readSnapshot(commitID)
+		if err != nil {
+			s.snapshotPending = snapshotPending
+			return nil, err
+		}
+		s.index = 1
+		return commit, nil
+	}
 	s.index++
 	ref := s.ref
 	if commitRef, ok := s.commitRefs[commitID]; ok {
@@ -203,6 +228,18 @@ func (s *GitRepositorySource) Resume() error {
 }
 
 func (s *GitRepositorySource) readCommit(commitID, ref string) (*Commit, error) {
+	commit, err := s.readCommitMetadata(commitID, ref)
+	if err != nil {
+		return nil, err
+	}
+	commit.Files, err = s.readChanges(commitID)
+	if err != nil {
+		return nil, err
+	}
+	return commit, nil
+}
+
+func (s *GitRepositorySource) readCommitMetadata(commitID, ref string) (*Commit, error) {
 	output, err := s.gitOutput("show", "-s", "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", commitID)
 	if err != nil {
 		return nil, fmt.Errorf("read commit %s: %w", commitID, err)
@@ -227,14 +264,6 @@ func (s *GitRepositorySource) readCommit(commitID, ref string) (*Commit, error) 
 		Author:    Identity{Name: fields[2], Email: fields[3], When: authorTime},
 		Committer: Identity{Name: fields[5], Email: fields[6], When: committerTime},
 		Message:   fields[8],
-	}
-	if s.initialSnapshot && s.index == 1 {
-		commit.Files, err = s.readSnapshot(commitID)
-	} else {
-		commit.Files, err = s.readChanges(commitID)
-	}
-	if err != nil {
-		return nil, err
 	}
 	return commit, nil
 }

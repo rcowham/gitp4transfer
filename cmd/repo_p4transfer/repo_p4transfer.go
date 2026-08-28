@@ -684,6 +684,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	}
 	defer writer.Close()
 
+	snapshotsCreated := make(map[string]bool)
 	for index, batch := range batches {
 		project, ok := r.projects[batch.RepoPath]
 		if !ok {
@@ -695,7 +696,8 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			commitIDs = append(commitIDs, commit.Hash)
 			commitRefs[commit.Hash] = commit.Branch
 		}
-		initialSnapshot := index == 0 || batches[index-1].RepoPath != batch.RepoPath
+		initialSnapshot := !snapshotsCreated[batch.RepoPath]
+		snapshotsCreated[batch.RepoPath] = true
 		source := importer.NewGitRepositorySourceWithOptions(filepath.Join(r.repoRoot, batch.RepoPath), commitIDs, importer.GitRepositorySourceOptions{
 			PathPrefix:      project.Path,
 			CommitRefs:      commitRefs,
