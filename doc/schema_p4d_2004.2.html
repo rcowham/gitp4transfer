@@ -1,0 +1,3563 @@
+<!DOCTYPE html PUBLIC "-//w3c//dtd html 4.0 transitional//en">
+<!-- saved from url=(0095)index%231.html -->
+<html><head><meta http-equiv="Content-Type" content="text/html; charset=windows-1252">
+   
+   <meta name="GENERATOR" content="Mozilla/4.77 [en] (Windows NT 5.0; U) [Netscape]">
+   <title>Schema Documentation</title>
+</head>
+<body text="#000000" bgcolor="#FFFFFF" link="#666666" vlink="#888888" alink="#FF9900">
+
+<hr size="3"><!-- ----------- begin content, one <HR> for each schema item ------------- --><a name="0_indexalpha"></a><!-- --- 0_indexalpha begins here -------------------------- -->
+<h1> Perforce Schema Documentation</h1>
+<ul>
+  <li><a href="index%231.html#Alpha">Tables</a> (alphabetized by file name)</li>
+  <li><a href="index%231.html#Locking">Tables</a> (locking order)</li>
+  <li><a href="index%231.html#Records">Table row</a> (record) layout</li>
+  <li><a href="index%231.html#Datatypes">Data types</a></li>
+</ul>
+<hr>
+<h1> <a name="Alpha"></a>Tables</h1>
+<table border="3">
+  <tbody><tr> 
+    <th><b>Filename</b></th>
+    <th><b>Lock</b> <br>
+      <b>Order</b></th>
+    <th><b>Vers.</b></th>
+    <th><b>Table</b></th>
+    <th><b>Description</b></th>
+  </tr>
+  <tr> 
+    <td><tt>db.boddate</tt></td>
+    <td><tt>29</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.boddate">BodyDate</a></tt></td>
+    <td>Job data for date-valued attributes.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.bodtext</tt></td>
+    <td><tt>30</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.bodtext">BodyText</a></tt></td>
+    <td>Job data for non-date-valued attributes.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.change</tt></td>
+    <td><tt>21</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.change">Change</a></tt></td>
+    <td>A changelist record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.changex</tt></td>
+    <td><tt>22</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.change">Change</a></tt></td>
+    <td>Pending changelist record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.counters</tt></td>
+    <td><tt>1</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.counters">Counters</a></tt></td>
+    <td>A Perforce counter.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.depot</tt></td>
+    <td><tt>5</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.depot">Depot</a></tt></td>
+    <td>A depot specification.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.desc</tt></td>
+    <td><tt>23</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.desc">Desc</a></tt></td>
+    <td>A change description record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.domain</tt></td>
+    <td><tt>6</tt></td>
+    <td><tt>3</tt></td>
+    <td><tt><a href="schema.html#db.domain">Domain</a></tt></td>
+    <td>A domain record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.fix</tt></td>
+    <td><tt>27</tt></td>
+    <td><tt>1</tt></td>
+    <td><tt><a href="schema.html#db.fix">Fix</a></tt></td>
+    <td>A fix record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.fixrev</tt></td>
+    <td><tt>28</tt></td>
+    <td><tt>1</tt></td>
+    <td><tt><a href="schema.html#db.fix">Fix</a></tt></td>
+    <td>Records in <tt>db.fixrev</tt> look exactly like <tt>db.fix</tt> records.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.group</tt></td>
+    <td><tt>4</tt></td>
+    <td><tt>3</tt></td>
+    <td><tt><a href="schema.html#db.group">Group</a></tt></td>
+    <td>A user group.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.have</tt></td>
+    <td><tt>9</tt></td>
+    <td><tt>1</tt></td>
+    <td><tt><a href="schema.html#db.have">Have</a></tt></td>
+    <td>A file in the clients' have lists</td>
+  </tr>
+  <tr> 
+    <td><tt>db.integ</tt></td>
+    <td><tt>11</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.integ">Integ</a></tt></td>
+    <td>Obsolete in 2001.1. See db.integed and db.resolve</td>
+  </tr>
+  <tr> 
+    <td><tt>db.integed</tt></td>
+    <td><tt>12</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.integed">Integed</a></tt></td>
+    <td>A permanent integration record</td>
+  </tr>
+  <tr> 
+    <td><tt>db.ixdate</tt></td>
+    <td><tt>31</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.ixdate">IndexDate</a></tt></td>
+    <td>Indexing data for date-valued job attributes.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.ixtext</tt></td>
+    <td><tt>32</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.ixtext">IndexText</a></tt></td>
+    <td>Indexing data for non-date-valued job attributes.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.job</tt></td>
+    <td><tt>24</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.job">Job</a></tt></td>
+    <td>A record in the jobs table.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.jobpend</tt></td>
+    <td><tt>25</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.job">Job</a></tt></td>
+    <td>Obsolete in 98.2</td>
+  </tr>
+  <tr> 
+    <td><tt>db.jobdesc</tt></td>
+    <td><tt>26</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.jobdesc">JobDesc</a></tt></td>
+    <td>Obsolete in 98.2.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.label</tt></td>
+    <td><tt>10</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.label">Label</a></tt></td>
+    <td>A file in a label.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.locks</tt></td>
+    <td><tt>14</tt></td>
+    <td><tt>1</tt></td>
+    <td><tt><a href="schema.html#db.locks">Locks</a></tt></td>
+    <td>Locked/Unlocked files.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.logger</tt></td>
+    <td><tt>2</tt></td>
+    <td><tt>1</tt></td>
+    <td><tt><a href="schema.html#db.logger">Logger</a></tt></td>
+    <td>Support for 'p4 logger' command and DTI integration. Logs any changes 
+      to changelists and jobs.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.message</tt></td>
+    <td><tt>34</tt></td>
+    <td><tt>1</tt></td>
+    <td><tt><a href="schema.html#db.message">Message</a></tt></td>
+    <td>Messages.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.monitor</tt></td>
+    <td><tt>35</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="index%231.html#db.monitor">Monitor</a></tt></td>
+    <td>Support for 'p4 monitor' command. Not journalled.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.protect</tt></td>
+    <td><tt>33</tt></td>
+    <td><tt>3</tt></td>
+    <td><tt><a href="schema.html#db.protect">Protect</a></tt></td>
+    <td>A record in the protections table.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.resolve</tt></td>
+    <td><tt>13</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.integ">Resolve</a></tt></td>
+    <td>A pending integration record</td>
+  </tr>
+  <tr> 
+    <td><tt>db.rev</tt></td>
+    <td><tt>15</tt></td>
+    <td><tt>3</tt></td>
+    <td><tt><a href="schema.html#db.rev">Rev</a></tt></td>
+    <td>A revision record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.revcx</tt></td>
+    <td><tt>16</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.revcx">RevCx</a></tt></td>
+    <td>Revision change index.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.review</tt></td>
+    <td><tt>8</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.review">Review</a></tt></td>
+    <td>A reviewer record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.revpx</tt></td>
+    <td><tt>17</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.rev">Rev</a></tt></td>
+    <td>Holds revision records during execution of a trigger.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.traits</tt></td>
+    <td><tt>19</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.trait">Trait</a></tt></td>
+    <td>A trait record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.trigger</tt></td>
+    <td><tt>20</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.trigger">Trigger</a></tt></td>
+    <td>A line in a Perforce trigger.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.user</tt></td>
+    <td><tt>3</tt></td>
+    <td><tt>3</tt></td>
+    <td><tt><a href="schema.html#db.user">User</a></tt></td>
+    <td>A user record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.view</tt></td>
+    <td><tt>7</tt></td>
+    <td><tt>0</tt></td>
+    <td><tt><a href="schema.html#db.view">View</a></tt></td>
+    <td>A view record.</td>
+  </tr>
+  <tr> 
+    <td><tt>db.working</tt></td>
+    <td><tt>18</tt></td>
+    <td><tt>3</tt></td>
+    <td><tt><a href="schema.html#db.working">Working</a></tt></td>
+    <td>A record in the working changelist.</td>
+  </tr>
+</tbody></table>
+
+<hr size="3">
+<h1><b><a name="Locking"></a>Tables in locking order</b> </h1>
+<hr size="3">
+<ol>
+  <li> db.counters</li>
+  <li> db.logger</li>
+  <li> db.user</li>
+  <li> db.group</li>
+  <li> db.depot</li>
+  <li> db.domain</li>
+  <li> db.view</li>
+  <li> db.review</li>
+  <li> db.have</li>
+  <li> db.label</li>
+  <li> db.integ (obsoleted in 2001.1)</li>
+  <li> db.integed</li>
+  <li> db.resolve</li>
+  <li> db.locks</li>
+  <li> db.rev</li>
+  <li> db.revcx</li>
+  <li>db.revpx</li>
+  <li> db.working</li>
+  <li>db.traits</li>
+  <li>db.trigger</li>
+  <li> db.change</li>
+  <li> db.changex</li>
+  <li> db.desc</li>
+  <li> db.job</li>
+  <li> db.jobpend (obsoleted in 1998.2)</li>
+  <li> db.jobdesc (obsoleted in 1998.2)</li>
+  <li> db.fix</li>
+  <li> db.fixrev</li>
+  <li> db.boddate</li>
+  <li> db.bodtext</li>
+  <li> db.ixdate</li>
+  <li> db.ixtext</li>
+  <li> db.protect</li>
+  <li> db.message</li>
+  <li>db.monitor</li>
+</ol>
+
+<hr size="3">
+<h1><a name="Records"></a>Table row (record) layouts</h1>
+<hr size="3"><!-- --- 0_indexalpha ends here ---------------------------- --><a name="db.boddate"></a><!-- --- db.boddate begins here -------------------------- -->
+<h2>
+BodyDate - Job data for date-valued attributes (<tt>db.boddate</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>key</tt></td>
+
+<td><tt><a href="schema.html#DmtString">String</a></tt></td>
+
+<td>Key: Key for BodyDate record</td>
+</tr>
+
+<tr>
+<td><tt>attr</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Secondary key: Attribute number</td>
+</tr>
+
+<tr>
+<td><tt>date</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>Attribute value</td>
+</tr>
+</tbody></table>
+
+<p>Related record types:
+<tt><a href="schema.html#db.bodtext">BodyText</a></tt>,
+<tt><a href="schema.html#db.ixdate">IndexDate</a></tt>,
+and
+<tt><a href="schema.html#db.ixtext">IndexText</a></tt>.
+</p><p>
+</p><hr size="3"><!-- --- db.boddate ends here ---------------------------- --><a name="db.bodtext"></a><!-- --- db.bodtext begins here -------------------------- -->
+<h2>
+BodyText - Job data for non-date-valued attributes (<tt>db.bodtext</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>key</tt></td>
+
+<td><tt><a href="schema.html#DmtString">String</a></tt></td>
+
+<td>Key: Key for BodyText record</td>
+</tr>
+
+<tr>
+<td><tt>attr</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Secondary Key: Attribute number</td>
+</tr>
+
+<tr>
+<td><tt>date</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>Attribute value</td>
+</tr>
+</tbody></table>
+
+<p>Related record types:
+<tt><a href="schema.html#db.boddate">BodyDate</a></tt>,
+<tt><a href="schema.html#db.ixdate">IndexDate</a></tt>,
+and
+<tt><a href="schema.html#db.ixtext">IndexText</a></tt>.
+</p><p>
+</p><hr size="3"><!-- --- db.bodtext ends here ---------------------------- --><a name="db.change"></a><!-- --- db.change begins here -------------------------- -->
+<h2>
+Change - A change record (<tt>db.change</tt> and <tt>db.changex</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>change</tt></td>
+
+<td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+
+<td>Key: A change number</td>
+</tr>
+
+<tr>
+<td><tt>descKey</tt></td>
+
+<td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+
+<td>Change number of the first changelist with this description.
+<br>(When a changelist is renumbered on submission, the description is
+preserved.)</td>
+</tr>
+
+<tr>
+<td><tt>client</tt></td>
+
+<td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+
+<td>A client name; the client from which the change was submitted.</td>
+</tr>
+
+<tr>
+<td><tt>user</tt></td>
+
+<td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+
+<td>A user name; the user who submitted the change.</td>
+</tr>
+
+<tr>
+<td><tt>date</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>The date at which the change was submitted.</td>
+</tr>
+
+<tr>
+<td><tt>status</tt></td>
+
+<td><tt><a href="schema.html#DmtStatus">Status</a></tt></td>
+
+<td>Status of changelist: pending or committed.</td>
+</tr>
+
+<tr>
+<td><tt>description</tt></td>
+
+<td><tt><a href="schema.html#DmtDescShort">DescShort</a></tt></td>
+
+<td>Short description (first 31 characters) of change.</td>
+</tr>
+</tbody></table>
+
+<p>The same data structure is used in both the <tt>db.change</tt> and <tt>db.changex</tt>
+files.
+</p><p>
+</p><hr size="3"><!-- --- db.change ends here ---------------------------- --><a name="db.counters"></a><!-- --- db.counters begins here -------------------------- -->
+<h2>
+Counters - Perforce counters table (<tt>db.counters</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>name</tt></td>
+
+<td><tt><a href="schema.html#DmtCounter">Counter</a></tt></td>
+
+<td>Key: Name of counter</td>
+</tr>
+
+<tr>
+<td><tt>value</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Value of counter</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.counters ends here ---------------------------- --><a name="db.depot"></a><!-- --- db.depot begins here -------------------------- -->
+<h2>
+Depot - Depot specifications (<tt>db.depot</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>name</tt></td>
+
+<td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+
+<td>Key: Name of depot.</td>
+</tr>
+
+<tr>
+<td><tt>type</tt></td>
+
+<td><tt><a href="schema.html#DmtDepotType">DepotType</a></tt></td>
+
+<td>Type of depot (<tt>local</tt> or <tt>remote</tt>)</td>
+</tr>
+
+<tr>
+<td><tt>address</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>For <tt>remote</tt> depots, the <tt>P4PORT</tt> address of the remote
+server.
+<br>For <tt>local</tt> depots, the address is simply the string <tt>subdir</tt>.&nbsp;</td>
+</tr>
+
+<tr>
+<td><tt>map</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>The depot's map (path translation information).
+<br>For <tt>local</tt> depots, this will be a path relative to the root
+directory.
+<br>For <tt>remote</tt> depots, this will be specified in terms of the
+remote server's namespace.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.depot ends here ---------------------------- --><a name="db.desc"></a><!-- --- db.desc begins here -------------------------- -->
+<h2>
+Desc - A change description record (<tt>db.desc</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>descKey</tt></td>
+
+<td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+
+<td>Key: Change number to which this description applies</td>
+</tr>
+
+<tr>
+<td><tt>description</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>Change description in full</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.desc ends here ---------------------------- --><a name="db.domain"></a><!-- --- db.domain begins here -------------------------- -->
+<h2>
+Domain - A domain record (<tt>db.domain</tt>)</h2>
+
+<table border="3">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>name</tt></td>
+    <td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+    <td>Key: Name of domain.</td>
+  </tr>
+  <tr> 
+    <td><tt>type</tt></td>
+    <td><tt><a href="schema.html#DmtDomainType">DomainType</a></tt></td>
+    <td>Type of domain: <tt>client</tt>, <tt>label</tt>, <tt>branch</tt>, <tt>depot</tt> 
+      or <tt>typemap</tt>.</td>
+  </tr>
+  <tr> 
+    <td><tt>host</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>Associated host (optional).</td>
+  </tr>
+  <tr>
+    <td><tt>mount</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>Client root.</td>
+  </tr>
+  <tr> 
+    <td height="2"><tt>mount2</tt></td>
+    <td height="2"><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td height="2">Alternate client root.</td>
+  </tr>
+  <tr> 
+    <td><tt>mount3</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>Alternate client root.</td>
+  </tr>
+  <tr> 
+    <td><tt>owner</tt></td>
+    <td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+    <td>Name of user who created the domain.</td>
+  </tr>
+  <tr> 
+    <td><tt>updateDate</tt></td>
+    <td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+    <td>Date of last update to domain specification.</td>
+  </tr>
+  <tr> 
+    <td><tt>accessDate</tt></td>
+    <td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+    <td>Date of last access to domain specification.</td>
+  </tr>
+  <tr> 
+    <td><tt>options</tt></td>
+    <td><tt><a href="schema.html#DmtDomainOpts">DomainOpts</a></tt></td>
+    <td>Options for client, label, and branch domains.</td>
+  </tr>
+  <tr> 
+    <td><tt>mapState</tt></td>
+    <td><tt><a href="schema.html#DmtMapState">MapState</a></tt></td>
+    <td>The client map state.</td>
+  </tr>
+  <tr> 
+    <td><tt>description</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>Description of domain.</td>
+  </tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.domain ends here ---------------------------- --><a name="db.fix"></a><!-- --- db.fix begins here -------------------------- -->
+<h2>
+Fix - A fix record (<tt>db.fix</tt> and <tt>db.fixrev</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>job</tt></td>
+
+<td><tt><a href="schema.html#DmtJob">Job</a></tt></td>
+
+<td>Key: Job name</td>
+</tr>
+
+<tr>
+<td><tt>change</tt></td>
+
+<td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+
+<td>Secondary key: Changelist linked to job.</td>
+</tr>
+
+<tr>
+<td><tt>date</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>Date of fix.</td>
+</tr>
+
+<tr>
+<td><tt>status</tt></td>
+
+<td><tt><a href="schema.html#DmtFixStatus">FixStatus</a></tt></td>
+
+<td>Status of job</td>
+</tr>
+
+<tr>
+<td><tt>client</tt></td>
+
+<td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+
+<td>Client...</td>
+</tr>
+
+<tr>
+<td><tt>user</tt></td>
+
+<td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+
+<td>...and user who fixed the job.</td>
+</tr>
+</tbody></table>
+
+<p>The same data structure is used in both the <tt>db.fix</tt> and <tt>db.fixrev</tt>
+files.
+</p><p>
+</p><hr size="3"><!-- --- db.fix ends here ---------------------------- --><a name="db.group"></a><!-- --- db.group begins here -------------------------- -->
+<h2>
+Group - A user group (<tt>db.group</tt>)</h2>
+
+<table border="3">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>user</tt></td>
+    <td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+    <td>Key: A user in the group.</td>
+  </tr>
+  <tr> 
+    <td><tt>group</tt></td>
+    <td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+    <td>Secondary key: The group name.</td>
+  </tr>
+  <tr> 
+    <td><tt>isSubGroup</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Flag: <tt>0</tt> for groups which are not subgroups, <tt>1</tt> for groups 
+      which are subgroups.</td>
+  </tr>
+  <tr> 
+    <td><tt>maxResults</tt></td>
+    <td><tt><a href="schema.html#DmtMaxResult">MaxResult</a></tt></td>
+    <td>MaxResults setting for the group.</td>
+  </tr>
+  <tr> 
+    <td><tt>maxScanRows</tt></td>
+    <td><tt><a href="index%231.html#DmtMaxScanRow">MaxScanRow</a></tt></td>
+    <td>MaxScanRows setting for the group.</td>
+  </tr>
+  <tr>
+    <td><tt>GRtimeout</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Length of time (in seconds) a login ticket remains valid.</td>
+  </tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.group ends here ---------------------------- --><a name="db.have"></a><!-- --- db.have begins here -------------------------- -->
+<h2>
+Have - A file in a client's have list (<tt>db.have</tt>)</h2>
+Release 2001.1 -- split into db.have and db.label.
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>clientFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Key: Name of file in client workspace.</td>
+</tr>
+
+<tr>
+<td><tt>depotFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Name of file on depot.</td>
+</tr>
+
+<tr>
+<td><tt>haveRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Have revision.</td>
+</tr>
+
+<tr>
+<td><tt>type</tt></td>
+
+<td><tt><a href="schema.html#DmtFileType">FileType</a></tt></td>
+
+<td>Type of file. (introduced in 99.2)</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr><a name="db.ixdate"></a><!-- --- db.ixdate begins here -------------------------- -->
+<h2>
+IndexDate - Indexing data for date-valued job attributes (<tt>db.ixdate</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>date</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>Key: Date</td>
+</tr>
+
+<tr>
+<td><tt>attr</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Secondary key: Attribute number</td>
+</tr>
+
+<tr>
+<td><tt>value</tt></td>
+
+<td><tt><a href="schema.html#DmtString">String</a></tt></td>
+
+<td>Tertiary key: Attribute value</td>
+</tr>
+</tbody></table>
+
+<p>Related record types:
+<tt><a href="schema.html#db.ixtext">IndexText</a></tt>,
+<tt><a href="schema.html#db.boddate">BodyDate</a></tt>,
+and
+<tt><a href="schema.html#db.bodtext">BodyText</a></tt>.
+</p><p>
+</p><hr size="3"><!-- --- db.ixdate ends here ---------------------------- --><a name="db.ixtext"></a><!-- --- db.ixtext begins here -------------------------- -->
+<h2>
+IndexText - Indexing data for non-date-valued job attributes (<tt>db.ixtext</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>word</tt></td>
+
+<td><tt><a href="schema.html#DmtString">String</a></tt></td>
+
+<td>Key: A word in a job body</td>
+</tr>
+
+<tr>
+<td><tt>attr</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Secondary key: Attribute number</td>
+</tr>
+
+<tr>
+<td><tt>value</tt></td>
+
+<td><tt><a href="schema.html#DmtString">String</a></tt></td>
+
+<td>Tertiary key: Attribute value</td>
+</tr>
+</tbody></table>
+
+<p>Related record types:
+<tt><a href="schema.html#db.ixdate">IndexDate</a></tt>,
+<tt><a href="schema.html#db.boddate">BodyDate</a></tt>,
+and
+<tt><a href="schema.html#db.bodtext">BodyText</a></tt>.
+</p><p>
+</p><hr size="3"><!-- --- db.ixtext ends here ---------------------------- --><a name="db.integ"></a><!-- --- db.integ begins here -------------------------- -->
+<h2>
+Integ - An integration record (<tt>db.integ</tt>)</h2>
+db.integ is obsolete in 2001.1. See <a href="index%231.html#db.integed">db.integed</a>
+and <a href="index%231.html#db.resolve">db.resolve</a>.
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>toFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Key: File from which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>fromFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Secondary key: File to which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>startFromRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Tertiary key: Starting revision of <tt>fromFile</tt></td>
+</tr>
+
+<tr>
+<td><tt>endFromRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Ending revision of <tt>fromFile</tt>.
+<br>
+      If integrating from a single revision (not a revision range), <br>
+      the <tt>startFromRev</tt> and <tt>endFromRev</tt> fields will be identical.</td>
+</tr>
+
+<tr>
+<td><tt>toRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Revision of <tt>toFile</tt> into which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>how</tt></td>
+
+<td><tt><a href="schema.html#DmtIntegHow">IntegHow</a></tt></td>
+
+<td>Integration method: variations on merge/branch/copy/ignore/delete.</td>
+</tr>
+
+<tr>
+<td><tt>committed</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Flag: <tt>0</tt> for <tt>pending</tt>,
+<tt>1</tt> for <tt>committed</tt>.</td>
+</tr>
+
+<tr>
+<td><tt>resolved</tt></td>
+
+    <td><tt><a href="schema.html#DmtResolved">ResolvedStatus</a></tt></td>
+
+<td>Resolution method: unresolved, resolved manually,&nbsp;
+<br>or resolved as part of a branch or delete.</td>
+</tr>
+
+<tr>
+<td><tt>change</tt></td>
+
+<td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+
+<td>Changelist associated with the integration.</td>
+</tr>
+</tbody></table>
+
+<br>&nbsp;
+<p>
+</p><hr size="3"><!-- --- db.integ ends here ---------------------------- --><a name="db.integed"></a><!-- --- db.integed begins here -------------------------- -->
+<h2>
+Integed - A permanent integration record (<tt>db.integed</tt>)</h2>
+&nbsp;
+<table border="3">
+<caption>&lt;</caption>
+
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>toFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Key: File from which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>fromFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Secondary key: File to which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>startFromRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Tertiary key: Starting revision of <tt>fromFile</tt></td>
+</tr>
+
+<tr>
+<td><tt>endFromRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Ending revision of <tt>fromFile</tt>.
+<br>If integrating from a single revision (i.e. not a revision range),
+<br>the <tt>startFromRev</tt> and <tt>endFromRev</tt> fields will be identical.</td>
+</tr>
+
+<tr>
+<td><tt>startToRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Start revision of <tt>toFile</tt> into which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>endToRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>End revision of <tt>toFile</tt> into which integration is being performed.
+Only varies from <tt>startToRev</tt> for reverse integration records&nbsp;</td>
+</tr>
+
+<tr>
+<td><tt>how</tt></td>
+
+<td><tt><a href="schema.html#DmtIntegHow">IntegHow</a></tt></td>
+
+<td>Integration method: variations on merge/branch/copy/ignore/delete.</td>
+</tr>
+
+<tr>
+<td><tt>change</tt></td>
+
+<td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+
+<td>Changelist associated with the integration.</td>
+</tr>
+</tbody></table>
+
+<p>By way of example - here is the output of a <tt>p4 filelog</tt> on a
+file:
+</p><pre>... #31 change 2552 integrate on 1997/01/12 by user@client (filetype) 'description of change'
+... ... merge from //depot/main/p4-win/Jamfile#2,#4
+... ... branch into //depot/r97.1/p4/Jamfile#1</pre>
+
+<table border="3">
+<tbody><tr>
+<th><b>Field</b></th>
+
+<th><b>Value</b></th>
+</tr>
+
+<tr>
+<td><tt>FromFile</tt></td>
+
+<td><tt>Jamfile</tt></td>
+</tr>
+
+<tr>
+<td><tt>ToFile</tt></td>
+
+<td><tt>Jamfile</tt></td>
+</tr>
+
+<tr>
+<td><tt>startFromRev</tt></td>
+
+<td><tt>2</tt></td>
+</tr>
+
+<tr>
+<td><tt>endFromRev</tt></td>
+
+<td><tt>4</tt></td>
+</tr>
+
+<tr>
+<td><tt>toRev</tt></td>
+
+<td><tt>31</tt></td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><a name="db.job"></a><!-- --- db.job begins here -------------------------- -->
+<h2>
+Job - A job record (<tt>db.job</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>job</tt></td>
+
+<td><tt><a href="schema.html#DmtJob">Job</a></tt></td>
+
+<td>Key: A job name.</td>
+</tr>
+
+<tr>
+<td><tt>xuser</tt></td>
+
+<td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+
+<td>User name. Defunct. See <tt><a href="schema.html#db.bodtext">db.bodtext</a></tt>.</td>
+</tr>
+
+<tr>
+<td><tt>xdate</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>Date. Defunct. See <tt><a href="schema.html#db.boddate">db.boddate</a></tt>.</td>
+</tr>
+
+<tr>
+<td><tt>xstatus</tt></td>
+
+<td><tt><a href="schema.html#DmtJobStat">JobStat</a></tt></td>
+
+<td>Job Status. Defunct. See <tt><a href="schema.html#db.bodtext">db.bodtext</a></tt>.</td>
+</tr>
+
+<tr>
+<td><tt>description</tt></td>
+
+<td><tt><a href="schema.html#DmtDescShort">DescShort</a></tt></td>
+
+<td>First 31 characters of job description.</td>
+</tr>
+</tbody></table>
+
+<p>The same data structure was also used in the file <tt>db.jobpend</tt>,
+which was obsoleted in 98.2.
+</p><p>
+</p><hr size="3"><!-- --- db.job ends here ---------------------------- --><a name="db.jobdesc"></a><!-- --- db.jobdesc begins here -------------------------- -->
+<h2>
+JobDesc - A job description - obsoleted in 98.2 (<tt>db.jobdesc</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>xjob</tt></td>
+
+<td><tt><a href="schema.html#DmtJob">Job</a></tt></td>
+
+<td>Key: Defunct.</td>
+</tr>
+
+<tr>
+<td><tt>xdescription</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>Defunct.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.jobdesc ends here ---------------------------- --><a name="db.label"></a><!-- --- db.label begins here -------------------------- -->
+<h2> Label - a file in a label (<tt>db.label</tt>)</h2>
+<p>Key: <tt>name</tt> + <tt>depotFile</tt></p>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>name</tt></td>
+
+<td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+
+    <td>Label name</td>
+</tr>
+
+<tr>
+<td><tt>depotFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Label file</td>
+</tr>
+
+<tr>
+<td><tt>rev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Label file revision</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.label ends here -------------------------- --><a name="db.locks"></a><!-- --- db.locks begins here -------------------------- -->
+<h2>
+Locks - Locked/Unlocked files (<tt>db.locks</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>depotFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Key: File in depot.</td>
+</tr>
+
+<tr>
+<td><tt>client</tt></td>
+
+<td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+
+<td>Secondary key: Domain (client) in which file is open.</td>
+</tr>
+
+<tr>
+<td><tt>user</tt></td>
+
+<td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+
+<td>User who presently has file open.</td>
+</tr>
+
+<tr>
+<td><tt>action</tt></td>
+
+<td><tt><a href="schema.html#DmtAction">Action</a></tt></td>
+
+<td>File is presently open for <tt>add</tt>, <tt>edit</tt>, <tt>delete</tt>,
+<tt>branch</tt>,
+<tt>integrate</tt>, or <tt>import</tt>.</td>
+</tr>
+
+<tr>
+<td><tt>isLocked</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Flag: <tt>0</tt> for unlocked, <tt>1</tt> for locked.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.locks ends here ---------------------------- --><a name="db.logger"></a><!-- --- db.logger begins here -------------------------- -->
+<h2> Logger - A record in the log table (<tt>db.logger</tt>)</h2>
+
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>seq</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+    <td>Key: Sequence number for counting updates. Grows forever.</td>
+</tr>
+
+<tr>
+<td><tt>key</tt></td>
+
+<td><tt><a href="schema.html#DmtString">String</a></tt></td>
+
+<td>Either the word "change" or the word "job".</td>
+</tr>
+
+<tr>
+<td><tt>attr</tt></td>
+
+<td><tt><a href="schema.html#DmtString">String</a></tt></td>
+
+<td>The number of the change or the name of the job that was updated in
+any way.</td>
+</tr>
+</tbody></table>
+
+<hr size="3"><!-- --- db.logger ends here ---------------------------- --><a name="db.message"></a><!-- --- db.message begins here -------------------------- -->
+
+<h2> Message - A record in the messages table (<tt>db.message</tt>)</h2>
+<p>Key: <tt>language</tt> + <tt>id</tt></p>
+<table border="3">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>language</tt></td>
+    <td><tt><a href="schema.html#DmtString">String</a></tt></td>
+    <td>An ASCII string that is a valid P4LANGUAGE setting.<br>
+      Examples: "english" or "japanese".</td>
+  </tr>
+  <tr> 
+    <td><tt>id</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>The message ID.</td>
+  </tr>
+  <tr> 
+    <td><tt>message</tt></td>
+    <td><tt><a href="schema.html#DmtString">String</a></tt></td>
+    <td>The message, which can include substitution characters.</td>
+  </tr>
+</tbody></table>
+<hr size="3">
+<!-- --- db.logger ends here ---------------------------- -->
+<a name="db.monitor"></a>
+<!-- --- db.message begins here -------------------------- -->
+<h2> Monitor - A record in the monitor table (<tt>db.monitor</tt>)</h2>
+<p>Key: <tt>id</tt></p>
+<table border="3" width="365">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>id</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td> P4 process ID</td>
+  </tr>
+  <tr> 
+    <td><tt>user</tt></td>
+    <td><tt><a href="schema.html#DmtString">String</a></tt></td>
+    <td>Process owner</td>
+  </tr>
+  <tr> 
+    <td><tt>func</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>P4 command running</td>
+  </tr>
+  <tr> 
+    <td><tt>args</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>P4 command arguments</td>
+  </tr>
+  <tr> 
+    <td><tt>start</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Start time of process</td>
+  </tr>
+  <tr> 
+    <td><tt>runstate</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td> 
+      <p>Running: 0<br>
+        Terminated: 1</p>
+      </td>
+  </tr>
+  <tr> 
+    <td><tt>client</tt></td>
+    <td><tt><a href="schema.html#DmtString">String</a></tt></td>
+    <td>client workspace associated with command running</td>
+  </tr>
+  <tr> 
+    <td><tt>host</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>host computer associated with command running</td>
+  </tr>
+  <tr> 
+    <td><tt>application</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>application associated with command running</td>
+  </tr>
+  <!--!<tr> -->
+  <!--    <td>client</td>-->
+  <!--   <td><tt><a href="schema.html#DmtString">String</a></tt></td> -->
+  <!--   <td> Client workspace associated with command</td> -->
+  <!--  </tr> -->
+  <!-- <tr> -->
+  <!--   <td>host</td> -->
+  <!--    <td><tt><a href="schema.html#DmtText">Text</a></tt></td> -->
+  <!--   <td>Host machine associated with command</td> -->
+  <!--  </tr> -->
+  <!-- <tr>  -->
+  <!--   <td>App</td> -->
+  <!--   <td><tt><a href="schema.html#DmtText">Text</a></tt></td> -->
+  <!--    <td>Perforce application that issued the command</td> -->
+  <!-- </tr> -->
+</tbody></table>
+
+
+<hr size="3">
+<!-- --- db.message ends here ---------------------------- -->
+
+<a name="db.protect"></a><!-- --- db.protect begins here -------------------------- -->
+<h2>
+Protect - A record in the protections table (<tt>db.protect</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>seq</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Key: Sequence; used internally for parsing multiple-line protection
+specifications.</td>
+</tr>
+
+<tr>
+<td><tt>isGroup</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Flag: <tt>0</tt> for a per-user setting,
+<tt>1</tt> for a per-group
+setting.</td>
+</tr>
+
+<tr>
+<td><tt>user</tt></td>
+
+<td><tt><a href="schema.html#DmtUserWild">UserWild</a></tt></td>
+
+<td>User(s) for whom this record applies.</td>
+</tr>
+
+<tr>
+<td><tt>host</tt></td>
+
+<td><tt><a href="schema.html#DmtDomainWild">DomainWild</a></tt></td>
+
+<td>Domain(s) for which this record applies.</td>
+</tr>
+
+<tr>
+<td><tt>perm</tt></td>
+
+<td><tt><a href="schema.html#DmtPerm">Perm</a></tt></td>
+
+<td>Bit mask describing permissions to be applied.</td>
+</tr>
+
+<tr>
+<td><tt>mapFlag</tt></td>
+
+<td><tt><a href="schema.html#DmtMapFlag">MapFlag</a></tt></td>
+
+<td>Flag: Map the files in or out?</td>
+</tr>
+
+<tr>
+<td><tt>depotFile</tt></td>
+
+<td><tt><a href="schema.html#DmtMapping">Mapping</a></tt></td>
+
+    <td>Files to be mapped in or out.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.protect ends here ---------------------------- --><a name="db.resolve"></a><!-- --- db.resolve begins here -------------------------- -->
+<h2>
+Resolve - a pending integration record, aka a resolve record (<tt>db.resolve</tt>)</h2>
+&nbsp;
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>toFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Key: File from which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>fromFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Secondary key: File to which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>startFromRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Tertiary key: Starting revision of <tt>fromFile</tt></td>
+</tr>
+
+<tr>
+<td><tt>endFromRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+    <td>Ending revision of <tt>fromFile</tt>. If integrating from a single revision 
+      (not a revision range), the <tt>startFromRev</tt> and <tt>endFromRev</tt> 
+      fields are identical.</td>
+</tr>
+
+<tr>
+<td><tt>startToRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Start revision of <tt>toFile</tt> into which integration is being performed.</td>
+</tr>
+
+<tr>
+<td><tt>endToRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>End revision of <tt>toFile</tt> into which integration is being performed.
+Only varies from <tt>startToRev</tt> for reverse integration records&nbsp;</td>
+</tr>
+
+<tr>
+<td><tt>how</tt></td>
+
+<td><tt><a href="schema.html#DmtIntegHow">IntegHow</a></tt></td>
+
+<td>Integration method: variations on merge/branch/copy/ignore/delete.</td>
+</tr>
+
+<tr>
+<td><tt>resolved</tt></td>
+
+    <td><tt><a href="schema.html#DmtResolved">ResolvedStatus</a></tt></td>
+
+<td>Resolution method: unresolved, resolved manually, or resolved as part
+of a branch or delete.</td>
+</tr>
+
+<tr>
+<td height="22"><tt>baseFile</tt></td>
+
+<td height="22"><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td height="22">Base file for 3 way merge</td>
+</tr>
+
+<tr>
+<td><tt>baseRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Base revision for 3 way merge</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><a name="db.rev"></a><!-- --- db.rev begins here -------------------------- -->
+<h2> Rev - A revision record (<tt>db.rev, db.revpx</tt>)</h2>
+
+<table border="3">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>depotFile</tt></td>
+    <td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+    <td>Key: File name as it appears in the depot.</td>
+  </tr>
+  <tr> 
+    <td><tt>depotRev</tt></td>
+    <td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+    <td>Secondary key: Revision number.</td>
+  </tr>
+  <tr> 
+    <td><tt>type</tt></td>
+    <td><tt><a href="schema.html#DmtFileType">FileType</a></tt></td>
+    <td>Flags denoting file type.</td>
+  </tr>
+  <tr> 
+    <td><tt>action</tt></td>
+    <td><tt><a href="schema.html#DmtAction">Action</a></tt></td>
+    <td>Action performed on file: <tt>add</tt>, <tt>edit</tt>, <tt>delete</tt>, 
+      <tt>branch</tt>, <tt>integ</tt>, or <tt>import</tt>.</td>
+  </tr>
+  <tr> 
+    <td><tt>change</tt></td>
+    <td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+    <td>Changelist associated with this revision.</td>
+  </tr>
+  <tr> 
+    <td><tt>date</tt></td>
+    <td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+    <td>Date of changelist submission for this revision.</td>
+  </tr>
+  <tr> 
+    <td><tt>modTime</tt></td>
+    <td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+    <td>Date of last modification of the file when submitted.</td>
+  </tr>
+  <tr> 
+    <td><tt>digest</tt></td>
+    <td><tt><a href="schema.html#DmtDigest">Digest</a></tt></td>
+    <td>MD5 digest of the full file at this revision level. <br>
+      This is usually generated by <tt>p4 verify</tt>, but if <br>
+      not generated, it will be created on-the-fly with commands <br>
+      like <tt>p4 diff</tt>, etc.</td>
+  </tr>
+  <tr> 
+    <td><tt>traitlot</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Group of traits associated with file revision.</td>
+  </tr>
+  <tr> 
+    <td><tt>lbrFile</tt></td>
+    <td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+    <td>Filename for librarian's purposes. <br>
+      Specifies location in the depot's data which, when used with the client 
+      root, holds the file.</td>
+  </tr>
+  <tr> 
+    <td><tt>LbrRev</tt></td>
+    <td><tt><a href="schema.html#DmtLbrRev">LbrRev</a></tt></td>
+    <td>Revision number in the librarian's archive.</td>
+  </tr>
+  <tr> 
+    <td><tt>lbrType</tt></td>
+    <td><tt><a href="schema.html#DmtFileType">FileType</a></tt></td>
+    <td>File type for librarian's purposes.</td>
+  </tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.rev ends here ---------------------------- --><a name="db.revcx"></a><!-- --- db.revcx begins here -------------------------- -->
+<h2>
+RevCx - Revision change index (<tt>db.revcx</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>change</tt></td>
+
+<td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+
+<td>Key: Changelist associated with this revision</td>
+</tr>
+
+<tr>
+<td><tt>depotFile</tt></td>
+
+<td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+
+<td>Secondary key: Filename in depot.</td>
+</tr>
+
+<tr>
+<td><tt>depotRev</tt></td>
+
+<td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+
+<td>Revision number of the filename in depot.</td>
+</tr>
+
+<tr>
+<td><tt>action</tt></td>
+
+<td><tt><a href="schema.html#DmtAction">Action</a></tt></td>
+
+<td>File was opened for add/edit/delete/branch/integrate/import.</td>
+</tr>
+</tbody></table>
+
+<p>This is a subset of the information in the
+<tt><a href="schema.html#db.rev">Rev</a></tt>
+table, but with different indexing.
+</p><p>
+</p><hr size="3"><!-- --- db.revcx ends here ---------------------------- --><a name="db.review"></a><!-- --- db.review begins here -------------------------- -->
+<h2>
+Review - A reviewer record (<tt>db.review</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>user</tt></td>
+
+<td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+
+<td>Key: Use&nbsp;</td>
+</tr>
+
+<tr>
+<td><tt>seq</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Secondary key: Sequence; used internally for parsing multiple-line
+review specs.</td>
+</tr>
+
+<tr>
+<td><tt>mapFlag</tt></td>
+
+<td><tt><a href="schema.html#DmtMapFlag">MapFlag</a></tt></td>
+
+<td>Flag to map files in/out of review process</td>
+</tr>
+
+<tr>
+<td><tt>depotFile</tt></td>
+
+<td><tt><a href="schema.html#DmtMapping">Mapping</a></tt></td>
+
+<td>Files to be mapped in/out of review process</td>
+</tr>
+
+<tr>
+<td><tt>type</tt></td>
+
+<td><tt><a href="schema.html#DmtReviewer">Reviewer</a></tt></td>
+
+<td>Type of reviewer: presently only one (<tt>review</tt>).</td>
+</tr>
+</tbody></table>
+
+<hr size="3">
+<!-- --- db.review ends here ---------------------------- -->
+<a name="db.trait"></a> 
+<!-- --- db.trait begins here -------------------------- -->
+<h2> Trait - A trait record (<tt>db.trait</tt>)</h2>
+<table border="3">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>traitLot</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Indicates a specific collection of traits (referred to externally as "attributes".)</td>
+  </tr>
+  <tr> 
+    <td><tt>name</tt></td>
+    <td><tt><a href="schema.html#DmtString">String</a></tt></td>
+    <td>Trait name</td>
+  </tr>
+  <tr> 
+    <td><tt>type</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td> 
+      <p>0: reference counter<br>
+        1: binary trait</p>
+      </td>
+  </tr>
+  <tr> 
+    <td><tt>value</tt></td>
+    <td><tt><a href="schema.html#DmtMapping">Octet</a></tt></td>
+    <td>Trait value</td>
+  </tr>
+</tbody></table>
+<p> 
+</p><hr size="3"><!-- --- db.review ends here ---------------------------- --><a name="db.trigger"></a><!-- --- db.trigger begins here -------------------------- -->
+<h2>
+Trigger - A line in a Perforce trigger (<tt>db.trigger</tt>)</h2>
+
+<table border="3">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>seq</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Key: Sequence; used internally for parsing multiple-line triggers.</td>
+  </tr>
+  <tr> 
+    <td><tt>name</tt></td>
+    <td><tt><a href="schema.html#DmtString">String</a></tt></td>
+    <td>Trigger name</td>
+  </tr>
+  <tr> 
+    <td><tt>mapFlag</tt></td>
+    <td><tt><a href="schema.html#DmtMapFlag">MapFlag</a></tt></td>
+    <td>Flag: are files mapped in or mapped out of trigger?</td>
+  </tr>
+  <tr> 
+    <td><tt>depotFile</tt></td>
+    <td><tt><a href="schema.html#DmtMapping">Mapping</a></tt></td>
+    <td>Flag: <tt>0</tt> for mapped-in files (the default), <tt>1</tt> for files 
+      excluded with the <tt>-</tt> prefix.</td>
+  </tr>
+  <tr> 
+    <td>trigger</td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>
+      <p>Type of trigger:</p>
+      <p>0: pre-submit<br>
+        1: in-submit content access<br>
+        2: post-submit<br>
+        3: -i pre-save form; can update<br>
+        4: -o form; can update<br>
+        5: -i saved form</p>
+    </td>
+  </tr>
+  <tr> 
+    <td><tt>action</tt></td>
+    <td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+    <td>Action to be performed by trigger.</td>
+  </tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.trigger ends here ---------------------------- --><a name="db.user"></a><!-- --- db.user begins here -------------------------- -->
+<h2>
+User - A user record (<tt>db.user</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>user</tt></td>
+
+<td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+
+<td>Key: A user name.</td>
+</tr>
+
+<tr>
+<td><tt>email</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>The user's e-mail address.</td>
+</tr>
+
+<tr>
+<td><tt>jobView</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>The user's jobview.</td>
+</tr>
+
+<tr>
+<td><tt>updateDate</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>Date of last update to user record.</td>
+</tr>
+
+<tr>
+<td><tt>accessDate</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>Date of last access of user record.</td>
+</tr>
+
+<tr>
+<td><tt>fullName</tt></td>
+
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>User's full name.</td>
+</tr>
+
+<tr>
+<td><tt>password</tt></td>
+
+<td><tt><a href="schema.html#DmtPassword">Password</a></tt></td>
+
+<td>MD5 hash of user's password.</td>
+</tr>
+
+<tr>
+<td><tt>strength</tt></td>
+
+<td><tt><a href="schema.html#DmtStrength">Strength</a></tt></td>
+
+<td>Strength  of user's password.</td>
+</tr>
+
+<tr>
+<td><tt>ticket</tt></td>
+
+<td><tt><a href="schema.html#DmtPassword">Password</a></tt></td>
+
+<td>Ticket for this user</td>
+</tr>
+
+<tr>
+<td><tt>endDate</tt></td>
+
+<td><tt><a href="schema.html#DmtDate">Date</a></tt></td>
+
+<td>Ticket expiry date/time</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.user ends here ---------------------------- --><a name="db.view"></a><!-- --- db.view begins here -------------------------- -->
+<h2>
+View - A view record (<tt>db.view</tt>)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Name</b></th>
+
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>name</tt></td>
+
+<td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+
+<td>Key: Name of domain to which view applies</td>
+</tr>
+
+<tr>
+<td><tt>seq</tt></td>
+
+<td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+
+<td>Secondary key: Sequence; used internally for parsing multiple-line
+triggers.</td>
+</tr>
+
+<tr>
+<td><tt>mapFlag</tt></td>
+
+<td><tt><a href="schema.html#DmtMapFlag">MapFlag</a></tt></td>
+
+<td>Flag: <tt>0</tt> for mapped-in files (the default),
+<tt>1</tt> for
+files excluded with the <tt>-</tt> prefix.</td>
+</tr>
+
+<tr>
+<td><tt>viewFile</tt></td>
+
+<td><tt><a href="schema.html#DmtMapping">Mapping</a></tt></td>
+
+<td>The right-hand side (client side) of the view.
+<br>For label views, this is automatically generated as the
+<br>depot side of the view, but with the depot name replaced
+<br>by the label name.</td>
+</tr>
+
+<tr>
+<td><tt>depotFile</tt></td>
+
+<td><tt><a href="schema.html#DmtMapping">Mapping</a></tt></td>
+
+<td>The left-hand side (depot side) of the view.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- db.view ends here ---------------------------- --><a name="db.working"></a><!-- --- db.working begins here -------------------------- -->
+<h2>
+Working - A record in the working changelist (<tt>db.working</tt>)</h2>
+
+<table border="3">
+  <tbody><tr> 
+    <th><b>Name</b></th>
+    <th><b>Type</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr> 
+    <td><tt>clientFile</tt></td>
+    <td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+    <td>Key: Name of file on client.</td>
+  </tr>
+  <tr> 
+    <td><tt>depotFile</tt></td>
+    <td><tt><a href="schema.html#DmtFile">File</a></tt></td>
+    <td>Name of file in depot.</td>
+  </tr>
+  <tr> 
+    <td><tt>client</tt></td>
+    <td><tt><a href="schema.html#DmtDomain">Domain</a></tt></td>
+    <td>Client domain.</td>
+  </tr>
+  <tr> 
+    <td><tt>user</tt></td>
+    <td><tt><a href="schema.html#DmtUser">User</a></tt></td>
+    <td>User name</td>
+  </tr>
+  <tr> 
+    <td><tt>haveRev</tt></td>
+    <td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+    <td>Revision presently in user's client workspace. <br>
+      This is normally identical to <tt>workRev</tt> except for the case <br>
+      in which you've tried to submit a file where you no longer have the <br>
+      head revision. Perforce schedules the integrate (i.e. moves <tt>workRev</tt> 
+      <br>
+      to <tt>headRev</tt>, but doesn't change the <tt>haveRev</tt>, so that a 
+      <br>
+      <tt>p4 revert</tt> will return the file originally checked-out instead of 
+      <br>
+      the new head revision.</td>
+  </tr>
+  <tr> 
+    <td><tt>workRev</tt></td>
+    <td><tt><a href="schema.html#DmtRev">Rev</a></tt></td>
+    <td>Working revision; this is identical to the <tt>haveRev</tt> <br>
+      except in the case described above.</td>
+  </tr>
+  <tr> 
+    <td><tt>isVirtual</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Flag: if 1, file was opened with "p4 integ -v".</td>
+  </tr>
+  <tr> 
+    <td><tt>type</tt></td>
+    <td><tt><a href="schema.html#DmtFileType">FileType</a></tt></td>
+    <td>File type</td>
+  </tr>
+  <tr> 
+    <td><tt>action</tt></td>
+    <td><tt><a href="schema.html#DmtAction">Action</a></tt></td>
+    <td>User has file open for add/edit/delete/branch/integrate/import?</td>
+  </tr>
+  <tr> 
+    <td><tt>change</tt></td>
+    <td><tt><a href="schema.html#DmtChange">Change</a></tt></td>
+    <td>Associated changelist, if a changelist is associated with a file.</td>
+  </tr>
+  <tr> 
+    <td><tt>modTime</tt></td>
+    <td><tt><a href="schema.html#DmtDate">date</a></tt></td>
+    <td>Date when file was opened and added to the working changelist.</td>
+  </tr>
+  <tr> 
+    <td><tt>isLocked</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Flag: <tt>0</tt> for unlocked, <tt>1</tt> for locked.</td>
+  </tr>
+  <tr> 
+    <td><tt>digest</tt></td>
+    <td><tt><a href="schema.html#DmtDigest">Digest</a></tt></td>
+    <td>MD5 digest of working file</td>
+  </tr>
+  <tr> 
+    <td><tt>traitlot</tt></td>
+    <td><tt><a href="schema.html#DbtInt">Int</a></tt></td>
+    <td>Group of traits associated with file revision.</td>
+  </tr>
+</tbody></table>
+
+<p>
+</p><hr size="3">
+<h1><a name="Datatypes"></a>Data Types</h1>
+<hr size="3">
+<!-- --- db.working ends here ---------------------------- -->
+<a name="DbtInt"></a>
+<!-- --- DbtInt begins here -------------------------- -->
+<h2>
+Int - An integer</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Int</td>
+
+<td>An ASCII string representing an integer value.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DbtInt ends here ---------------------------- --><a name="DbtInt1"></a><!-- --- DbtInt1 begins here -------------------------- -->
+<h2>
+Int1 - A 1-byte integer</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Int1</td>
+
+<td>An ASCII string representing an integer value from 0..255.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DbtInt1 ends here ---------------------------- --><a name="DmtAction"></a><!-- --- DmtAction begins here -------------------------- -->
+<h2>
+Action - Action types for revision updates</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Action</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td><tt>add</tt>; user adds a file.</td>
+</tr>
+
+<tr>
+<td><tt>1</tt></td>
+
+<td><tt>edit</tt>; user edits a file.</td>
+</tr>
+
+<tr>
+<td><tt>2</tt></td>
+
+<td><tt>delete</tt>; user deletes a file.</td>
+</tr>
+
+<tr>
+<td><tt>3</tt></td>
+
+<td><tt>branch</tt>; add via integration.</td>
+</tr>
+
+<tr>
+<td><tt>4</tt></td>
+
+<td><tt>integ</tt>; edit via integration.</td>
+</tr>
+
+<tr>
+<td><tt>5</tt></td>
+
+<td><tt>import</tt>; add via remote integration.</td>
+</tr>
+
+<tr>
+<td><tt>6</tt></td>
+
+<td><tt>purge</tt>; purged revision entry.</td>
+</tr>
+
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtAction ends here ---------------------------- --><a name="DmtChange"></a><!-- --- DmtChange begins here -------------------------- -->
+<h2>
+Change - A changelist number</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Change number</td>
+
+<td>An ASCII string representing a changelist number.
+<br>The string <tt>0</tt> refers to the <tt>default</tt> changelist. (i.e.
+a new change)</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtChange ends here ---------------------------- --><a name="DmtCounter"></a><!-- --- DmtCounter begins here -------------------------- -->
+<h2>
+Counter - A counter name</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Name</td>
+
+<td>An ASCII string representing a counter name. Counter names
+<br>must contain no spaces, contain no slashes, and be identifiers
+<br>(i.e. cannot begin with a dash and cannot be all-numeric)</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtCounter ends here ---------------------------- --><a name="DmtDate"></a><!-- --- DmtDate begins here -------------------------- -->
+<h2>
+Date - Time and date</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Date</td>
+
+<td>An ASCII string representing the number of seconds since the Epoch.
+<br>(i.e. the number of seconds since 00:00:00 UTC, January 1, 1970.
+<br><tt>919283152</tt> is a date in early 1999.)</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDate ends here ---------------------------- --><a name="DmtDepotType"></a><!-- --- DmtDepotType begins here -------------------------- -->
+<h2>
+DepotType - Type of depot</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td>A <tt>local</tt> depot.</td>
+</tr>
+
+<tr>
+<td><tt>1</tt></td>
+
+<td>A <tt>remote</tt> depot.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDepotType ends here ---------------------------- --><a name="DmtDescShort"></a><!-- --- DmtDescShort begins here -------------------------- -->
+<h2>
+DescShort - Shortened comment field derived from larger one</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>String</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt><a href="schema.html#DmtText">Text</a></tt></td>
+
+<td>The first 31 characters of a <tt><a href="schema.html#DmtText">Text</a></tt>
+string.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDescShort ends here ---------------------------- --><a name="DmtDigest"></a><!-- --- DmtDigest begins here -------------------------- -->
+<h2>
+Digest - A 16-byte MD5 digest of a block of text</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Digest</td>
+
+<td>An ASCII string representing the hex digits of the 16-byte MD5 digest.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDigest ends here ---------------------------- --><a name="DmtDomain"></a><!-- --- DmtDomain begins here -------------------------- -->
+<h2>
+Domain - A client, label, branch, or depot name</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Domain</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Name</td>
+
+<td>An ASCII string representing the client, label, branch, or depot name.
+<br>See also <tt><a href="schema.html#DmtDomainType">DomainType</a></tt>
+and <tt><a href="schema.html#DmtDomainOpts">DomainOpts</a></tt>.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDomain ends here ---------------------------- --><a name="DmtDomainOpts"></a><!-- --- DmtDomainOpts begins here -------------------------- -->
+<h2>
+DomainOpts - Options for client, label, and branch domains</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Domain Options</b></th>
+
+<th><b>Comments</b></th>
+</tr>
+
+<tr>
+<td><tt>DomainFlags:</tt> Domain options
+<table border="">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0x0001</td>
+
+<td>Modtime: set for <tt>modtime</tt>, unset for <tt>nomodtime</tt>.</td>
+</tr>
+
+<tr>
+<td>0x0002</td>
+
+<td>Clobber: set for <tt>clobber</tt>, unset for <tt>noclobber</tt>.</td>
+</tr>
+
+<tr>
+<td>0x0004</td>
+
+<td>Allwrite: set for <tt>allwrite</tt>, unset for <tt>noallwrite</tt>.</td>
+</tr>
+
+<tr>
+<td>0x0008</td>
+
+<td>Locked: set for <tt>locked</tt>, unset for <tt>unlocked</tt>.</td>
+</tr>
+
+<tr>
+<td>0x0020</td>
+
+<td>Compress: set for <tt>compress</tt>, unset for <tt>nocompress</tt>.</td>
+</tr>
+
+<tr>
+<td>0x0040</td>
+
+<td>Rmdir: set for <tt>rmdir</tt>, unset for <tt>normdir</tt>.</td>
+</tr>
+
+<tr>
+<td>0x0010</td>
+
+<td>LineLF: client is forced LF (LineEnd <tt>unix</tt>).</td>
+</tr>
+
+<tr>
+<td>0x0200</td>
+
+<td>LineLF: client is forced CR (LineEnd <tt>mac</tt>).</td>
+</tr>
+
+<tr>
+<td>0x0300</td>
+
+<td>LineLF: client is forced CRLF (LineEnd <tt>win</tt>).</td>
+</tr>
+
+<tr>
+<td>0x0400</td>
+
+<td>LineLF: client is write LF, read LF or CRLF (LineEnd <tt>share</tt>).</td>
+</tr>
+</tbody></table>
+</td>
+
+<td>Clients:&nbsp;
+<br><tt>Modtime</tt>, <tt>Clobber</tt>, <tt>Allwrite</tt>, <tt>Locked</tt>,
+<tt>Compress</tt>,
+<tt>Rmdir</tt>, and the <tt>LineEnd</tt> flags are legal.
+<p>Labels:&nbsp;
+<br><tt>Locked</tt> is only legal flag.
+</p><p>Branches:&nbsp;
+<br><tt>Locked</tt> is only legal flag.
+</p><p>Depots:&nbsp;
+<br>No flags are applicable. Should be set to <tt>0x0000</tt>.</p></td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDomainOpts ends here ---------------------------- --><a name="DmtDomainType"></a><!-- --- DmtDomainType begins here -------------------------- -->
+<h2>
+Domain - Domain types (client/branch/label/depot)</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Domain Type</b></th>
+
+<th><b>Comments</b></th>
+</tr>
+
+<tr>
+<td><tt>DomTypeType:</tt>
+<table border="">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>c</tt></td>
+
+<td>Client</td>
+</tr>
+
+<tr>
+<td><tt>l</tt></td>
+
+<td>Label</td>
+</tr>
+
+<tr>
+<td><tt>b</tt></td>
+
+<td>Branch</td>
+</tr>
+
+<tr>
+<td><tt>d</tt></td>
+
+<td>Depot</td>
+</tr>
+</tbody></table>
+</td>
+
+<td>DomTypeType: Valid types for clients, labels, branches, and depots.</td>
+</tr>
+
+<tr>
+<td><tt>DomainType:</tt>
+<table border="">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Domain Type</td>
+
+<td>Presently one of the characters <tt>c</tt>, <tt>l</tt>, <tt>b</tt>,
+or d (ASCII 99, 108, 98, 100) .</td>
+</tr>
+</tbody></table>
+</td>
+
+<td>DomainType: A value from DomTypeType above.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDomainType ends here ---------------------------- --><a name="DmtDomainWild"></a><!-- --- DmtDomainWild begins here -------------------------- -->
+<h2>
+DomainWild - Domains that can contain wildcards</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Type</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Name</td>
+
+<td>A <tt><a href="schema.html#DmtDomain">Domain</a></tt> name that can
+contain wildcards.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtDomainWild ends here ---------------------------- --><a name="DmtFile"></a><!-- --- DmtFile begins here -------------------------- -->
+<h2>
+File - A file name</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>File name</td>
+
+<td>An ASCII string of up to 128 characters, representing a filename.
+<br>Note that no path information is included in a filename.
+<br>(e.g. The filename for <tt>foo://bar/baz.txt</tt> is <tt>baz.txt</tt>.)
+<br>Also see <tt><a href="schema.html#DmtFileType">FileType</a></tt>.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtFile ends here ---------------------------- --><a name="DmtFileType"></a><!-- --- DmtFileType begins here -------------------------- -->
+<h2>
+FileType - File type for client/server</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Storage Type</b></th>
+
+<th><b>Comments</b></th>
+</tr>
+
+<tr>
+<td><tt>FileStorageType:</tt>
+<table border="">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0x0000</td>
+
+<td>RCS</td>
+</tr>
+
+<tr>
+<td>0x0001</td>
+
+<td>binary</td>
+</tr>
+
+<tr>
+<td>0x0002</td>
+
+<td>tiny (uncompressed)</td>
+</tr>
+
+<tr>
+<td>0x0003</td>
+
+<td>compressed</td>
+</tr>
+
+<tr>
+<td>0x0005</td>
+
+<td>(lbrtype only:) old onerev (deprecated)</td>
+</tr>
+
+<tr>
+<td>0x0006</td>
+
+<td>compressed temp object (deprecated)</td>
+</tr>
+
+<tr>
+<td>0x000F</td>
+
+<td>storage type bit mask</td>
+</tr>
+</tbody></table>
+</td>
+
+<td>FileType - file type for client/server:
+<p>The layout is as follows:&nbsp;
+</p><pre>&nbsp; 0xXXXX
+&nbsp;&nbsp;&nbsp; ||||
+&nbsp;&nbsp;&nbsp; |||+- storage method
+&nbsp;&nbsp;&nbsp; ||+-- storage method modifiers
+&nbsp;&nbsp;&nbsp; |+--- client access method + modifiers
+&nbsp;&nbsp;&nbsp; +---- client access modifiers known to server</pre>
+SetOld() handles conversion from when the type was a uchar and each indicator
+was only a nybble: <tt>0xF0</tt> was moved to <tt>0xF00</tt> and <tt>0x02</tt>
+was moved to <tt>0x10</tt>.
+<p>No one ever sets these values literally -- only symbolically. But we
+define them here for completeness.
+</p><p><tt>0xFFFF</tt> stands for file type unset.&nbsp;</p></td>
+</tr>
+
+<tr>
+<td><tt>FileStorageMods:</tt>
+<table border="">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0x0010</td>
+
+<td>Keyed 99.2</td>
+</tr>
+
+<tr>
+<td>0x0020</td>
+
+<td>Keyed 2000.1</td>
+</tr>
+
+<tr>
+<td>0x0030</td>
+
+<td>Any keyed 2000.1</td>
+</tr>
+
+<tr>
+<td>0x0040</td>
+
+<td>Exclusive access</td>
+</tr>
+
+<tr>
+<td>0x0080</td>
+
+<td>Tempobj (+S) 2002.2</td>
+</tr>
+
+<tr>
+<td>0x00F0</td>
+
+<td>Storage modifier bit mask</td>
+</tr>
+</tbody></table>
+</td>
+
+<td></td>
+</tr>
+
+<tr>
+<td><tt>FileClientType:</tt>
+<table border="">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0x0000</td>
+
+<td>Text</td>
+</tr>
+
+<tr>
+<td>0x0100</td>
+
+<td>Binary</td>
+</tr>
+
+<tr>
+<td>0x0400</td>
+
+<td>Symlink</td>
+</tr>
+
+<tr>
+<td>0x0500</td>
+
+<td>Resource</td>
+</tr>
+
+<tr>
+<td>0x0800</td>
+
+<td>Unicode</td>
+</tr>
+
+<tr>
+<td>0x0900</td>
+
+<td>RawText (no CRLF)</td>
+</tr>
+
+<tr>
+<td>0x0C00</td>
+
+<td>Mac data + rsrc text (2000.2)</td>
+</tr>
+
+<tr>
+<td>0x0D00</td>
+
+<td>Mac data + rsrc (99.2)</td>
+</tr>
+
+<tr>
+<td>0x0200</td>
+
+<td>Executable bit set</td>
+</tr>
+
+<tr>
+<td>0x0D00</td>
+
+<td>Client type bit mask</td>
+</tr>
+
+<tr>
+<td>0x0F00</td>
+
+<td>Client type (with mods) bit mask</td>
+</tr>
+</tbody></table>
+</td>
+
+<td></td>
+</tr>
+
+<tr>
+<td><tt>FileClientMods:</tt>
+<table border="">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0x1000</td>
+
+<td>Always writable</td>
+</tr>
+
+<tr>
+<td>0x2000</td>
+
+<td>Save client mod time</td>
+</tr>
+
+<tr>
+<td>0xF000</td>
+
+<td>Client modifier bits</td>
+</tr>
+</tbody></table>
+</td>
+
+<td></td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtFileType ends here -------------------------- --><a name="DmtFixStatus"></a><!-- --- DmtFixStatus begins here ---------------------------- -->
+<h2>
+FixStatus - how a change affects a job</h2>
+This is a wrapper around DmtText (case sensitive string) that handles the
+pre-2000.1 "closed" default value.
+<p>
+</p><hr size="3"><!-- --- DmtFixStatus ends here ---------------------------- --><a name="DmtIntegHow"></a><!-- --- DmtIntegHow begins here ---------------------------- -->
+<h2>
+IntegHow - How was an integration performed</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td><tt>merge from</tt>; integration with other changes.</td>
+</tr>
+
+<tr>
+<td><tt>1</tt></td>
+
+<td><tt>merge into</tt>; reverse merge.</td>
+</tr>
+
+<tr>
+<td><tt>2</tt></td>
+
+<td><tt>branch from</tt>; integration was branch of file.</td>
+</tr>
+
+<tr>
+<td><tt>3</tt></td>
+
+<td><tt>branch into</tt>; reverse branch.</td>
+</tr>
+
+<tr>
+<td><tt>4</tt></td>
+
+<td><tt>copy from</tt>; integration took source file whole.</td>
+</tr>
+
+<tr>
+<td><tt>5</tt></td>
+
+<td><tt>copy into</tt>; reverse take.</td>
+</tr>
+
+<tr>
+<td><tt>6</tt></td>
+
+<td><tt>ignored</tt>; integration ignored source changes.</td>
+</tr>
+
+<tr>
+<td><tt>7</tt></td>
+
+<td><tt>ignored by</tt>; reverse copy.</td>
+</tr>
+
+<tr>
+<td><tt>8</tt></td>
+
+<td><tt>delete from</tt>; integration of delete.</td>
+</tr>
+
+<tr>
+<td><tt>9</tt></td>
+
+<td><tt>delete into</tt>; reverse delete.</td>
+</tr>
+
+<tr>
+<td><tt>10</tt></td>
+
+<td><tt>dirty merge into</tt>; reverse of integration downgraded to edit.</td>
+</tr>
+
+<tr>
+<td><tt>11</tt></td>
+
+<td><tt>dirty branch into</tt>; reverse of branch downgraded to add.</td>
+</tr>
+</tbody></table>
+
+<p>Definitions of terms in above table:
+<table border="3">
+<tbody><tr>
+<th><b>Type</b></th>
+
+<th><b>Definition</b></th>
+</tr>
+
+<tr>
+<td><tt>merge</tt></td>
+
+<td>A normal three-way merge, dirty or pure.</td>
+</tr>
+
+<tr>
+<td><tt>branch</tt></td>
+
+<td>First-time creation of target file.</td>
+</tr>
+
+<tr>
+<td><tt>copy</tt></td>
+
+<td>The target file became identical to the source file.</td>
+</tr>
+
+<tr>
+<td><tt>ignore</tt></td>
+
+<td>The target didn't take the source changes.</td>
+</tr>
+
+<tr>
+<td><tt>delete</tt></td>
+
+<td>A delete was integrated.</td>
+</tr>
+</tbody></table>
+
+</p><p>Note that all integration records should have a corresponding reverse
+record. The <tt>branch from</tt> (<tt>2</tt>) and <tt>merge from</tt> (<tt>0</tt>)
+options have corresponding "dirty" reverse records for cases where the
+target file took more than one change or was (re)opened for "edit" or "add".
+</p><p>Also note that <tt>merge from</tt> is in the first slot for compatibility
+with the pre-#827 server that never filled it in.
+</p><p>
+</p><hr size="3"><!-- --- DmtIntegHow ends here ---------------------------- --><a name="DmtJob"></a><!-- --- DmtJob begins here -------------------------- -->
+<h2>
+Job - A job name</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Job Name</td>
+
+<td>An 8-character ASCII string representing a job name.
+<br>The string is composed of a two-character prefix and a 6-character
+job number.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtJob ends here ---------------------------- --><a name="DmtJobStat"></a><!-- --- DmtJobStat begins here -------------------------- -->
+<h2>
+JobStat - Job status</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Status</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td>Job is <tt>open</tt>; change is still plastic.</td>
+</tr>
+
+<tr>
+<td><tt>1</tt></td>
+
+<td>Job is <tt>closed</tt>; change has been committed.</td>
+</tr>
+
+<tr>
+<td><tt>2</tt></td>
+
+<td>Job is <tt>suspended</tt>; change is open but not being worked on.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtJobStat ends here ---------------------------- --><a name="DmtLbrRev"></a><!-- --- DmtLbrRev begins here -------------------------- -->
+<h2>
+LbrRev - Revision numbers in the librarian's archive</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Revision</td>
+
+<td>Revision for librarian. Used internally.
+<br>Usually a <tt>1.</tt> prefix that is prepended to the librarian's filename.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtLbrRev ends here ---------------------------- --><a name="DmtMapFlag"></a><!-- --- DmtMapFlag begins here -------------------------- -->
+<h2>
+MapFlag - Map/Unmap flag</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0</td>
+
+<td>The "normal" <tt><a href="schema.html#DmtMapping">Mapping</a></tt>,
+overrides earlier mappings that it overlaps.</td>
+</tr>
+
+<tr>
+<td>1</td>
+
+<td>The "exclusive" ( - ) <tt><a href="schema.html#DmtMapping">Mapping</a></tt>,
+removes earlier mappings that it overlaps.</td>
+</tr>
+
+<tr>
+<td>2</td>
+
+<td>The "additional" ( + ) <tt><a href="schema.html#DmtMapping">Mapping</a></tt>,
+does not affect earlier mappings.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtMapFlag ends here ---------------------------- --><a name="DmtMapping"></a><!-- --- DmtMapping begins here -------------------------- -->
+<h2>
+Mapping - A mapping</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Mapping</td>
+
+<td>An ASCII string of up to 128 characters, representing a mapping.
+<br>A mapping looks like a <tt><a href="schema.html#DmtFile">File</a></tt>
+name, but permits the use of wildcards.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtMapping ends here ---------------------------- --><a name="DmtMapState"></a><!-- --- DmtMaState begins here -------------------------- -->
+<h2>
+MapState - client mapping state</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>State</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0</td>
+
+<td>The client map has changed since the last sync.</td>
+</tr>
+
+<tr>
+<td>1</td>
+
+<td>The have list has been verified to match the client map.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtMapState ends here ---------------------------- --><a name="DmtMaxResult"></a><!-- --- DmtMaxResult begins here -------------------------- -->
+<h2>
+MaxResult - A group's MaxResults setting</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>MaxResult</td>
+
+<td>An ASCII representation of the integer holding the MaxResult setting.
+<br>If <tt>0</tt>, MaxResults is <tt>unlimited</tt>.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtMapState ends here ---------------------------- --><a name="DmtMaxScanRow"></a><!-- --- DmtMaxResult begins here -------------------------- -->
+<h2>
+MaxScanRow - A group's MaxScanRows setting</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>MaxScanRow</td>
+
+<td>An ASCII representation of the integer holding the MaxScanRows setting.
+<br>If <tt>0</tt>, MaxScanRows is <tt>unlimited</tt>.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><p> 
+</p><hr size="3">
+<!-- --- DmtMapState ends here ---------------------------- -->
+<a name="DmtMaxScanRow"></a>
+<!-- --- DmtMaxResult begins here -------------------------- -->
+<h2> Octet - a variable-length hex-encoded string</h2>
+<table border="3" width="549">
+  <tbody><tr> 
+    <th><b>Value</b></th>
+    <th><b>Explanation</b></th>
+  </tr>
+  <tr>
+    <td>Length</td>
+    <td>Inteteger specifiying the number of hex-encoded bytes to follow</td>
+  </tr>
+  <tr> 
+    <td>HexString</td>
+    <td>Hex-encoded data</td>
+  </tr>
+</tbody></table>
+<hr size="3"><!-- --- DmtMaxResult ends here ---------------------------- --><a name="DmtPassword"></a><!-- --- DmtPassword begins here -------------------------- -->
+<h2>
+Password - MD5 hash of a user's password</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Password</td>
+
+<td>MD5 hash of user's password.
+<br>Displayed as <tt>******</tt> within the application.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtPassword ends here ---------------------------- --><a name="DmtPerm"></a><!-- --- DmtPerm begins here -------------------------- -->
+<h2>
+Perm - Permissions</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Bit</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>0x01</td>
+
+<td><tt>list</tt>; the user can list file names.</td>
+</tr>
+
+<tr>
+<td>0x02</td>
+
+<td><tt>read</tt>; the user can read files.</td>
+</tr>
+
+<tr>
+<td>0x04</td>
+
+<td><tt>integ from</tt>; permits files to be used as
+<br>the source for 'p4 integrate'</td>
+</tr>
+
+<tr>
+<td>0x08</td>
+
+<td><tt>open</tt>; the user can check files out.</td>
+</tr>
+
+<tr>
+<td>0x10</td>
+
+<td><tt>write</tt>; the user can check files in.</td>
+</tr>
+
+<tr>
+<td>0x20</td>
+
+<td><tt>review</tt>; the user can run as a reviewer.</td>
+</tr>
+
+<tr>
+<td>0x80</td>
+
+<td><tt>admin</tt>; the user can run some administrative commands.</td>
+</tr>
+
+<tr>
+<td>0x40</td>
+
+<td><tt>super</tt>; the user can change permissions.</td>
+</tr>
+
+<tr>
+<td>0x07</td>
+
+<td>up to <tt>integ from</tt></td>
+</tr>
+
+<tr>
+<td>0x1F</td>
+
+<td>up to <tt>write</tt></td>
+</tr>
+
+<tr>
+<td>0xBF</td>
+
+<td>up to <tt>admin</tt></td>
+</tr>
+
+<tr>
+<td>0xFF</td>
+
+<td>up to <tt>super</tt></td>
+</tr>
+</tbody></table>
+
+<p>Permissions compare as follows: <tt>none</tt> &lt; <tt>list</tt> &lt;
+<tt>read</tt>
+&lt; <tt>integ from &lt; open</tt> &lt; <tt>write</tt>/<tt>review</tt>
+&lt; <tt>super</tt>, with the caveat that <tt>write</tt> permission does
+not imply <tt>review</tt> permission, and vice versa.
+</p><p>
+</p><hr size="3"><!-- --- DmtPerm ends here ---------------------------- --><a name="DmtResolved"></a><!-- --- DmtResolved begins here -------------------------- -->
+<h2>
+ResolvedStatus - How was an integration resolved</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Status</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td>Not yet resolved.</td>
+</tr>
+
+<tr>
+<td><tt>1</tt></td>
+
+<td>Resolved manually.</td>
+</tr>
+
+<tr>
+<td><tt>2</tt></td>
+
+<td>Resolved automatically as part of a branch.</td>
+</tr>
+
+<tr>
+<td><tt>3</tt></td>
+
+<td>Resolved automatically as part of a delete.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtResolved ends here ---------------------------- --><a name="DmtRev"></a><!-- --- DmtRev begins here -------------------------- -->
+<h2>
+Rev - A revision number for a depot file</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Revision number</td>
+
+<td>An ASCII string representing a revision number.
+<br>The string <tt>0</tt> refers to revision <tt>#none</tt>.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtRev ends here ---------------------------- --><a name="DmtReviewer"></a><!-- --- DmtReviewer begins here -------------------------- -->
+<h2>
+Reviewer - Reviewer type</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td><tt>review</tt>; at present, there is only one reviewer type.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtReviewer ends here ---------------------------- --><a name="DmtStatus"></a><!-- --- DmtStatus begins here -------------------------- -->
+<h2>
+Status - Status of a changelist</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Status</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td><tt>pending</tt> (i.e. a pending changelist)</td>
+</tr>
+
+<tr>
+<td><tt>1</tt></td>
+
+<td><tt>committed</tt> (i.e. a submitted changelist)</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtStatus ends here ---------------------------- --><a name="DmtStrength"></a><!-- --- DmtStrength begins here -------------------------- -->
+<h2>
+Strength - The strength of a password</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td><tt>0</tt></td>
+
+<td><tt>not checked</tt> (i.e. password strength unknown)</td>
+</tr>
+
+<tr>
+<td><tt>1</tt></td>
+
+<td><tt>checked</tt> (i.e. password strength checked)</td>
+</tr>
+
+<tr>
+<td><tt>2</tt></td>
+
+<td><tt>unset</tt> (i.e. no password available)</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtStrength ends here ---------------------------- --><a name="DmtString"></a><!-- --- DmtString begins here -------------------------- -->
+<h2>
+String - A string</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>Value</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>String</td>
+
+<td>An ASCII string up to 1024 characters in length.
+<br>Depending on the context in which the string is used,
+<br>one or more of the following restrictions may apply:
+<ul>
+<li>
+Cannot be empty</li>
+
+<li>
+Cannot consist solely of a dash (<tt>-</tt>)</li>
+
+<li>
+Cannot be all-numeric</li>
+
+<li>
+Cannot contain non-printable characters</li>
+
+        <li> Spaces are replaced with underscores ( <tt>_ </tt>)</li>
+
+<li>
+Revision characters (i.e. <tt>#</tt> and <tt>@</tt>) are prohibited</li>
+
+        <li> Slashes (<tt>/</tt>) are prohibited</li>
+
+        <li> Wildcards (<tt>...</tt> and <tt>*</tt>) are prohibited</li>
+</ul>
+</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtString ends here ---------------------------- --><a name="DmtText"></a><!-- --- DmtText begins here -------------------------- -->
+<h2>
+Text - Formatted text strings</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>String</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>Text</td>
+
+<td>An ASCII string of up to 128 characters.
+<br>Whitespace will be replaced by blanks.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtText ends here ---------------------------- --><a name="DmtUser"></a><!-- --- DmtUser begins here -------------------------- -->
+<h2>
+User - A user name</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>User</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>User</td>
+
+<td>A user name. Unlike <tt><a href="schema.html#DmtUserWild">UserWild</a></tt>,
+wildcards are not allowed.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3"><!-- --- DmtUser ends here ---------------------------- --><a name="DmtUserWild"></a><!-- --- DmtUserWild begins here -------------------------- -->
+<h2>
+UserWild - User names that contain wildcards</h2>
+
+<table border="3">
+<tbody><tr>
+<th><b>UserWild</b></th>
+
+<th><b>Explanation</b></th>
+</tr>
+
+<tr>
+<td>UserWild</td>
+
+<td>A user name. Unlike <tt><a href="schema.html#DmtUser">User</a></tt>,
+wildcards are allowed.</td>
+</tr>
+</tbody></table>
+
+<p>
+</p><hr size="3">
+<i>Copyright 1999-2004 Perforce Software. All rights reserved. </i>
+<!-- --- DmtUserWild ends here ---------------------------- -->
+
+
+</body></html>
