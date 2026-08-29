@@ -36,6 +36,7 @@ import (
 	"io"               // profiling only
 	_ "net/http/pprof" // profiling only
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -2236,6 +2237,62 @@ func (g *GitP4Transfer) GitParse(pool *pond.WorkerPool) chan GitCommit {
 	return g.gitChan
 }
 
+func runNativeGitImport(repository, ref string, opts *GitParserOptions, journalOutput io.Writer, parallelWorkers int) error {
+	if opts.archiveRoot == "" {
+		return errors.New("--archive.root is required with --native-git")
+	}
+	if opts.config == nil {
+		return errors.New("native Git import requires configuration")
+	}
+	if ref == "" {
+		ref = "refs/heads/" + opts.config.DefaultBranch
+	}
+
+	output, err := exec.Command("git", "-C", repository, "rev-list", "--reverse", ref).Output()
+	if err != nil {
+		return fmt.Errorf("list commits for %s: %w", ref, err)
+	}
+	commitIDs := strings.Fields(string(output))
+	if opts.maxCommits > 0 && len(commitIDs) > opts.maxCommits {
+		commitIDs = commitIDs[:opts.maxCommits]
+	}
+	if len(commitIDs) == 0 {
+		return fmt.Errorf("no commits found for %s", ref)
+	}
+
+	typeMaps := make([]importer.TypeMap, 0, len(opts.config.ReTypeMaps))
+	for _, typeMap := range opts.config.ReTypeMaps {
+		typeMaps = append(typeMaps, importer.TypeMap{Pattern: typeMap.RePath, FileType: typeMap.Filetype})
+	}
+	branchMapper := newBranchNameMapper(opts.config)
+	branchPath := func(gitRef string) string {
+		branch := branchMapper.branchName(strings.TrimPrefix(gitRef, "refs/heads/"))
+		return path.Join(opts.config.ImportPath, branch)
+	}
+	writer, err := importer.NewP4Writer(importer.P4WriterOptions{
+		ImportDepot:     opts.config.ImportDepot,
+		ArchiveRoot:     opts.archiveRoot,
+		Journal:         journalOutput,
+		TypeMaps:        typeMaps,
+		ConvertCRLF:     opts.convertCRLF,
+		ParallelWorkers: parallelWorkers,
+		DryRun:          opts.dryRun,
+		CaseInsensitive: opts.caseInsensitive,
+		BranchPath:      branchPath,
+	})
+	if err != nil {
+		return err
+	}
+	defer writer.Close()
+
+	source := importer.NewGitRepositorySourceWithOptions(repository, commitIDs, importer.GitRepositorySourceOptions{Ref: ref, Dummy: opts.dummyArchives})
+	defer source.Close()
+	if err := source.Validate(); err != nil {
+		return err
+	}
+	return writer.WriteSource(source)
+}
+
 func main() {
 	// Tracing code
 	// ft, err := os.Create("trace.out")
@@ -2334,6 +2391,14 @@ func main() {
 			"batch.map",
 			"YAML file mapping fast-export file path/name to repo path prefix.",
 		).String()
+		nativeGit = kingpin.Flag(
+			"native-git",
+			"Import directly from a Git repository instead of a fast-export file.",
+		).Bool()
+		nativeGitRef = kingpin.Flag(
+			"native.git.ref",
+			"Git ref to import with --native-git (defaults to refs/heads/<default.branch>).",
+		).String()
 	)
 	kingpin.UsageTemplate(kingpin.CompactUsageTemplate).Version(version.Print("gitp4transfer")).Author("Robert Cowham")
 	kingpin.CommandLine.Help = "Parses one or more git fast-export files to create a Perforce Helix Core import\n"
@@ -2379,6 +2444,30 @@ func main() {
 	logger.Infof("Options: %+v", opts)
 	logger.Infof("Options.config: %+v", opts.config)
 	logger.Infof("OS: %s/%s", runtime.GOOS, runtime.GOARCH)
+	if *nativeGit {
+		if len(*gitimport) != 1 {
+			logger.Error("--native-git requires exactly one Git repository argument")
+			return
+		}
+		if *dump {
+			logger.Error("--dump is not supported with --native-git")
+			return
+		}
+		journalOutput, err := os.Create(*outputJournal)
+		if err != nil {
+			logger.Errorf("create journal %s: %v", *outputJournal, err)
+			return
+		}
+		defer journalOutput.Close()
+		workers := *parallelThreads
+		if workers <= 0 {
+			workers = runtime.NumCPU()
+		}
+		if err := runNativeGitImport((*gitimport)[0], *nativeGitRef, opts, journalOutput, workers); err != nil {
+			logger.Errorf("native Git import failed: %v", err)
+		}
+		return
+	}
 	g, err := NewGitP4Transfer(logger, opts)
 	if err != nil {
 		logger.Errorf("error loading config: %v", err)

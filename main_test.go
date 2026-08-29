@@ -57,6 +57,54 @@ func TestFastExportSource(t *testing.T) {
 	}
 }
 
+func TestRunNativeGitImport(t *testing.T) {
+	repository := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repository
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repository, "File.TXT"), []byte("first\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "File.TXT")
+	runGit("commit", "-m", "first commit")
+	if err := os.WriteFile(filepath.Join(repository, "File.TXT"), []byte("second\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("commit", "-am", "second commit")
+
+	archiveRoot := t.TempDir()
+	var journalOutput bytes.Buffer
+	opts := &GitParserOptions{
+		archiveRoot:     archiveRoot,
+		caseInsensitive: true,
+		config: &config.Config{
+			ImportDepot:   "import",
+			ImportPath:    "source",
+			DefaultBranch: "main",
+		},
+	}
+	if err := runNativeGitImport(repository, "", opts, &journalOutput, 1); err != nil {
+		t.Fatalf("native Git import failed: %v", err)
+	}
+	if !strings.Contains(journalOutput.String(), "//import/source/main/file.txt") {
+		t.Errorf("journal does not contain configured depot path:\n%s", journalOutput.String())
+	}
+	archives, err := filepath.Glob(filepath.Join(archiveRoot, "import", "source", "main", "file.txt,d", "*.gz"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archives) != 2 {
+		t.Errorf("archive count = %d, want 2 (%v)", len(archives), archives)
+	}
+}
+
 func createGitRepo(t *testing.T) string {
 	d := t.TempDir()
 	os.Chdir(d)

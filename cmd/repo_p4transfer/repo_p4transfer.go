@@ -766,7 +766,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			}
 			r.logger.Debugf("Native commit %s -> changelist %d: %s (%d file changes)", commit.ID, writer.ChangeCount(), strings.TrimSpace(commit.Message), len(commit.Files))
 			if r.progressCommits > 0 && progressDone%r.progressCommits == 0 {
-				r.logNativeProgress(progressDone, progressTotal, progressStart)
+				r.logNativeProgress(progressDone, progressTotal, index, len(batches), progressStart)
 				lastProgress = progressDone
 			}
 		}
@@ -775,7 +775,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		}
 		r.logger.Infof("[%d/%d] Imported native Git batch for %s", index+1, len(batches), batch.RepoPath)
 		if progressDone != lastProgress {
-			r.logNativeProgress(progressDone, progressTotal, progressStart)
+			r.logNativeProgress(progressDone, progressTotal, index+1, len(batches), progressStart)
 			lastProgress = progressDone
 		}
 	}
@@ -786,7 +786,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	return nil
 }
 
-func (r *RepoP4Transfer) logNativeProgress(completed, total int, started time.Time) {
+func (r *RepoP4Transfer) logNativeProgress(completed, total, completedBatches, totalBatches int, started time.Time) {
 	if completed == 0 {
 		return
 	}
@@ -796,8 +796,17 @@ func (r *RepoP4Transfer) logNativeProgress(completed, total int, started time.Ti
 	if rate > 0 && total > completed {
 		remaining = time.Duration(float64(total-completed)/rate) * time.Second
 	}
-	r.logger.Infof("Native import progress: %d/%d commits (%.2f commits/s, elapsed %s, ETA %s)",
-		completed, total, rate, formatDuration(elapsed), formatDuration(remaining))
+	commitPercent := percentage(completed, total)
+	batchPercent := percentage(completedBatches, totalBatches)
+	r.logger.Infof("Native import progress: batches %d/%d (%.1f%%), commits %d/%d (%.1f%%), %.2f commits/s, elapsed %s, ETA %s",
+		completedBatches, totalBatches, batchPercent, completed, total, commitPercent, rate, formatDuration(elapsed), formatDuration(remaining))
+}
+
+func percentage(completed, total int) float64 {
+	if total <= 0 {
+		return 100
+	}
+	return float64(completed) * 100 / float64(total)
 }
 
 func formatDuration(duration time.Duration) string {

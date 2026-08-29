@@ -28,6 +28,8 @@ type P4WriterOptions struct {
 	TypeMaps        []TypeMap
 	ConvertCRLF     bool
 	ParallelWorkers int
+	DryRun          bool
+	CaseInsensitive bool
 	BranchPath      func(ref string) string
 }
 
@@ -60,24 +62,26 @@ type archiveJob struct {
 // It handles linear add, edit, and delete history plus duplicate blob librarian
 // references. Branch and merge integration records remain a later migration step.
 type P4Writer struct {
-	journal        journal.Journal
-	importDepot    string
-	archiveRoot    string
-	user           string
-	typeMaps       []TypeMap
-	convertCRLF    bool
-	branchPath     func(ref string) string
-	stagingDir     string
-	changeNumber   int
-	fileRevisions  map[string]fileRevision
-	commitBranches map[string]string
-	branchReady    map[string]bool
-	blobArchives   map[string]blobArchive
-	archiveJobs    chan archiveJob
-	archiveWG      sync.WaitGroup
-	archiveMu      sync.Mutex
-	archiveErr     error
-	closed         bool
+	journal         journal.Journal
+	importDepot     string
+	archiveRoot     string
+	user            string
+	typeMaps        []TypeMap
+	convertCRLF     bool
+	dryRun          bool
+	caseInsensitive bool
+	branchPath      func(ref string) string
+	stagingDir      string
+	changeNumber    int
+	fileRevisions   map[string]fileRevision
+	commitBranches  map[string]string
+	branchReady     map[string]bool
+	blobArchives    map[string]blobArchive
+	archiveJobs     chan archiveJob
+	archiveWG       sync.WaitGroup
+	archiveMu       sync.Mutex
+	archiveErr      error
+	closed          bool
 }
 
 // ChangeCount returns the number of changelists written so far.
@@ -103,21 +107,23 @@ func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 		options.ParallelWorkers = 1
 	}
 	writer := &P4Writer{
-		importDepot:    strings.Trim(options.ImportDepot, "/"),
-		archiveRoot:    options.ArchiveRoot,
-		user:           options.User,
-		typeMaps:       options.TypeMaps,
-		convertCRLF:    options.ConvertCRLF,
-		branchPath:     options.BranchPath,
-		stagingDir:     path.Join(options.ArchiveRoot, ".gitp4transfer-staging"),
-		fileRevisions:  make(map[string]fileRevision),
-		commitBranches: make(map[string]string),
-		branchReady:    make(map[string]bool),
-		blobArchives:   make(map[string]blobArchive),
-		archiveJobs:    make(chan archiveJob, options.ParallelWorkers),
+		importDepot:     strings.Trim(options.ImportDepot, "/"),
+		archiveRoot:     options.ArchiveRoot,
+		user:            options.User,
+		typeMaps:        options.TypeMaps,
+		convertCRLF:     options.ConvertCRLF,
+		dryRun:          options.DryRun,
+		caseInsensitive: options.CaseInsensitive,
+		branchPath:      options.BranchPath,
+		stagingDir:      path.Join(options.ArchiveRoot, ".gitp4transfer-staging"),
+		fileRevisions:   make(map[string]fileRevision),
+		commitBranches:  make(map[string]string),
+		branchReady:     make(map[string]bool),
+		blobArchives:    make(map[string]blobArchive),
+		archiveJobs:     make(chan archiveJob, options.ParallelWorkers),
 	}
 	writer.journal.SetWriter(options.Journal)
-	writer.journal.WriteHeader(strings.TrimPrefix(options.ImportDepot, "//"), false)
+	writer.journal.WriteHeader(strings.TrimPrefix(options.ImportDepot, "//"), options.CaseInsensitive)
 	for range options.ParallelWorkers {
 		writer.archiveWG.Add(1)
 		go writer.runArchiveWorker()
@@ -256,8 +262,14 @@ func (w *P4Writer) writeChange(change FileChange, branch, parentBranch string, m
 		if fileType == journal.CText || fileType == journal.Binary {
 			archiveFile += ".gz"
 		}
-		if err := w.stageArchive(archiveFile, content, fileType); err != nil {
-			return err
+		if w.dryRun {
+			if err := content.Close(); err != nil {
+				return err
+			}
+		} else {
+			if err := w.stageArchive(archiveFile, content, fileType); err != nil {
+				return err
+			}
 		}
 		lbr = blobArchive{lbrFile: depotFile, lbrRev: changeNumber}
 		w.blobArchives[change.ObjectID] = lbr
@@ -375,10 +387,16 @@ func (w *P4Writer) materializeBranch(branch, parentBranch string, changes []File
 }
 
 func (w *P4Writer) depotPath(branch, sourcePath string) string {
+	var depotFile string
 	if branch == "" {
-		return "//" + path.Join(w.importDepot, strings.TrimPrefix(sourcePath, "/"))
+		depotFile = "//" + path.Join(w.importDepot, strings.TrimPrefix(sourcePath, "/"))
+	} else {
+		depotFile = "//" + path.Join(w.importDepot, branch, strings.TrimPrefix(sourcePath, "/"))
 	}
-	return "//" + path.Join(w.importDepot, branch, strings.TrimPrefix(sourcePath, "/"))
+	if w.caseInsensitive {
+		return strings.ToLower(depotFile)
+	}
+	return depotFile
 }
 
 func (w *P4Writer) fileTypeFor(depotFile string) journal.FileType {

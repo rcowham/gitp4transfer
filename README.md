@@ -20,8 +20,17 @@ For details of design/usage etc see: [GitP4Transfer.adoc](doc/GitP4Transfer.adoc
 
 ## gitp4transfer - Go version
 
-The intent of this is to process `git fast-export` files and import then into Helix Core. It does this by creating
-a Helix Core checkpoint file (and associated archive files).
+The command imports Git history into Helix Core by creating a Helix Core checkpoint file and associated archive
+files. It accepts `git fast-export` files for Git and Plastic SCM migrations, or imports a native Git repository
+directly with `--native-git`.
+
+For a direct repository import, provide exactly one repository path and an archive root:
+
+```sh
+gitp4transfer --native-git --archive.root /path/to/p4-root --journal jnl.0 /path/to/git-repository
+```
+
+By default native mode imports `refs/heads/<default.branch>`; set `--native.git.ref` to select another ref.
 
 This is documented in: [GitP4Transfer.adoc](doc/GitP4Transfer.adoc#gitp4transfer-tool-for-git-and-plastic-scm-migrations)
 
