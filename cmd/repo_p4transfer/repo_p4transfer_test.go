@@ -689,3 +689,40 @@ func TestImportNativeGitResumesAfterInterruption(t *testing.T) {
 		t.Errorf("resumed journal differs from fresh journal:\n--- resumed ---\n%s\n--- fresh ---\n%s", resumedJournal, freshJournal)
 	}
 }
+
+func TestImportNativeGitStopsCleanlyOnRequest(t *testing.T) {
+	reposRoot, manifestFile, configFile := buildNativeGitFixture(t)
+	root := filepath.Dir(reposRoot)
+	journalFile := filepath.Join(root, "jnl.0")
+	checkpointFile := journalFile + ".checkpoint.json"
+
+	transfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root"), journalFile)
+	batches := transfer.groupContiguousCommits()
+	if len(batches) < 2 {
+		t.Fatalf("expected at least 2 batches for interleaved repos, got %d", len(batches))
+	}
+
+	transfer.RequestStop()
+	if err := transfer.importNativeGit(batches); err != nil {
+		t.Fatalf("importNativeGit failed: %v", err)
+	}
+	if _, err := os.Stat(checkpointFile); !os.IsNotExist(err) {
+		t.Fatalf("expected no checkpoint when stopping before any batch ran, stat err=%v", err)
+	}
+	data, err := os.ReadFile(journalFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "db.change") {
+		t.Errorf("expected no changelists written when stop was requested up front:\n%s", data)
+	}
+
+	// A subsequent run (no stop requested) proceeds normally and completes.
+	resumeTransfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root"), journalFile)
+	if err := resumeTransfer.importNativeGit(batches); err != nil {
+		t.Fatalf("run after stop failed: %v", err)
+	}
+	if _, err := os.Stat(checkpointFile); !os.IsNotExist(err) {
+		t.Fatalf("expected checkpoint removed after full completion, stat err=%v", err)
+	}
+}

@@ -58,6 +58,13 @@ re-processing a large batch, e.g. thousands of commits for one repository, but
 never corrupts or duplicates already-completed batches). Use `--fresh-start`
 to discard an existing checkpoint and re-import from the beginning.
 
+### Stopping a `--native-git` import cleanly
+
+Press Ctrl-C (or send `SIGTERM`) once to stop after the currently in-flight
+batch finishes, rather than killing the process mid-batch: the checkpoint is
+saved as usual, so re-running the command resumes exactly where it left off.
+A second Ctrl-C/`SIGTERM` forces an immediate exit.
+
 ## Debug Mode
 
 When running with `--log-level debug`, the tool provides detailed output about the transfer process:

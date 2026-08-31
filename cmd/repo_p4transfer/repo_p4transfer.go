@@ -14,11 +14,14 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"sort"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"text/template"
 	"time"
 
@@ -165,6 +168,7 @@ type RepoP4Transfer struct {
 	progressCommits  int
 	firstParent      bool
 	freshStart       bool
+	stopRequested    atomic.Bool
 	manifest         *RepoManifest
 	cfg              *RepoP4TransferConfig
 	descriptionTmpl  *template.Template
@@ -174,6 +178,17 @@ type RepoP4Transfer struct {
 	endDate          time.Time
 	startDateDefault bool
 	endDateDefault   bool
+}
+
+// RequestStop asks an in-progress --native-git import to stop cleanly after
+// the currently in-flight batch finishes, rather than immediately. Safe to
+// call from another goroutine (e.g. a signal handler).
+func (r *RepoP4Transfer) RequestStop() {
+	r.stopRequested.Store(true)
+}
+
+func (r *RepoP4Transfer) stopWasRequested() bool {
+	return r.stopRequested.Load()
 }
 
 // NewRepoP4Transfer creates a new transfer coordinator
@@ -856,7 +871,13 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	progressDone := 0
 	progressStart := time.Now()
 	lastProgress := 0
+	stoppedEarly := false
 	for index := startBatchIndex; index < len(batches); index++ {
+		if r.stopWasRequested() {
+			r.logger.Infof("Stop requested; pausing before batch %d/%d", index+1, len(batches))
+			stoppedEarly = true
+			break
+		}
 		batch := batches[index]
 		project, ok := r.projects[batch.RepoPath]
 		if !ok {
@@ -937,6 +958,10 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	}
 	if err := writer.Close(); err != nil {
 		return err
+	}
+	if stoppedEarly {
+		r.logger.Infof("Stopped cleanly; checkpoint saved at %s (rerun to resume)", checkpointFile)
+		return nil
 	}
 	if err := os.Remove(checkpointFile); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove completed checkpoint %s: %w", checkpointFile, err)
@@ -1368,6 +1393,19 @@ func main() {
 	transfer.progressCommits = *progressCommits
 	transfer.firstParent = *firstParent
 	transfer.freshStart = *freshStart
+
+	// Stop cleanly after the in-flight batch on SIGINT/SIGTERM; a second
+	// signal forces an immediate exit.
+	signals := make(chan os.Signal, 2)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-signals
+		logger.Warn("Received interrupt: stopping after the current batch completes (press Ctrl-C again to force immediate exit)")
+		transfer.RequestStop()
+		<-signals
+		logger.Warn("Received second interrupt: exiting immediately")
+		os.Exit(130)
+	}()
 
 	// Initialize from config and manifest
 	if err := transfer.Init(); err != nil {

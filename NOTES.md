@@ -212,3 +212,14 @@ Tested via `TestImportNativeGitResumesAfterInterruption` (interrupts a
 the resulting journal is byte-identical to an uninterrupted run) and
 `TestP4WriterExportStateResumesAcrossInstances`.
 
+### Clean stop on request (Ctrl-C / SIGTERM)
+
+Added `RepoP4Transfer.RequestStop()` (backed by `atomic.Bool`), checked at the
+top of each batch iteration in `importNativeGit`: if set, the currently
+in-flight batch finishes and is checkpointed as usual, then the loop stops
+before starting the next batch (returns nil, not an error). `main()` wires
+`SIGINT`/`SIGTERM` to call `RequestStop()`; a second signal forces an
+immediate `os.Exit`. Re-running the command resumes via the same
+checkpoint/resume mechanism as a crash. Tested via
+`TestImportNativeGitStopsCleanlyOnRequest`.
+
