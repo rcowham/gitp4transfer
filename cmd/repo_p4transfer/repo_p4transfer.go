@@ -71,6 +71,8 @@ var (
 			Bool()
 	freshStart = app.Flag("fresh-start", "Ignore any existing --native-git checkpoint and start the import from scratch").
 			Bool()
+	checkpointInterval = app.Flag("checkpoint-interval", "Minimum time between --native-git checkpoint saves (saving is proportional to accumulated state size, not batch size)").
+				Default("30s").Duration()
 	logLevel = app.Flag("log-level", "Log level").
 			Default("info").String()
 
@@ -153,31 +155,32 @@ func (c CommitsByTime) Swap(i, j int)      { c[i], c[j] = c[j], c[i] }
 
 // RepoP4Transfer orchestrates the entire transfer process
 type RepoP4Transfer struct {
-	logger           *logrus.Logger
-	manifestFile     string
-	configFile       string
-	repoRoot         string
-	exportDir        string
-	batchMapFile     string
-	dummy            bool
-	dryRun           bool
-	nativeGit        bool
-	journalFile      string
-	archiveRoot      string
-	parallelWorkers  int
-	progressCommits  int
-	firstParent      bool
-	freshStart       bool
-	stopRequested    atomic.Bool
-	manifest         *RepoManifest
-	cfg              *RepoP4TransferConfig
-	descriptionTmpl  *template.Template
-	projects         map[string]*ManifestProject // key: project path
-	commits          []*CommitMetadata
-	startDate        time.Time
-	endDate          time.Time
-	startDateDefault bool
-	endDateDefault   bool
+	logger             *logrus.Logger
+	manifestFile       string
+	configFile         string
+	repoRoot           string
+	exportDir          string
+	batchMapFile       string
+	dummy              bool
+	dryRun             bool
+	nativeGit          bool
+	journalFile        string
+	archiveRoot        string
+	parallelWorkers    int
+	progressCommits    int
+	firstParent        bool
+	freshStart         bool
+	checkpointInterval time.Duration
+	stopRequested      atomic.Bool
+	manifest           *RepoManifest
+	cfg                *RepoP4TransferConfig
+	descriptionTmpl    *template.Template
+	projects           map[string]*ManifestProject // key: project path
+	commits            []*CommitMetadata
+	startDate          time.Time
+	endDate            time.Time
+	startDateDefault   bool
+	endDateDefault     bool
 }
 
 // RequestStop asks an in-progress --native-git import to stop cleanly after
@@ -875,6 +878,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	progressDone := 0
 	progressStart := time.Now()
 	lastProgress := 0
+	lastCheckpoint := time.Now()
 	stoppedEarly := false
 	for index := startBatchIndex; index < len(batches); index++ {
 		if r.stopWasRequested() {
@@ -952,6 +956,13 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			r.logNativeProgress(progressDone, progressTotal, index+1, len(batches), progressStart)
 			lastProgress = progressDone
 		}
+		// Checkpoint save cost is proportional to accumulated state size, not
+		// batch size, so it's gated by elapsed time rather than done every
+		// batch - except when stopping, where it must run immediately so no
+		// completed work is lost.
+		if !r.stopWasRequested() && time.Since(lastCheckpoint) < r.checkpointInterval {
+			continue
+		}
 		checkpointStart := time.Now()
 		if err := journalOutput.Sync(); err != nil {
 			return fmt.Errorf("sync journal after batch %d: %w", index+1, err)
@@ -970,6 +981,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		}); err != nil {
 			return fmt.Errorf("save checkpoint after batch %d: %w", index+1, err)
 		}
+		lastCheckpoint = time.Now()
 		r.logger.Debugf("[%d/%d] %s: checkpoint save took %s (%d file revisions, %d blob archives tracked)",
 			index+1, len(batches), project.Path, time.Since(checkpointStart), len(writerState.FileRevisions), len(writerState.BlobArchives))
 	}
@@ -1413,6 +1425,7 @@ func main() {
 	transfer.progressCommits = *progressCommits
 	transfer.firstParent = *firstParent
 	transfer.freshStart = *freshStart
+	transfer.checkpointInterval = *checkpointInterval
 
 	// Stop cleanly after the in-flight batch on SIGINT/SIGTERM; a second
 	// signal forces an immediate exit.

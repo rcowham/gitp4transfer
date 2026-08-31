@@ -295,3 +295,39 @@ verifies zero file changes for the empty/merge commits and correct file
 changes for the real ones either side, all through the same persistent
 diff-tree process).
 
+## repo_p4transfer: checkpoint save became the dominant per-batch cost
+
+After the Validate() fix above, debug timing logs at ~95% through a real
+`frameworks/base` run (23,079 file revisions, 48,931 blob archives tracked)
+showed:
+
+```
+Validate() took 15-104ms
+processed N commits in 5-16ms
+source Close() took ~20us
+checkpoint save took ~428ms
+```
+
+Checkpoint save (`journalOutput.Sync()` + `writer.ExportState()` + JSON-marshal
+the whole `WriterState` + `os.WriteFile` + `os.Rename`) dominated every batch
+by roughly 4-25x, and - critically - its cost is proportional to the *total
+accumulated state size*, not to the batch just completed. A 1-commit batch and
+a 4-commit batch both took ~427ms to checkpoint. Doing this after literally
+every one of 52,524 batches meant paying that cost tens of thousands of times
+over the run.
+
+### Fix
+
+`cmd/repo_p4transfer/repo_p4transfer.go`: gate the checkpoint save by elapsed
+wall-clock time (`--checkpoint-interval`, default 30s) instead of doing it
+after every batch. A stop request (Ctrl-C/SIGTERM) always forces an immediate
+save regardless of the interval, so no completed work is lost when stopping
+cleanly. This trades a larger "redo window" on crash (up to one interval's
+worth of batches, or one batch if it alone exceeds the interval) for far less
+time spent on checkpointing overall.
+
+Tested via `TestImportNativeGitCheckpointIntervalSkipsSaves` (a long interval
+means an earlier successful batch's progress isn't yet on disk when a later
+batch fails, proving the skip actually happens).
+
+

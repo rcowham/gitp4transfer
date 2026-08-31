@@ -38,6 +38,7 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 - `--progress-commits`: Log native import progress every N processed commits (default: 100; 0 disables periodic progress)
 - `--first-parent`: Follow only the first parent commit when scanning git history
 - `--fresh-start`: Ignore any existing `--native-git` checkpoint and start the import from scratch
+- `--checkpoint-interval`: Minimum time between `--native-git` checkpoint saves (default: 30s; see below)
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
 
 Native imports also log progress at every batch boundary. Progress messages include completed work, throughput, elapsed time, and an ETA calculated from the observed processing rate.
@@ -57,6 +58,15 @@ partway through, it is redone from its start on resume (this can mean
 re-processing a large batch, e.g. thousands of commits for one repository, but
 never corrupts or duplicates already-completed batches). Use `--fresh-start`
 to discard an existing checkpoint and re-import from the beginning.
+
+Saving a checkpoint costs time proportional to the accumulated import state
+(all tracked file revisions and blob archives), not to the size of the batch
+just completed, so it isn't done after every batch: `--checkpoint-interval`
+(default 30s) bounds how often it runs. A shorter interval reduces how much
+work could need to be redone after a crash, at the cost of more time spent
+checkpointing; a longer interval is more efficient at the cost of a larger
+redo window. Stopping cleanly (see below) always saves immediately regardless
+of this interval.
 
 ### Stopping a `--native-git` import cleanly
 

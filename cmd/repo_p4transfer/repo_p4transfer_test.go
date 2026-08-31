@@ -726,3 +726,33 @@ func TestImportNativeGitStopsCleanlyOnRequest(t *testing.T) {
 		t.Fatalf("expected checkpoint removed after full completion, stat err=%v", err)
 	}
 }
+
+func TestImportNativeGitCheckpointIntervalSkipsSaves(t *testing.T) {
+	reposRoot, manifestFile, configFile := buildNativeGitFixture(t)
+	root := filepath.Dir(reposRoot)
+	journalFile := filepath.Join(root, "jnl.0")
+	checkpointFile := journalFile + ".checkpoint.json"
+
+	transfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root"), journalFile)
+	transfer.checkpointInterval = time.Hour
+	batches := transfer.groupContiguousCommits()
+	if len(batches) < 2 {
+		t.Fatalf("expected at least 2 batches for interleaved repos, got %d", len(batches))
+	}
+
+	// Force a failure partway through: with a long checkpoint interval, the
+	// earlier successful batch(es) must not have saved a checkpoint yet.
+	repoBRoot := filepath.Join(reposRoot, "repoB")
+	hiddenRepoBRoot := repoBRoot + ".hidden"
+	if err := os.Rename(repoBRoot, hiddenRepoBRoot); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Rename(hiddenRepoBRoot, repoBRoot)
+
+	if err := transfer.importNativeGit(batches); err == nil {
+		t.Fatal("expected importNativeGit to fail while repoB is unavailable")
+	}
+	if _, err := os.Stat(checkpointFile); !os.IsNotExist(err) {
+		t.Fatalf("expected no checkpoint saved yet: a long checkpoint interval should have skipped it, stat err=%v", err)
+	}
+}
