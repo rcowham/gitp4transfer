@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/rcowham/gitp4transfer/config"
@@ -109,6 +110,9 @@ type RepoP4TransferConfig struct {
 	BranchMappings []config.BranchMapping `yaml:"branch_mappings"`
 	TypeMaps       []string               `yaml:"typemaps"`
 	GitExport      GitExportOptions       `yaml:"git_export"`
+	// ChangelistDescriptionTemplate is a Go text/template string appended to every
+	// changelist description. Available variables: {{.repo_path}}, {{.commitid}}, {{.user}}.
+	ChangelistDescriptionTemplate string `yaml:"changelist_description_template"`
 }
 
 // CommitMetadata holds minimal metadata for timeline building
@@ -153,6 +157,7 @@ type RepoP4Transfer struct {
 	firstParent      bool
 	manifest         *RepoManifest
 	cfg              *RepoP4TransferConfig
+	descriptionTmpl  *template.Template
 	projects         map[string]*ManifestProject // key: project path
 	commits          []*CommitMetadata
 	startDate        time.Time
@@ -256,9 +261,48 @@ func (r *RepoP4Transfer) loadConfig() error {
 	if strings.TrimSpace(cfg.DefaultBranch) == "" {
 		cfg.DefaultBranch = config.DefaultBranch
 	}
+	if strings.TrimSpace(cfg.ChangelistDescriptionTemplate) != "" {
+		tmpl, err := template.New("changelist_description").Parse(cfg.ChangelistDescriptionTemplate)
+		if err != nil {
+			return fmt.Errorf("invalid changelist_description_template: %w", err)
+		}
+		r.descriptionTmpl = tmpl
+	}
 
 	r.cfg = cfg
 	return nil
+}
+
+// applyDescriptionTemplate appends the configured changelist_description_template
+// (if any) to a commit's message before it is written as a changelist description.
+func (r *RepoP4Transfer) applyDescriptionTemplate(commit *importer.Commit, repoPath string) error {
+	if r.descriptionTmpl == nil {
+		return nil
+	}
+	data := map[string]string{
+		"repo_path": repoPath,
+		"commitid":  commit.ID,
+		"user":      userForCommit(commit, "git-user"),
+	}
+	var rendered bytes.Buffer
+	if err := r.descriptionTmpl.Execute(&rendered, data); err != nil {
+		return fmt.Errorf("execute changelist_description_template: %w", err)
+	}
+	commit.Message = strings.TrimRight(commit.Message, "\n") + "\n\n" + rendered.String()
+	return nil
+}
+
+// userForCommit mirrors the Perforce username the importer derives from a
+// commit's author email, so template rendering matches the written changelist.
+func userForCommit(commit *importer.Commit, fallback string) string {
+	if commit == nil || commit.Author.Email == "" {
+		return fallback
+	}
+	name, _, found := strings.Cut(commit.Author.Email, "@")
+	if !found || name == "" {
+		return fallback
+	}
+	return name
 }
 
 // repoManifestRefPrefix is the ref namespace the `repo` tool uses to track each
@@ -804,6 +848,10 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 				break
 			}
 			if err != nil {
+				_ = source.Close()
+				return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
+			}
+			if err := r.applyDescriptionTemplate(commit, project.Path); err != nil {
 				_ = source.Close()
 				return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
 			}

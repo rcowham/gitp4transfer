@@ -7,9 +7,11 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"text/template"
 	"time"
 
 	"github.com/rcowham/gitp4transfer/config"
+	"github.com/rcowham/gitp4transfer/internal/importer"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -44,6 +46,48 @@ func TestBranchNameMapperAppliesBranchMappings(t *testing.T) {
 	// The repo-tool tracking ref still maps to default_branch, not the mapping.
 	if got := mapper.branchPath("m/android-latest-release"); got != "main" {
 		t.Errorf("branchPath(%q) = %q, want %q", "m/android-latest-release", got, "main")
+	}
+}
+
+func TestApplyDescriptionTemplate(t *testing.T) {
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", false, nil)
+	tmpl, err := template.New("changelist_description").Parse("Imported from {{.repo_path}} at {{.commitid}} by {{.user}}")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	transfer.descriptionTmpl = tmpl
+
+	commit := &importer.Commit{ID: "abc123", Message: "original message", Author: importer.Identity{Email: "jbloggs@example.com"}}
+	if err := transfer.applyDescriptionTemplate(commit, "packages/services/Car"); err != nil {
+		t.Fatalf("applyDescriptionTemplate failed: %v", err)
+	}
+	want := "original message\n\nImported from packages/services/Car at abc123 by jbloggs"
+	if commit.Message != want {
+		t.Errorf("Message = %q, want %q", commit.Message, want)
+	}
+}
+
+func TestApplyDescriptionTemplateNoop(t *testing.T) {
+	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", false, nil)
+	commit := &importer.Commit{ID: "abc123", Message: "original message"}
+	if err := transfer.applyDescriptionTemplate(commit, "packages/services/Car"); err != nil {
+		t.Fatalf("applyDescriptionTemplate failed: %v", err)
+	}
+	if commit.Message != "original message" {
+		t.Errorf("Message = %q, want unchanged", commit.Message)
+	}
+}
+
+func TestLoadConfigRejectsInvalidDescriptionTemplate(t *testing.T) {
+	tmpDir := t.TempDir()
+	configFile := filepath.Join(tmpDir, "config.yaml")
+	if err := os.WriteFile(configFile, []byte("changelist_description_template: \"{{.repo_path\"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	transfer := NewRepoP4Transfer("manifest.xml", configFile, "", "", false, nil)
+	transfer.projects = make(map[string]*ManifestProject)
+	if err := transfer.loadConfig(); err == nil {
+		t.Fatal("expected error for invalid changelist_description_template")
 	}
 }
 
