@@ -26,10 +26,15 @@ Required:
   -repo-root <dir>    Root directory of the repo workspace
 
 Options:
-  -p <P4Root>         Resulting P4ROOT; defaults to a temporary directory
+  -p <P4Root>         Resulting P4ROOT; defaults to a temporary directory.
+                      Reuse the same value on rerun to resume after a crash
+                      or Ctrl-C (see -fresh-start / -checkpoint-interval).
   -j <workers>        Bounded native archive worker count; defaults to 1
     -progress-commits <n>
                                             Log native import progress every n commits; defaults to 100
+  -fresh-start         Ignore any existing native-git checkpoint under -p and start from scratch
+  -checkpoint-interval <duration>
+                       Minimum time between checkpoint saves (e.g. 30s, 2m); defaults to 30s
   -dummy               Write placeholder blob data; does not read Git blob contents
   -first-parent        Follow only first-parent history when planning commits
   -unicode             Convert the restored server to Unicode mode
@@ -56,6 +61,8 @@ RepoRoot=""
 P4Root=""
 ParallelWorkers=1
 ProgressCommits=100
+FreshStart=0
+CheckpointInterval=""
 Debug=0
 Dummy=0
 FirstParent=0
@@ -72,6 +79,8 @@ while [[ $# -gt 0 ]]; do
         -p) P4Root=${2:-}; shift 2 ;;
         -j) ParallelWorkers=${2:-}; shift 2 ;;
         -progress-commits) ProgressCommits=${2:-}; shift 2 ;;
+        -fresh-start) FreshStart=1; shift ;;
+        -checkpoint-interval) CheckpointInterval=${2:-}; shift 2 ;;
         -d) Debug=1; shift ;;
         -dummy) Dummy=1; shift ;;
         -first-parent) FirstParent=1; shift ;;
@@ -123,14 +132,23 @@ NativeArgs=(
 [[ $Debug -ne 0 ]] && NativeArgs+=(--log-level debug)
 [[ $Dummy -ne 0 ]] && NativeArgs+=(--dummy)
 [[ $FirstParent -ne 0 ]] && NativeArgs+=(--first-parent)
+[[ $FreshStart -ne 0 ]] && NativeArgs+=(--fresh-start)
+[[ -n "$CheckpointInterval" ]] && NativeArgs+=(--checkpoint-interval "$CheckpointInterval")
 
 printf 'Running:'
 printf ' %q' "$RepoP4TransferBin" "${NativeArgs[@]}"
 printf '\n'
-"$RepoP4TransferBin" "${NativeArgs[@]}" || {
+"$RepoP4TransferBin" "${NativeArgs[@]}"
+NativeExit=$?
+if [[ $NativeExit -eq 2 ]]; then
+    msg "Import stopped before completion (checkpoint saved); the journal and archives are partial."
     msg "Server root is in: $P4Root"
-    bail "Error running repo_p4transfer native Git import"
-}
+    msg "Rerun with the same -p \"$P4Root\" to resume; the P4 server is not being built from a partial import."
+    exit 2
+elif [[ $NativeExit -ne 0 ]]; then
+    msg "Server root is in: $P4Root"
+    bail "Error running repo_p4transfer native Git import" "$NativeExit"
+fi
 
 pushd "$P4Root" >/dev/null || bail "Failed to enter P4ROOT"
 curr_dir=$(pwd)

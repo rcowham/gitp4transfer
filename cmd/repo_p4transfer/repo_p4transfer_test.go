@@ -706,6 +706,9 @@ func TestImportNativeGitStopsCleanlyOnRequest(t *testing.T) {
 	if err := transfer.importNativeGit(batches); err != nil {
 		t.Fatalf("importNativeGit failed: %v", err)
 	}
+	if !transfer.ImportIncomplete() {
+		t.Error("ImportIncomplete() = false after a requested stop, want true")
+	}
 	if _, err := os.Stat(checkpointFile); !os.IsNotExist(err) {
 		t.Fatalf("expected no checkpoint when stopping before any batch ran, stat err=%v", err)
 	}
@@ -721,6 +724,9 @@ func TestImportNativeGitStopsCleanlyOnRequest(t *testing.T) {
 	resumeTransfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root"), journalFile)
 	if err := resumeTransfer.importNativeGit(batches); err != nil {
 		t.Fatalf("run after stop failed: %v", err)
+	}
+	if resumeTransfer.ImportIncomplete() {
+		t.Error("ImportIncomplete() = true after full completion, want false")
 	}
 	if _, err := os.Stat(checkpointFile); !os.IsNotExist(err) {
 		t.Fatalf("expected checkpoint removed after full completion, stat err=%v", err)

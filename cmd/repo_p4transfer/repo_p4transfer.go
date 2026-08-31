@@ -172,6 +172,7 @@ type RepoP4Transfer struct {
 	freshStart         bool
 	checkpointInterval time.Duration
 	stopRequested      atomic.Bool
+	importIncomplete   bool
 	manifest           *RepoManifest
 	cfg                *RepoP4TransferConfig
 	descriptionTmpl    *template.Template
@@ -192,6 +193,13 @@ func (r *RepoP4Transfer) RequestStop() {
 
 func (r *RepoP4Transfer) stopWasRequested() bool {
 	return r.stopRequested.Load()
+}
+
+// ImportIncomplete reports whether the last --native-git import stopped
+// before processing every batch (a clean stop, or a checkpoint that was
+// already at its final batch with nothing left to do only ever completes).
+func (r *RepoP4Transfer) ImportIncomplete() bool {
+	return r.importIncomplete
 }
 
 // NewRepoP4Transfer creates a new transfer coordinator
@@ -989,6 +997,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		return err
 	}
 	if stoppedEarly {
+		r.importIncomplete = true
 		r.logger.Infof("Stopped cleanly; checkpoint saved at %s (rerun to resume)", checkpointFile)
 		return nil
 	}
@@ -1458,5 +1467,9 @@ func main() {
 		logger.Fatalf("Export/import failed: %v", err)
 	}
 
+	if transfer.ImportIncomplete() {
+		logger.Warn("Transfer stopped before completion; the journal and archives are partial - rerun with the same --archive-root/--journal to resume")
+		os.Exit(2)
+	}
 	logger.Info("Transfer completed successfully")
 }

@@ -330,4 +330,28 @@ Tested via `TestImportNativeGitCheckpointIntervalSkipsSaves` (a long interval
 means an earlier successful batch's progress isn't yet on disk when a later
 batch fails, proving the skip actually happens).
 
+## repo_p4transfer: "Transfer completed successfully" logged after a clean stop
+
+A user hit Ctrl-C mid-import; the log correctly showed "Stopped cleanly;
+checkpoint saved ... (rerun to resume)" but then ALSO logged "Transfer
+completed successfully" - because `main()` logged that unconditionally after
+`ExportAndImport()` returned nil, without distinguishing "stopped early,
+partial" from "fully completed" (`importNativeGit` returns nil in both cases).
+`run_repo_conversion.sh` then proceeded to build a P4 server from the partial
+journal, which is misleading/wasteful (that server would need to be discarded
+and rebuilt after resuming).
+
+### Fix
+
+* `cmd/repo_p4transfer/repo_p4transfer.go`: added `RepoP4Transfer.importIncomplete`
+  (set when `importNativeGit` stops early), exposed via `ImportIncomplete()`.
+  `main()` now logs a distinct warning and exits with status 2 instead of
+  claiming success when the import is partial.
+* `run_repo_conversion.sh`: checks the exit code explicitly; on exit 2 it
+  prints the P4Root location and stops *before* running `p4d -jr`, instead of
+  building a server from a partial journal.
+
+Tested via updated assertions in `TestImportNativeGitStopsCleanlyOnRequest`
+(`ImportIncomplete()` true after a stop, false after full completion).
+
 
