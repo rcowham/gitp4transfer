@@ -401,15 +401,18 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 	if err := s.startDiffTree(); err != nil {
 		return nil, err
 	}
-	echo, err := s.nextDiffToken()
+	echoed, err := s.consumeDiffEcho(commitID)
 	if err != nil {
 		return nil, fmt.Errorf("read changes for commit %s: %w", commitID, err)
 	}
-	if echo != commitID {
-		return nil, fmt.Errorf("diff-tree commit mismatch for %s: got %q", commitID, echo)
-	}
-
 	changes := make([]FileChange, 0)
+	if !echoed {
+		// git diff-tree produced no output at all for this commit: this is
+		// expected for a commit with no tree differences from its parent, and
+		// for merge commits, whose diff is suppressed by default without
+		// -m/-c/--cc.
+		return changes, nil
+	}
 	for {
 		token, err := s.nextDiffToken()
 		if err == io.EOF {
@@ -493,6 +496,35 @@ func (s *GitRepositorySource) nextDiffToken() (string, error) {
 		return "", fmt.Errorf("read diff-tree token: %w", err)
 	}
 	return string(raw[:len(raw)-1]), nil
+}
+
+// consumeDiffEcho reports whether git diff-tree echoed commitID as the start
+// of its own record block. git only ever emits echoes in request order and
+// never repeats one, so a token that doesn't match commitID must belong to a
+// later commit in this batch (buffered for that commit's own call) - meaning
+// commitID itself produced no diff-tree output at all.
+func (s *GitRepositorySource) consumeDiffEcho(commitID string) (bool, error) {
+	if s.diffHasPending {
+		if s.diffPending != commitID {
+			return false, nil
+		}
+		s.diffHasPending = false
+		s.diffPending = ""
+		return true, nil
+	}
+	token, err := s.nextDiffToken()
+	if err == io.EOF {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if token == commitID {
+		return true, nil
+	}
+	s.diffPending = token
+	s.diffHasPending = true
+	return false, nil
 }
 
 // startDiffTree starts one persistent `git diff-tree --stdin` process for the

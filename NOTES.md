@@ -260,3 +260,38 @@ Tested via `TestGitRepositorySourceValidateBoundaryExcludesPriorAncestry`
 causes a git error, proving the option is actually wired through rather than
 silently ignored).
 
+## repo_p4transfer: "diff-tree commit mismatch" crash on merge/empty commits
+
+Real-world crash after the Validate() fix above: `readChanges` failed with
+"diff-tree commit mismatch for <commit>: got <other-commit>" partway through a
+large `frameworks/base` batch.
+
+Root cause: `git diff-tree --stdin` produces **no output at all** - not even
+the commit's own echoed ID - for a commit whose diff-tree output would
+otherwise be empty. This happens for (a) a commit with no tree difference from
+its parent, and (b) any true multi-parent merge commit, since git suppresses
+merge diffs by default unless `-m`/`-c`/`--cc` is given. Confirmed empirically:
+an `--allow-empty` commit and a real 2-parent merge commit both produced zero
+bytes from `git diff-tree --stdin --raw -z ...` alone.
+
+`readChanges`'s persistent-process protocol assumed every requested commit
+would always be echoed first; when one wasn't, it read the *next* commit's
+echo instead and errored on the mismatch.
+
+### Fix
+
+`internal/importer/git_repository.go`: replaced the hard mismatch error with
+`consumeDiffEcho`, which checks whether the next available token equals the
+requested commit ID. If not, since git only ever emits echoes in request order
+and never repeats one, the token must belong to a later commit - it's buffered
+(as before) and the current commit is reported with zero file changes (which
+matches the file-level effect of a suppressed/empty diff, and matches what the
+original one-shot `git diff-tree <single-commit>` implementation would have
+produced before this was optimized into a persistent process).
+
+Tested via `TestGitRepositorySourceHandlesCommitsWithNoDiffTreeOutput`
+(sequence of real commit, empty commit, true merge commit, real commit -
+verifies zero file changes for the empty/merge commits and correct file
+changes for the real ones either side, all through the same persistent
+diff-tree process).
+

@@ -266,6 +266,99 @@ func TestGitRepositorySourceCommitRefs(t *testing.T) {
 	}
 }
 
+func TestGitRepositorySourceHandlesCommitsWithNoDiffTreeOutput(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	commitID := func() string {
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(output[:len(output)-1])
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	// Real commit 1.
+	if err := os.WriteFile(filepath.Join(repoDir, "f1.txt"), []byte("first"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "f1.txt")
+	runGit("commit", "-m", "first")
+	firstID := commitID()
+
+	// A commit with no tree difference from its parent: `git diff-tree`
+	// produces no output at all for this, not even its own echoed ID.
+	runGit("commit", "--allow-empty", "-q", "-m", "empty")
+	emptyID := commitID()
+
+	// A true multi-parent merge commit: `git diff-tree` suppresses its diff
+	// by default (no -m/-c/--cc), so it also produces no output.
+	runGit("checkout", "-q", "-b", "feature", firstID)
+	if err := os.WriteFile(filepath.Join(repoDir, "feature.txt"), []byte("feature"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "feature.txt")
+	runGit("commit", "-q", "-m", "feature")
+	runGit("checkout", "-q", "main")
+	runGit("merge", "-q", "--no-ff", "-m", "merge", "feature")
+	mergeID := commitID()
+
+	// Real commit 2, after the merge.
+	if err := os.WriteFile(filepath.Join(repoDir, "f2.txt"), []byte("second"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "f2.txt")
+	runGit("commit", "-q", "-m", "second")
+	secondID := commitID()
+
+	source := NewGitRepositorySource(repoDir, []string{firstID, emptyID, mergeID, secondID})
+	defer source.Close()
+
+	first, err := source.Next()
+	if err != nil {
+		t.Fatalf("Next() (first) failed: %v", err)
+	}
+	if len(first.Files) != 1 {
+		t.Errorf("first commit: got %d file changes, want 1", len(first.Files))
+	}
+
+	empty, err := source.Next()
+	if err != nil {
+		t.Fatalf("Next() (empty) failed: %v", err)
+	}
+	if len(empty.Files) != 0 {
+		t.Errorf("empty commit: got %d file changes, want 0", len(empty.Files))
+	}
+
+	merge, err := source.Next()
+	if err != nil {
+		t.Fatalf("Next() (merge) failed: %v", err)
+	}
+	if len(merge.Files) != 0 {
+		t.Errorf("merge commit: got %d file changes, want 0", len(merge.Files))
+	}
+
+	second, err := source.Next()
+	if err != nil {
+		t.Fatalf("Next() (second) failed: %v", err)
+	}
+	if len(second.Files) != 1 {
+		t.Errorf("second commit: got %d file changes, want 1", len(second.Files))
+	}
+
+	if _, err := source.Next(); err != io.EOF {
+		t.Errorf("Next() after last commit error = %v, want io.EOF", err)
+	}
+}
+
 func TestGitRepositorySourceValidateBoundaryExcludesPriorAncestry(t *testing.T) {
 	repoDir := t.TempDir()
 	runGit := func(args ...string) {
