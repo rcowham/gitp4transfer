@@ -9,8 +9,43 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rcowham/gitp4transfer/config"
 	yaml "gopkg.in/yaml.v2"
 )
+
+func TestBranchNameMapperRepoManifestRef(t *testing.T) {
+	cfg := &RepoP4TransferConfig{DefaultBranch: "main"}
+	mapper, err := newBranchNameMapper(cfg)
+	if err != nil {
+		t.Fatalf("newBranchNameMapper failed: %v", err)
+	}
+	if got := mapper.branchPath("m/android-latest-release"); got != "main" {
+		t.Errorf("branchPath(%q) = %q, want %q", "m/android-latest-release", got, "main")
+	}
+	if got := mapper.branchPath("refs/heads/develop"); got != "develop" {
+		t.Errorf("branchPath(%q) = %q, want %q", "refs/heads/develop", got, "develop")
+	}
+}
+
+func TestBranchNameMapperAppliesBranchMappings(t *testing.T) {
+	cfg := &RepoP4TransferConfig{
+		DefaultBranch: "main",
+		BranchMappings: []config.BranchMapping{
+			{Name: "^android.*-release$", Prefix: "releases/"},
+		},
+	}
+	mapper, err := newBranchNameMapper(cfg)
+	if err != nil {
+		t.Fatalf("newBranchNameMapper failed: %v", err)
+	}
+	if got := mapper.branchPath("android-latest-release"); got != "releases/android-latest-release" {
+		t.Errorf("branchPath(%q) = %q, want %q", "android-latest-release", got, "releases/android-latest-release")
+	}
+	// The repo-tool tracking ref still maps to default_branch, not the mapping.
+	if got := mapper.branchPath("m/android-latest-release"); got != "main" {
+		t.Errorf("branchPath(%q) = %q, want %q", "m/android-latest-release", got, "main")
+	}
+}
 
 func TestManifestLoading(t *testing.T) {
 	// Create a temporary manifest file for testing

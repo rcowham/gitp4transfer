@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -252,9 +253,57 @@ func (r *RepoP4Transfer) loadConfig() error {
 			cfg.SelectedRepos = append(cfg.SelectedRepos, path)
 		}
 	}
+	if strings.TrimSpace(cfg.DefaultBranch) == "" {
+		cfg.DefaultBranch = config.DefaultBranch
+	}
 
 	r.cfg = cfg
 	return nil
+}
+
+// repoManifestRefPrefix is the ref namespace the `repo` tool uses to track each
+// project's currently synced manifest revision (e.g. "m/android-latest-release").
+// It identifies which commit is checked out, not a meaningful P4 branch name, so
+// it is mapped to the configured default branch rather than used verbatim.
+const repoManifestRefPrefix = "m/"
+
+// branchNameMapper resolves a discovered Git branch/tag reference to the P4
+// branch path segment used under import_path.
+type branchNameMapper struct {
+	defaultBranch string
+	mappings      []compiledBranchMapping
+}
+
+type compiledBranchMapping struct {
+	nameRegex *regexp.Regexp
+	prefix    string
+}
+
+func newBranchNameMapper(cfg *RepoP4TransferConfig) (*branchNameMapper, error) {
+	mapper := &branchNameMapper{defaultBranch: cfg.DefaultBranch}
+	for _, m := range cfg.BranchMappings {
+		nameRegex, err := regexp.Compile(m.Name)
+		if err != nil {
+			return nil, fmt.Errorf("invalid branch_mappings pattern %q: %w", m.Name, err)
+		}
+		mapper.mappings = append(mapper.mappings, compiledBranchMapping{nameRegex: nameRegex, prefix: m.Prefix})
+	}
+	return mapper, nil
+}
+
+// branchPath returns the P4 path segment for a Git ref discovered during
+// timeline scanning (e.g. a local/remote branch name or tag).
+func (m *branchNameMapper) branchPath(ref string) string {
+	name := strings.TrimPrefix(ref, "refs/heads/")
+	if strings.HasPrefix(name, repoManifestRefPrefix) {
+		name = m.defaultBranch
+	}
+	for _, mapping := range m.mappings {
+		if mapping.nameRegex.MatchString(name) {
+			return mapping.prefix + name
+		}
+	}
+	return name
 }
 
 // validateGitExportOptions validates git export configuration
@@ -694,14 +743,16 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	}
 	defer journalOutput.Close()
 
+	branchMapper, err := newBranchNameMapper(r.cfg)
+	if err != nil {
+		return err
+	}
 	writer, err := importer.NewP4Writer(importer.P4WriterOptions{
 		ImportDepot:     r.cfg.ImportDepot,
 		ArchiveRoot:     r.archiveRoot,
 		Journal:         journalOutput,
 		ParallelWorkers: r.parallelWorkers,
-		BranchPath: func(ref string) string {
-			return strings.TrimPrefix(ref, "refs/heads/")
-		},
+		BranchPath:      branchMapper.branchPath,
 	})
 	if err != nil {
 		return err
