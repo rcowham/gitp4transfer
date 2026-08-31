@@ -112,3 +112,103 @@ go-git.
 * Rename/copy source blob lookup: reuses the existing persistent
   `cat-file --batch-command` process via an `info <rev>` request (was one
   `git rev-parse` spawn per renamed/copied file).
+
+## repo_p4transfer: configurable parallel `git cat-file --batch` processes?
+
+Question: would a configurable number of parallel `git cat-file --batch`
+processes help native-Git import performance?
+
+Short answer: not by itself - there's no concurrent call site today that would
+actually use extra processes.
+
+### What's parallel today vs what's serial
+
+* Parallel: `P4Writer`'s `ParallelWorkers` archive workers only do the
+  staged-file -> gzip-compressed archive step, via the `archiveJobs` channel.
+* Serial: everything upstream. `WriteCommit` loops over a commit's file
+  changes one at a time; for each, `writeChange` calls `change.Content()`
+  (hits the single persistent `cat-file --batch-command` process) and
+  synchronously copies the full blob into a staging file before moving to the
+  next file. Only then is the file handed off (async) to the compression pool.
+  So the git-read step is a strict bottleneck regardless of
+  `--parallel-workers`.
+
+### Why more cat-file processes wouldn't help as-is
+
+`cat-file --batch-command`'s request/response protocol is single-threaded per
+process - concurrent requests on one process would corrupt the stream. Real
+parallelism would need:
+
+1. A pool of N separate `cat-file --batch-command` processes (not N requests
+   to one process).
+2. Restructuring `writeChange`'s per-commit file loop to fan out across
+   goroutines bounded by that pool - this is the real work, not the process
+   pool itself.
+3. Mutex-guarding `P4Writer`'s shared maps (`fileRevisions`, `blobArchives`,
+   `commitBranches`), currently mutated assuming single-threaded access.
+4. Handling journal-order determinism - `WriteRev`/`WriteInteg` calls happen
+   in a fixed per-commit file order today; parallelizing reads means either
+   reordering results back to source order before writing the journal, or
+   accepting non-deterministic output (risky for a migration tool, and would
+   break golden-output-style tests like `main_test.go`'s regex assertions).
+
+### When it would actually pay off
+
+* Repos with large/binary blobs where per-blob decompression or I/O wait
+  dominates (multiple processes can use multiple cores/concurrent I/O queue
+  depth).
+* Slow or network-backed repo storage (NFS, network disks) where read latency
+  benefits from concurrency.
+* Not much benefit for the common case of many small text files on local SSD -
+  there the bottleneck is more likely per-request looping overhead (already
+  fixed by the persistent process) or the gzip compression step (already
+  parallelized).
+
+Recommendation: profile a real batch first to see whether wall-clock time is
+actually dominated by git blob reads vs compression, before adding this. If it
+is, the fix is "parallelize `writeChange`'s file loop with a bounded worker
+pool of paired (cat-file process, mutex-safe map access)" - a real
+concurrency-model change, not just a new config knob.
+
+## repo_p4transfer: is --native-git restartable after a crash?
+
+Was no: the journal was truncated (`os.Create`) on every run, `P4Writer`'s
+changelist counter and revision/dedup maps were in-memory only, and there was
+no record of which batches had already completed. `GitRepositorySource` had a
+`Checkpoint`/`Resume` primitive, but `importNativeGit` never wired it up.
+
+### Implemented (batch-granularity checkpoint/resume)
+
+* `internal/importer/p4_writer.go`: exported `WriterState` (+ `FileRevisionState`,
+  `BlobArchiveState`) and `P4Writer.ExportState()`/`P4WriterOptions.InitialState`,
+  so a caller can snapshot and restore `changeNumber`, `fileRevisions`,
+  `blobArchives`, `commitBranches`, `branchReady`. Supplying `InitialState`
+  also skips re-writing the journal header (the journal is being appended to,
+  not recreated).
+* `cmd/repo_p4transfer/repo_p4transfer.go`: after each batch fully completes,
+  `importNativeGit` atomically writes `<journal>.checkpoint.json` (temp file +
+  rename) containing the next batch index, the journal's current byte offset,
+  `snapshotsCreated`, and `writer.ExportState()`. On startup, if that
+  checkpoint exists (and `--fresh-start` wasn't given), the journal is
+  truncated back to the recorded offset (discarding any partially-written
+  in-progress batch) and reopened for append, `P4Writer` is seeded from the
+  saved state, and processing resumes at the recorded batch index. On full
+  completion the checkpoint file is removed.
+* New `--fresh-start` flag discards an existing checkpoint and reimports from
+  scratch.
+
+Resume granularity is per-batch, not per-commit: an interrupted batch is
+redone from its start (can mean re-processing a large batch, e.g. the
+55,325-commit `frameworks/base` batch that motivated the earlier
+argument-list-too-long fix), but this keeps the design simple and avoids
+per-commit state-serialization overhead (batches can be recomputed from a
+fresh `BuildTimeline()` scan since repos aren't expected to change underfoot
+during an import). Finer-grained per-commit resume (via the existing
+`GitRepositorySource.Checkpoint`/`Resume`) is a possible future enhancement if
+batch-level redo proves too costly in practice.
+
+Tested via `TestImportNativeGitResumesAfterInterruption` (interrupts a
+2-repo, 4-batch import by hiding one repo's directory, resumes, and asserts
+the resulting journal is byte-identical to an uninterrupted run) and
+`TestP4WriterExportStateResumesAcrossInstances`.
+
