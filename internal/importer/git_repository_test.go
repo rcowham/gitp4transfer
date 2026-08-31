@@ -266,6 +266,64 @@ func TestGitRepositorySourceCommitRefs(t *testing.T) {
 	}
 }
 
+func TestGitRepositorySourceValidateBoundaryExcludesPriorAncestry(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	commitID := func() string {
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(output[:len(output)-1])
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "first.txt"), []byte("first"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "first.txt")
+	runGit("commit", "-m", "first")
+	firstID := commitID()
+
+	if err := os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("second"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "second.txt")
+	runGit("commit", "-m", "second")
+	secondID := commitID()
+
+	// Without a boundary, Validate() walks the full history (both commits'
+	// objects) and still succeeds.
+	full := NewGitRepositorySource(repoDir, []string{secondID})
+	defer full.Close()
+	if err := full.Validate(); err != nil {
+		t.Fatalf("unbounded Validate() failed: %v", err)
+	}
+
+	// With firstID as the boundary, Validate() must only enumerate objects
+	// introduced by secondID - excluding firstID's own ancestry entirely.
+	bounded := NewGitRepositorySourceWithOptions(repoDir, []string{secondID}, GitRepositorySourceOptions{ValidateBoundary: firstID})
+	defer bounded.Close()
+	if err := bounded.Validate(); err != nil {
+		t.Fatalf("bounded Validate() failed: %v", err)
+	}
+
+	// A nonexistent boundary proves ValidateBoundary is actually passed to
+	// git (rather than silently ignored): git must reject the bad rev.
+	invalid := NewGitRepositorySourceWithOptions(repoDir, []string{secondID}, GitRepositorySourceOptions{ValidateBoundary: "0000000000000000000000000000000000000000"})
+	defer invalid.Close()
+	if err := invalid.Validate(); err == nil {
+		t.Fatal("expected Validate() to fail for a nonexistent ValidateBoundary commit")
+	}
+}
+
 func TestGitRepositorySourceDuplicateBlob(t *testing.T) {
 	repoDir := t.TempDir()
 	runGit := func(args ...string) {

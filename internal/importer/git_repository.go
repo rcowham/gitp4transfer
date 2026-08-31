@@ -24,6 +24,12 @@ type GitRepositorySourceOptions struct {
 	CheckpointFile  string
 	Dummy           bool
 	InitialSnapshot bool
+	// ValidateBoundary excludes a commit (and everything reachable from it)
+	// from Validate()'s object enumeration. Set it to the last commit already
+	// validated for this repository so Validate() only walks objects newly
+	// introduced by commitIDs, instead of the entire repository history on
+	// every call.
+	ValidateBoundary string
 }
 
 type gitRepositoryCheckpoint struct {
@@ -47,33 +53,34 @@ type rawCommitMetadata struct {
 // It currently reports add, modify, and delete actions; rename/copy inference
 // is intentionally deferred to a later migration step.
 type GitRepositorySource struct {
-	repository      string
-	pathPrefix      string
-	ref             string
-	commitRefs      map[string]string
-	commitIDs       []string
-	index           int
-	context         context.Context
-	checkpoint      string
-	lastCommit      string
-	dummy           bool
-	initialSnapshot bool
-	snapshotPending bool
-	seenBlobs       map[string]struct{}
-	metadataCache   map[string]rawCommitMetadata
-	catFile         *exec.Cmd
-	catInput        io.WriteCloser
-	catWriter       *bufio.Writer
-	catOutput       *bufio.Reader
-	catError        bytes.Buffer
-	activeBlob      bool
-	diffTree        *exec.Cmd
-	diffInput       io.WriteCloser
-	diffOutput      *bufio.Reader
-	diffError       bytes.Buffer
-	diffPending     string
-	diffHasPending  bool
-	diffWriterDone  chan error
+	repository       string
+	pathPrefix       string
+	ref              string
+	commitRefs       map[string]string
+	commitIDs        []string
+	index            int
+	context          context.Context
+	checkpoint       string
+	validateBoundary string
+	lastCommit       string
+	dummy            bool
+	initialSnapshot  bool
+	snapshotPending  bool
+	seenBlobs        map[string]struct{}
+	metadataCache    map[string]rawCommitMetadata
+	catFile          *exec.Cmd
+	catInput         io.WriteCloser
+	catWriter        *bufio.Writer
+	catOutput        *bufio.Reader
+	catError         bytes.Buffer
+	activeBlob       bool
+	diffTree         *exec.Cmd
+	diffInput        io.WriteCloser
+	diffOutput       *bufio.Reader
+	diffError        bytes.Buffer
+	diffPending      string
+	diffHasPending   bool
+	diffWriterDone   chan error
 }
 
 // NewGitRepositorySource creates a source for commits in the caller-provided order.
@@ -95,17 +102,18 @@ func NewGitRepositorySourceWithOptions(repository string, commitIDs []string, op
 		ctx = context.Background()
 	}
 	return &GitRepositorySource{
-		repository:      repository,
-		pathPrefix:      strings.Trim(options.PathPrefix, "/"),
-		ref:             options.Ref,
-		commitRefs:      options.CommitRefs,
-		commitIDs:       commitIDs,
-		context:         ctx,
-		checkpoint:      options.CheckpointFile,
-		dummy:           options.Dummy,
-		initialSnapshot: options.InitialSnapshot,
-		snapshotPending: options.InitialSnapshot && len(commitIDs) > 0,
-		seenBlobs:       make(map[string]struct{}),
+		repository:       repository,
+		pathPrefix:       strings.Trim(options.PathPrefix, "/"),
+		ref:              options.Ref,
+		commitRefs:       options.CommitRefs,
+		commitIDs:        commitIDs,
+		context:          ctx,
+		checkpoint:       options.CheckpointFile,
+		validateBoundary: options.ValidateBoundary,
+		dummy:            options.Dummy,
+		initialSnapshot:  options.InitialSnapshot,
+		snapshotPending:  options.InitialSnapshot && len(commitIDs) > 0,
+		seenBlobs:        make(map[string]struct{}),
 	}
 }
 
@@ -173,9 +181,21 @@ func (s *GitRepositorySource) Validate() error {
 	}
 	// Commit IDs are passed via stdin, not argv: large batches can otherwise
 	// exceed the OS command-line length limit ("argument list too long").
+	// ValidateBoundary excludes already-validated ancestry (via argv "--not",
+	// which applies uniformly to stdin-supplied revisions) so this walks only
+	// the objects newly introduced by commitIDs rather than the whole repo
+	// history on every call.
+	if s.validateBoundary != "" {
+		args = append(args, "--not", s.validateBoundary)
+	}
+	var stdin strings.Builder
+	for _, id := range s.commitIDs {
+		stdin.WriteString(id)
+		stdin.WriteByte('\n')
+	}
 	revListCmd := exec.CommandContext(s.context, "git", args...)
 	revListCmd.Dir = s.repository
-	revListCmd.Stdin = strings.NewReader(strings.Join(s.commitIDs, "\n") + "\n")
+	revListCmd.Stdin = strings.NewReader(stdin.String())
 	var revListStderr bytes.Buffer
 	revListCmd.Stderr = &revListStderr
 	objectOutput, err := revListCmd.Output()

@@ -223,3 +223,40 @@ immediate `os.Exit`. Re-running the command resumes via the same
 checkpoint/resume mechanism as a crash. Tested via
 `TestImportNativeGitStopsCleanlyOnRequest`.
 
+## repo_p4transfer: Validate() was re-walking full repo history every batch
+
+Real-world log evidence (`frameworks/base`, 52,505 batches): a batch of 3
+trivial (0-file-change) merge commits took 16s, and the overall average was
+~11s/batch regardless of batch size - a near-constant per-batch cost pointed
+at something scanning proportional to total repo size, not batch size.
+
+Root cause confirmed by direct measurement: `GitRepositorySource.Validate()`
+ran `git rev-list --objects --stdin <batch commit IDs>` with no exclusion
+boundary, so every batch walked the *entire* reachable history from those
+commits - for `frameworks/base` that's 2,201,987 objects in 8.68s, every
+single batch. Adding `--not <boundary>` (the last commit already validated for
+that repo) cut it to 56 objects in 0.07s - a ~124x speedup for that batch.
+
+### Implemented
+
+* `internal/importer/git_repository.go`: `GitRepositorySourceOptions.ValidateBoundary`
+  excludes a commit's ancestry from `Validate()`'s `rev-list --objects` walk.
+  Passed as an argv `--not <boundary>` flag (not a stdin line - git rejects
+  `--not` as a raw stdin line under `--stdin` mode: "options not supported in
+  --stdin mode"), which applies correctly to stdin-supplied positive revisions.
+* `cmd/repo_p4transfer/repo_p4transfer.go`: tracks `validatedThrough
+  map[string]string` (repo path -> last validated commit), updated after each
+  successful `Validate()` and passed as the next batch's boundary for that
+  repo. Persisted in `nativeGitCheckpoint.ValidatedThrough` so resumed runs
+  don't lose the bound and fall back to full-history walks.
+* A single boundary commit is sufficient even for merge commits pulling in a
+  second parent from elsewhere: `--not` computes a genuine set difference, so
+  truly-unvalidated objects reachable via an unrelated parent are still walked
+  and checked; only objects already known-good (reachable from the boundary)
+  are skipped.
+
+Tested via `TestGitRepositorySourceValidateBoundaryExcludesPriorAncestry`
+(bounded and unbounded validation both succeed; a nonexistent boundary commit
+causes a git error, proving the option is actually wired through rather than
+silently ignored).
+

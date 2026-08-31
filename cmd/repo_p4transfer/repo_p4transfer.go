@@ -821,6 +821,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	var writerOptions importer.P4WriterOptions
 	startBatchIndex := 0
 	snapshotsCreated := make(map[string]bool)
+	validatedThrough := make(map[string]string)
 	if checkpoint != nil {
 		if err := os.Truncate(r.journalFile, checkpoint.JournalOffset); err != nil {
 			return fmt.Errorf("truncate journal %s to resume point: %w", r.journalFile, err)
@@ -832,6 +833,9 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		writerOptions.InitialState = &checkpoint.Writer
 		startBatchIndex = checkpoint.NextBatchIndex
 		snapshotsCreated = checkpoint.SnapshotsCreated
+		if checkpoint.ValidatedThrough != nil {
+			validatedThrough = checkpoint.ValidatedThrough
+		}
 		r.logger.Infof("Resuming native Git import from batch %d/%d (journal offset %d)", startBatchIndex+1, len(batches), checkpoint.JournalOffset)
 	} else {
 		if err := os.Remove(checkpointFile); err != nil && !os.IsNotExist(err) {
@@ -897,14 +901,19 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		}
 		r.logger.Infof("Starting batch %d/%d for %s (%d %s)", index+1, len(batches), project.Path, len(batch.Commits), commitLabel(len(batch.Commits)))
 		source := importer.NewGitRepositorySourceWithOptions(filepath.Join(r.repoRoot, batch.RepoPath), commitIDs, importer.GitRepositorySourceOptions{
-			PathPrefix:      project.Path,
-			CommitRefs:      commitRefs,
-			Dummy:           r.dummy,
-			InitialSnapshot: initialSnapshot,
+			PathPrefix:       project.Path,
+			CommitRefs:       commitRefs,
+			Dummy:            r.dummy,
+			InitialSnapshot:  initialSnapshot,
+			ValidateBoundary: validatedThrough[batch.RepoPath],
 		})
+		validateStart := time.Now()
 		if err := source.Validate(); err != nil {
 			return fmt.Errorf("batch %d, repo %s: %w", index+1, batch.RepoPath, err)
 		}
+		validatedThrough[batch.RepoPath] = commitIDs[len(commitIDs)-1]
+		r.logger.Debugf("[%d/%d] %s: Validate() took %s", index+1, len(batches), project.Path, time.Since(validateStart))
+		commitsStart := time.Now()
 		for {
 			commit, err := source.Next()
 			if err == io.EOF {
@@ -932,14 +941,18 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 				lastProgress = progressDone
 			}
 		}
+		r.logger.Debugf("[%d/%d] %s: processed %d commits in %s", index+1, len(batches), project.Path, len(batch.Commits), time.Since(commitsStart))
+		closeStart := time.Now()
 		if err := source.Close(); err != nil {
 			return fmt.Errorf("close source for batch %d: %w", index+1, err)
 		}
+		r.logger.Debugf("[%d/%d] %s: source Close() took %s", index+1, len(batches), project.Path, time.Since(closeStart))
 		r.logger.Infof("[%d/%d] Imported native Git batch for %s", index+1, len(batches), batch.RepoPath)
 		if progressDone != lastProgress {
 			r.logNativeProgress(progressDone, progressTotal, index+1, len(batches), progressStart)
 			lastProgress = progressDone
 		}
+		checkpointStart := time.Now()
 		if err := journalOutput.Sync(); err != nil {
 			return fmt.Errorf("sync journal after batch %d: %w", index+1, err)
 		}
@@ -947,14 +960,18 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		if err != nil {
 			return fmt.Errorf("determine journal offset after batch %d: %w", index+1, err)
 		}
+		writerState := writer.ExportState()
 		if err := saveNativeGitCheckpoint(checkpointFile, nativeGitCheckpoint{
 			NextBatchIndex:   index + 1,
 			JournalOffset:    offset,
 			SnapshotsCreated: snapshotsCreated,
-			Writer:           writer.ExportState(),
+			ValidatedThrough: validatedThrough,
+			Writer:           writerState,
 		}); err != nil {
 			return fmt.Errorf("save checkpoint after batch %d: %w", index+1, err)
 		}
+		r.logger.Debugf("[%d/%d] %s: checkpoint save took %s (%d file revisions, %d blob archives tracked)",
+			index+1, len(batches), project.Path, time.Since(checkpointStart), len(writerState.FileRevisions), len(writerState.BlobArchives))
 	}
 	if err := writer.Close(); err != nil {
 		return err
@@ -975,9 +992,12 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 // truncate back to (discarding any partially-written in-progress batch), and
 // the P4Writer revision/dedup state as of the end of the last completed batch.
 type nativeGitCheckpoint struct {
-	NextBatchIndex   int                  `json:"next_batch_index"`
-	JournalOffset    int64                `json:"journal_offset"`
-	SnapshotsCreated map[string]bool      `json:"snapshots_created"`
+	NextBatchIndex   int             `json:"next_batch_index"`
+	JournalOffset    int64           `json:"journal_offset"`
+	SnapshotsCreated map[string]bool `json:"snapshots_created"`
+	// ValidatedThrough maps repo path to the last commit whose ancestry has
+	// already been confirmed present, bounding future Validate() calls.
+	ValidatedThrough map[string]string    `json:"validated_through"`
 	Writer           importer.WriterState `json:"writer"`
 }
 
