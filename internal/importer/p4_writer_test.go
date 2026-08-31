@@ -75,6 +75,52 @@ func TestP4WriterWritesArchivesAndDuplicateReferences(t *testing.T) {
 	}
 }
 
+func TestP4WriterExportStateResumesAcrossInstances(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var firstOutput bytes.Buffer
+	first, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &firstOutput})
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader("blob data")), nil }
+	when := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	firstCommit := &Commit{ID: "one", Author: Identity{When: when}, Message: "one",
+		Files: []FileChange{{Action: FileModify, Path: "a.txt", ObjectID: "blob-id", Content: content}}}
+	if err := first.WriteCommit(firstCommit); err != nil {
+		t.Fatal(err)
+	}
+	state := first.ExportState()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second writer, seeded from the exported state, must not repeat the
+	// header and must continue the file's revision history and change count.
+	var secondOutput bytes.Buffer
+	second, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &secondOutput, InitialState: &state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCommit := &Commit{ID: "two", Author: Identity{When: when}, Message: "two",
+		Files: []FileChange{{Action: FileModify, Path: "a.txt", ObjectID: "blob-id-2", Content: content}}}
+	if err := second.WriteCommit(secondCommit); err != nil {
+		t.Fatal(err)
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if strings.Contains(secondOutput.String(), "db.depot") {
+		t.Errorf("resumed writer unexpectedly re-wrote the journal header:\n%s", secondOutput.String())
+	}
+	if second.ChangeCount() != 2 {
+		t.Errorf("ChangeCount() = %d, want 2 (continuing from resumed state)", second.ChangeCount())
+	}
+	if !strings.Contains(secondOutput.String(), "@//import/a.txt@ 2 ") {
+		t.Errorf("resumed writer did not continue file revision history:\n%s", secondOutput.String())
+	}
+}
+
 func TestP4WriterUsesAuthorEmailAsChangeUser(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer

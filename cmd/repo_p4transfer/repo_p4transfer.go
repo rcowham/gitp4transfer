@@ -8,6 +8,7 @@ import (
 	"bufio"
 	"bytes"
 	_ "embed"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -64,6 +65,8 @@ var (
 	progressCommits = app.Flag("progress-commits", "Log native import progress every N commits (0 disables periodic progress)").
 			Default("100").Int()
 	firstParent = app.Flag("first-parent", "Follow only the first parent commit when scanning git history").
+			Bool()
+	freshStart = app.Flag("fresh-start", "Ignore any existing --native-git checkpoint and start the import from scratch").
 			Bool()
 	logLevel = app.Flag("log-level", "Log level").
 			Default("info").String()
@@ -161,6 +164,7 @@ type RepoP4Transfer struct {
 	parallelWorkers  int
 	progressCommits  int
 	firstParent      bool
+	freshStart       bool
 	manifest         *RepoManifest
 	cfg              *RepoP4TransferConfig
 	descriptionTmpl  *template.Template
@@ -788,9 +792,40 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	if r.archiveRoot == "" {
 		return fmt.Errorf("--archive-root is required with --native-git")
 	}
-	journalOutput, err := os.Create(r.journalFile)
+	checkpointFile := r.journalFile + ".checkpoint.json"
+	checkpoint, err := loadNativeGitCheckpoint(checkpointFile, r.freshStart)
 	if err != nil {
-		return fmt.Errorf("create journal %s: %w", r.journalFile, err)
+		return err
+	}
+	if checkpoint != nil && checkpoint.NextBatchIndex >= len(batches) {
+		r.logger.Infof("Checkpoint %s already completed all %d batches; nothing to do", checkpointFile, len(batches))
+		return nil
+	}
+
+	var journalOutput *os.File
+	var writerOptions importer.P4WriterOptions
+	startBatchIndex := 0
+	snapshotsCreated := make(map[string]bool)
+	if checkpoint != nil {
+		if err := os.Truncate(r.journalFile, checkpoint.JournalOffset); err != nil {
+			return fmt.Errorf("truncate journal %s to resume point: %w", r.journalFile, err)
+		}
+		journalOutput, err = os.OpenFile(r.journalFile, os.O_APPEND|os.O_WRONLY, 0644)
+		if err != nil {
+			return fmt.Errorf("reopen journal %s for resume: %w", r.journalFile, err)
+		}
+		writerOptions.InitialState = &checkpoint.Writer
+		startBatchIndex = checkpoint.NextBatchIndex
+		snapshotsCreated = checkpoint.SnapshotsCreated
+		r.logger.Infof("Resuming native Git import from batch %d/%d (journal offset %d)", startBatchIndex+1, len(batches), checkpoint.JournalOffset)
+	} else {
+		if err := os.Remove(checkpointFile); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove stale checkpoint %s: %w", checkpointFile, err)
+		}
+		journalOutput, err = os.Create(r.journalFile)
+		if err != nil {
+			return fmt.Errorf("create journal %s: %w", r.journalFile, err)
+		}
 	}
 	defer journalOutput.Close()
 
@@ -798,14 +833,13 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	if err != nil {
 		return err
 	}
-	writer, err := importer.NewP4Writer(importer.P4WriterOptions{
-		ImportDepot:     r.cfg.ImportDepot,
-		ArchiveRoot:     r.archiveRoot,
-		Journal:         journalOutput,
-		Client:          "repo-import",
-		ParallelWorkers: r.parallelWorkers,
-		BranchPath:      branchMapper.branchPath,
-	})
+	writerOptions.ImportDepot = r.cfg.ImportDepot
+	writerOptions.ArchiveRoot = r.archiveRoot
+	writerOptions.Journal = journalOutput
+	writerOptions.Client = "repo-import"
+	writerOptions.ParallelWorkers = r.parallelWorkers
+	writerOptions.BranchPath = branchMapper.branchPath
+	writer, err := importer.NewP4Writer(writerOptions)
 	if err != nil {
 		return err
 	}
@@ -822,8 +856,8 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 	progressDone := 0
 	progressStart := time.Now()
 	lastProgress := 0
-	snapshotsCreated := make(map[string]bool)
-	for index, batch := range batches {
+	for index := startBatchIndex; index < len(batches); index++ {
+		batch := batches[index]
 		project, ok := r.projects[batch.RepoPath]
 		if !ok {
 			return fmt.Errorf("batch %d: repo %s not found in manifest", index+1, batch.RepoPath)
@@ -885,11 +919,76 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			r.logNativeProgress(progressDone, progressTotal, index+1, len(batches), progressStart)
 			lastProgress = progressDone
 		}
+		if err := journalOutput.Sync(); err != nil {
+			return fmt.Errorf("sync journal after batch %d: %w", index+1, err)
+		}
+		offset, err := journalOutput.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("determine journal offset after batch %d: %w", index+1, err)
+		}
+		if err := saveNativeGitCheckpoint(checkpointFile, nativeGitCheckpoint{
+			NextBatchIndex:   index + 1,
+			JournalOffset:    offset,
+			SnapshotsCreated: snapshotsCreated,
+			Writer:           writer.ExportState(),
+		}); err != nil {
+			return fmt.Errorf("save checkpoint after batch %d: %w", index+1, err)
+		}
 	}
 	if err := writer.Close(); err != nil {
 		return err
 	}
+	if err := os.Remove(checkpointFile); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove completed checkpoint %s: %w", checkpointFile, err)
+	}
 	r.logger.Infof("Native Git import journal written to: %s", r.journalFile)
+	return nil
+}
+
+// nativeGitCheckpoint records enough state to resume a --native-git import
+// after a crash: which batch to resume at, the journal byte offset to
+// truncate back to (discarding any partially-written in-progress batch), and
+// the P4Writer revision/dedup state as of the end of the last completed batch.
+type nativeGitCheckpoint struct {
+	NextBatchIndex   int                  `json:"next_batch_index"`
+	JournalOffset    int64                `json:"journal_offset"`
+	SnapshotsCreated map[string]bool      `json:"snapshots_created"`
+	Writer           importer.WriterState `json:"writer"`
+}
+
+// loadNativeGitCheckpoint reads an existing checkpoint, or returns nil if none
+// exists or freshStart discards it.
+func loadNativeGitCheckpoint(path string, freshStart bool) (*nativeGitCheckpoint, error) {
+	if freshStart {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read checkpoint %s: %w", path, err)
+	}
+	var checkpoint nativeGitCheckpoint
+	if err := json.Unmarshal(data, &checkpoint); err != nil {
+		return nil, fmt.Errorf("parse checkpoint %s: %w", path, err)
+	}
+	return &checkpoint, nil
+}
+
+// saveNativeGitCheckpoint atomically writes the checkpoint file.
+func saveNativeGitCheckpoint(path string, checkpoint nativeGitCheckpoint) error {
+	data, err := json.Marshal(checkpoint)
+	if err != nil {
+		return fmt.Errorf("marshal checkpoint: %w", err)
+	}
+	tempFile := path + ".tmp"
+	if err := os.WriteFile(tempFile, data, 0644); err != nil {
+		return fmt.Errorf("write checkpoint: %w", err)
+	}
+	if err := os.Rename(tempFile, path); err != nil {
+		return fmt.Errorf("replace checkpoint: %w", err)
+	}
 	return nil
 }
 
@@ -1268,6 +1367,7 @@ func main() {
 	transfer.parallelWorkers = *parallelWorkers
 	transfer.progressCommits = *progressCommits
 	transfer.firstParent = *firstParent
+	transfer.freshStart = *freshStart
 
 	// Initialize from config and manifest
 	if err := transfer.Init(); err != nil {

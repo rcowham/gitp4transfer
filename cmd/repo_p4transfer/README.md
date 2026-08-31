@@ -37,9 +37,26 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 - `--parallel-workers`: Bounded archive worker count for `--native-git` (default: 1)
 - `--progress-commits`: Log native import progress every N processed commits (default: 100; 0 disables periodic progress)
 - `--first-parent`: Follow only the first parent commit when scanning git history
+- `--fresh-start`: Ignore any existing `--native-git` checkpoint and start the import from scratch
 - `--log-level`: Logging level: debug, info, warn, error (default: info)
 
 Native imports also log progress at every batch boundary. Progress messages include completed work, throughput, elapsed time, and an ETA calculated from the observed processing rate.
+
+### Resuming a `--native-git` import after a crash
+
+After each batch fully completes, `--native-git` writes a checkpoint file
+(`<journal>.checkpoint.json`) recording the next batch to process, the
+journal's byte offset, and the P4 revision/dedup state as of that point.
+Re-running the same command automatically resumes from that checkpoint: the
+journal is truncated back to the recorded offset (discarding any
+partially-written in-progress batch) and reopened for append, so no manual
+cleanup is required. On full completion the checkpoint file is removed.
+
+Resume granularity is per-batch, not per-commit: if a batch was interrupted
+partway through, it is redone from its start on resume (this can mean
+re-processing a large batch, e.g. thousands of commits for one repository, but
+never corrupts or duplicates already-completed batches). Use `--fresh-start`
+to discard an existing checkpoint and re-import from the beginning.
 
 ## Debug Mode
 

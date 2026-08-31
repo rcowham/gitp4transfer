@@ -32,6 +32,36 @@ type P4WriterOptions struct {
 	DryRun          bool
 	CaseInsensitive bool
 	BranchPath      func(ref string) string
+	// InitialState resumes a previously interrupted import: it seeds revision
+	// and dedup tracking from a prior ExportState() snapshot, and skips writing
+	// the journal header (the caller is expected to open Journal in append mode).
+	InitialState *WriterState
+}
+
+// FileRevisionState is the exported, serializable form of a tracked depot file revision.
+type FileRevisionState struct {
+	Revision int    `json:"revision"`
+	LbrFile  string `json:"lbr_file"`
+	LbrRev   int    `json:"lbr_rev"`
+	ObjectID string `json:"object_id"`
+	Active   bool   `json:"active"`
+}
+
+// BlobArchiveState is the exported, serializable form of a deduplicated blob archive reference.
+type BlobArchiveState struct {
+	LbrFile string `json:"lbr_file"`
+	LbrRev  int    `json:"lbr_rev"`
+}
+
+// WriterState is a serializable snapshot of P4Writer's incremental import
+// state, used to resume a native Git import after a crash without re-deriving
+// revision history from scratch. See P4Writer.ExportState and P4WriterOptions.InitialState.
+type WriterState struct {
+	ChangeNumber   int                          `json:"change_number"`
+	FileRevisions  map[string]FileRevisionState `json:"file_revisions"`
+	BlobArchives   map[string]BlobArchiveState  `json:"blob_archives"`
+	CommitBranches map[string]string            `json:"commit_branches"`
+	BranchReady    map[string]bool              `json:"branch_ready"`
 }
 
 // TypeMap selects a Perforce file type for paths matching Pattern.
@@ -90,6 +120,34 @@ func (w *P4Writer) ChangeCount() int {
 	return w.changeNumber
 }
 
+// ExportState snapshots the writer's revision and dedup tracking so it can be
+// persisted and later restored via P4WriterOptions.InitialState.
+func (w *P4Writer) ExportState() WriterState {
+	state := WriterState{
+		ChangeNumber:   w.changeNumber,
+		FileRevisions:  make(map[string]FileRevisionState, len(w.fileRevisions)),
+		BlobArchives:   make(map[string]BlobArchiveState, len(w.blobArchives)),
+		CommitBranches: make(map[string]string, len(w.commitBranches)),
+		BranchReady:    make(map[string]bool, len(w.branchReady)),
+	}
+	for depotFile, revision := range w.fileRevisions {
+		state.FileRevisions[depotFile] = FileRevisionState{
+			Revision: revision.revision, LbrFile: revision.lbrFile, LbrRev: revision.lbrRev,
+			ObjectID: revision.objectID, Active: revision.active,
+		}
+	}
+	for objectID, archive := range w.blobArchives {
+		state.BlobArchives[objectID] = BlobArchiveState{LbrFile: archive.lbrFile, LbrRev: archive.lbrRev}
+	}
+	for commitID, branch := range w.commitBranches {
+		state.CommitBranches[commitID] = branch
+	}
+	for branch, ready := range w.branchReady {
+		state.BranchReady[branch] = ready
+	}
+	return state
+}
+
 // NewP4Writer creates a source-neutral Perforce writer.
 func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 	if options.ImportDepot == "" {
@@ -125,7 +183,27 @@ func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 	}
 	writer.journal.SetWriter(options.Journal)
 	writer.journal.SetClient(options.Client)
-	writer.journal.WriteHeader(strings.TrimPrefix(options.ImportDepot, "//"), options.CaseInsensitive)
+	if options.InitialState != nil {
+		state := options.InitialState
+		writer.changeNumber = state.ChangeNumber
+		for depotFile, revision := range state.FileRevisions {
+			writer.fileRevisions[depotFile] = fileRevision{
+				revision: revision.Revision, lbrFile: revision.LbrFile, lbrRev: revision.LbrRev,
+				objectID: revision.ObjectID, active: revision.Active,
+			}
+		}
+		for objectID, archive := range state.BlobArchives {
+			writer.blobArchives[objectID] = blobArchive{lbrFile: archive.LbrFile, lbrRev: archive.LbrRev}
+		}
+		for commitID, branch := range state.CommitBranches {
+			writer.commitBranches[commitID] = branch
+		}
+		for branch, ready := range state.BranchReady {
+			writer.branchReady[branch] = ready
+		}
+	} else {
+		writer.journal.WriteHeader(strings.TrimPrefix(options.ImportDepot, "//"), options.CaseInsensitive)
+	}
 	for range options.ParallelWorkers {
 		writer.archiveWG.Add(1)
 		go writer.runArchiveWorker()

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -553,5 +554,138 @@ func TestFirstParentFiltering(t *testing.T) {
 	// With first-parent on main, it follows merge -> commit 3 -> commit 1 (3 commits)
 	if len(transfer.commits) != 3 {
 		t.Errorf("Expected 3 commits with first-parent (merge, commit 3, commit 1), got %d", len(transfer.commits))
+	}
+}
+
+// buildNativeGitFixture creates two git repos with interleaved commit
+// timestamps (so BuildTimeline groups them into multiple alternating
+// batches), plus a manifest and config referencing both.
+func buildNativeGitFixture(t *testing.T) (root, manifestFile, configFile string) {
+	t.Helper()
+	root = t.TempDir()
+	reposRoot := filepath.Join(root, "repos")
+	repoATimes := []string{"2024-01-01T00:00:00", "2024-01-01T00:00:10"}
+	repoBTimes := []string{"2024-01-01T00:00:05", "2024-01-01T00:00:15"}
+
+	initRepo := func(name, fileName string, times []string) {
+		dir := filepath.Join(reposRoot, name)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		runGit := func(env []string, args ...string) {
+			cmd := exec.Command("git", args...)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), env...)
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("git %v failed: %v\n%s", args, err, out)
+			}
+		}
+		runGit(nil, "init", "-q", "-b", "main")
+		runGit(nil, "config", "user.name", "Test User")
+		runGit(nil, "config", "user.email", "test@example.com")
+		file := filepath.Join(dir, fileName)
+		for index, when := range times {
+			if err := os.WriteFile(file, []byte(fmt.Sprintf("%s content %d\n", name, index)), 0644); err != nil {
+				t.Fatal(err)
+			}
+			runGit(nil, "add", fileName)
+			env := []string{"GIT_AUTHOR_DATE=" + when, "GIT_COMMITTER_DATE=" + when}
+			runGit(env, "commit", "-q", "-m", fmt.Sprintf("%s commit %d", name, index))
+		}
+	}
+	initRepo("repoA", "a.txt", repoATimes)
+	initRepo("repoB", "b.txt", repoBTimes)
+
+	manifestFile = filepath.Join(root, "manifest.xml")
+	manifestContent := `<?xml version="1.0" encoding="UTF-8"?>
+<manifest>
+  <remote name="aosp" fetch=".." />
+  <default revision="main" remote="aosp" />
+  <project path="repoA" name="repoA" />
+  <project path="repoB" name="repoB" />
+</manifest>`
+	if err := os.WriteFile(manifestFile, []byte(manifestContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	configFile = filepath.Join(root, "config.yaml")
+	configContent := "import_depot: \"import\"\ndefault_branch: \"main\"\n"
+	if err := os.WriteFile(configFile, []byte(configContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+	return reposRoot, manifestFile, configFile
+}
+
+func newNativeGitTransfer(t *testing.T, reposRoot, manifestFile, configFile, archiveRoot, journalFile string) *RepoP4Transfer {
+	t.Helper()
+	transfer := NewRepoP4Transfer(manifestFile, configFile, reposRoot, "", false, nil)
+	transfer.archiveRoot = archiveRoot
+	transfer.journalFile = journalFile
+	transfer.parallelWorkers = 1
+	if err := transfer.Init(); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
+	if err := transfer.BuildTimeline(); err != nil {
+		t.Fatalf("BuildTimeline failed: %v", err)
+	}
+	return transfer
+}
+
+func TestImportNativeGitResumesAfterInterruption(t *testing.T) {
+	reposRoot, manifestFile, configFile := buildNativeGitFixture(t)
+	root := filepath.Dir(reposRoot)
+
+	journalFile := filepath.Join(root, "jnl.0")
+	transfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root"), journalFile)
+	batches := transfer.groupContiguousCommits()
+	if len(batches) < 2 {
+		t.Fatalf("expected at least 2 batches for interleaved repos, got %d", len(batches))
+	}
+
+	// Simulate a crash partway through: hide repoB so whichever batch needs
+	// it fails at Validate(), after at least one earlier batch has completed
+	// and been checkpointed.
+	repoBRoot := filepath.Join(reposRoot, "repoB")
+	hiddenRepoBRoot := repoBRoot + ".hidden"
+	if err := os.Rename(repoBRoot, hiddenRepoBRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := transfer.importNativeGit(batches); err == nil {
+		t.Fatal("expected importNativeGit to fail while repoB is unavailable")
+	}
+
+	checkpointFile := journalFile + ".checkpoint.json"
+	if _, err := os.Stat(checkpointFile); err != nil {
+		t.Fatalf("expected checkpoint file after partial run: %v", err)
+	}
+
+	// "Restart": repoB becomes available again, resume the same import.
+	if err := os.Rename(hiddenRepoBRoot, repoBRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := transfer.importNativeGit(batches); err != nil {
+		t.Fatalf("resumed importNativeGit failed: %v", err)
+	}
+	if _, err := os.Stat(checkpointFile); !os.IsNotExist(err) {
+		t.Fatalf("expected checkpoint file removed after completion, stat err=%v", err)
+	}
+	resumedJournal, err := os.ReadFile(journalFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Compare against a fresh, uninterrupted run over the same fixture.
+	freshJournalFile := filepath.Join(root, "jnl_fresh.0")
+	freshTransfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root_fresh"), freshJournalFile)
+	freshBatches := freshTransfer.groupContiguousCommits()
+	if err := freshTransfer.importNativeGit(freshBatches); err != nil {
+		t.Fatalf("fresh importNativeGit failed: %v", err)
+	}
+	freshJournal, err := os.ReadFile(freshJournalFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(resumedJournal) != string(freshJournal) {
+		t.Errorf("resumed journal differs from fresh journal:\n--- resumed ---\n%s\n--- fresh ---\n%s", resumedJournal, freshJournal)
 	}
 }
