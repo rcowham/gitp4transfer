@@ -21,9 +21,10 @@ import_path: "android"
 default_branch: "main"
 
 # Optional: appended to every changelist description (--native-git only).
-# Go text/template syntax; available variables: repo_path, commitid, user.
+# Go text/template syntax; available variables: repo_path, commitid, user, email.
+# The changelist owner already records "user", so "email" is used here instead.
 changelist_description_template: |
-  Imported from {{.repo_path}} at Git commit {{.commitid}} by {{.user}}
+  Imported from {{.repo_path}} at Git commit {{.commitid}} by {{.email}}
 
 # Optional: Specify which repos to import from the manifest
 # If empty or omitted, all repos from the manifest are imported

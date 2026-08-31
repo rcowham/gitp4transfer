@@ -97,6 +97,31 @@ func TestP4WriterUsesAuthorEmailAsChangeUser(t *testing.T) {
 	}
 }
 
+func TestP4WriterUsesConfiguredClient(t *testing.T) {
+	archiveRoot := t.TempDir()
+	var output bytes.Buffer
+	writer, err := NewP4Writer(P4WriterOptions{ImportDepot: "import", ArchiveRoot: archiveRoot, Journal: &output, Client: "repo-import"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit := &Commit{
+		ID:     "client-commit",
+		Author: Identity{Email: "sanketa@google.com", When: time.Now()},
+		Files: []FileChange{{Action: FileModify, Path: "file.txt", ObjectID: "blob", Content: func() (io.ReadCloser, error) {
+			return io.NopCloser(strings.NewReader("content")), nil
+		}}},
+	}
+	if err := writer.WriteSource(&commitSliceSource{commits: []*Commit{commit}}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(output.String(), "git-client") {
+		t.Fatalf("journal unexpectedly contains default client:\n%s", output.String())
+	}
+	if !strings.Contains(output.String(), "@repo-import@ @sanketa@") {
+		t.Fatalf("journal does not contain configured client:\n%s", output.String())
+	}
+}
+
 func TestP4WriterBoundedArchiveWorkers(t *testing.T) {
 	archiveRoot := t.TempDir()
 	var output bytes.Buffer

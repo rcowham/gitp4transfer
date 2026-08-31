@@ -51,7 +51,7 @@ func TestBranchNameMapperAppliesBranchMappings(t *testing.T) {
 
 func TestApplyDescriptionTemplate(t *testing.T) {
 	transfer := NewRepoP4Transfer("manifest.xml", "config.yaml", "", "", false, nil)
-	tmpl, err := template.New("changelist_description").Parse("Imported from {{.repo_path}} at {{.commitid}} by {{.user}}")
+	tmpl, err := template.New("changelist_description").Parse("Imported from {{.repo_path}} at {{.commitid}} by {{.user}} <{{.email}}>")
 	if err != nil {
 		t.Fatalf("Parse failed: %v", err)
 	}
@@ -61,7 +61,7 @@ func TestApplyDescriptionTemplate(t *testing.T) {
 	if err := transfer.applyDescriptionTemplate(commit, "packages/services/Car"); err != nil {
 		t.Fatalf("applyDescriptionTemplate failed: %v", err)
 	}
-	want := "original message\n\nImported from packages/services/Car at abc123 by jbloggs"
+	want := "original message\n\nImported from packages/services/Car at abc123 by jbloggs <jbloggs@example.com>"
 	if commit.Message != want {
 		t.Errorf("Message = %q, want %q", commit.Message, want)
 	}

@@ -215,11 +215,25 @@ type Journal struct {
 	filename        string
 	w               io.Writer
 	caseInsensitive bool
+	client          string
 }
 
 var p4client = "git-client"
 var p4user = "git-user"
 var statusSubmitted = "1"
+
+// SetClient overrides the Perforce client workspace name used for every
+// changelist and the generated client spec (default "git-client").
+func (j *Journal) SetClient(client string) {
+	j.client = client
+}
+
+func (j *Journal) clientName() string {
+	if j.client == "" {
+		return p4client
+	}
+	return j.client
+}
 
 func (j *Journal) CreateJournal(caseInsensitive bool) {
 
@@ -246,11 +260,12 @@ func (j *Journal) WriteHeader(depot string, caseInsensitive bool) {
 	}
 	hdr = hdr + `@pv@ 0 @db.depot@ @%s@ 0 @subdir@ @%s/...@ 
 @pv@ 3 @db.domain@ @%s@ 100 @@ @@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
-@pv@ 3 @db.user@ @git-user@ @git-user@@git-client@ @@ 0 0 @git-user@ @@ 0 @@ 0 
-@pv@ 0 @db.view@ @git-client@ 0 0 @//git-client/...@ @//import/...@ 
-@pv@ 3 @db.domain@ @git-client@ 99 @@ @/ws@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
+@pv@ 3 @db.user@ @git-user@ @git-user@@%s@ @@ 0 0 @git-user@ @@ 0 @@ 0 
+@pv@ 0 @db.view@ @%s@ 0 0 @//%s/...@ @//import/...@ 
+@pv@ 3 @db.domain@ @%s@ 99 @@ @/ws@ @@ @@ @git-user@ 0 0 0 1 @Created by git-user@ 
 `
-	_, err := fmt.Fprintf(j.w, hdr, depot, depot, depot)
+	client := j.clientName()
+	_, err := fmt.Fprintf(j.w, hdr, depot, depot, depot, client, client, client, client)
 	if err != nil {
 		panic(err)
 	}
@@ -268,7 +283,7 @@ func (j *Journal) WriteChange(chgNo int, user string, description string, chgTim
 
 	// @pv@ 0 @db.change@ 1 1 @svn-client@ @pallen@ 1363872228 1 @add@
 	_, err = fmt.Fprintf(j.w, "@pv@ 0 @db.change@ %d %d @%s@ @%s@ %d %s @%s@ \n",
-		chgNo, chgNo, p4client, user, chgTime, statusSubmitted, description)
+		chgNo, chgNo, j.clientName(), user, chgTime, statusSubmitted, description)
 	if err != nil {
 		panic(err)
 	}

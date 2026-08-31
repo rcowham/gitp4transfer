@@ -25,6 +25,7 @@ type P4WriterOptions struct {
 	ArchiveRoot     string
 	Journal         io.Writer
 	User            string
+	Client          string
 	TypeMaps        []TypeMap
 	ConvertCRLF     bool
 	ParallelWorkers int
@@ -123,6 +124,7 @@ func NewP4Writer(options P4WriterOptions) (*P4Writer, error) {
 		archiveJobs:     make(chan archiveJob, options.ParallelWorkers),
 	}
 	writer.journal.SetWriter(options.Journal)
+	writer.journal.SetClient(options.Client)
 	writer.journal.WriteHeader(strings.TrimPrefix(options.ImportDepot, "//"), options.CaseInsensitive)
 	for range options.ParallelWorkers {
 		writer.archiveWG.Add(1)

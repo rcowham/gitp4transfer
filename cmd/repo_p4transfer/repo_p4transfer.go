@@ -117,7 +117,7 @@ type RepoP4TransferConfig struct {
 	TypeMaps       []string               `yaml:"typemaps"`
 	GitExport      GitExportOptions       `yaml:"git_export"`
 	// ChangelistDescriptionTemplate is a Go text/template string appended to every
-	// changelist description. Available variables: {{.repo_path}}, {{.commitid}}, {{.user}}.
+	// changelist description. Available variables: {{.repo_path}}, {{.commitid}}, {{.user}}, {{.email}}.
 	ChangelistDescriptionTemplate string `yaml:"changelist_description_template"`
 }
 
@@ -289,6 +289,7 @@ func (r *RepoP4Transfer) applyDescriptionTemplate(commit *importer.Commit, repoP
 		"repo_path": repoPath,
 		"commitid":  commit.ID,
 		"user":      userForCommit(commit, "git-user"),
+		"email":     commit.Author.Email,
 	}
 	var rendered bytes.Buffer
 	if err := r.descriptionTmpl.Execute(&rendered, data); err != nil {
@@ -801,6 +802,7 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 		ImportDepot:     r.cfg.ImportDepot,
 		ArchiveRoot:     r.archiveRoot,
 		Journal:         journalOutput,
+		Client:          "repo-import",
 		ParallelWorkers: r.parallelWorkers,
 		BranchPath:      branchMapper.branchPath,
 	})
