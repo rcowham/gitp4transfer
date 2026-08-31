@@ -30,6 +30,19 @@ type gitRepositoryCheckpoint struct {
 	CommitID string `json:"commit_id"`
 }
 
+// rawCommitMetadata holds one commit's fields parsed from a batched
+// `git log --stdin` response, keyed by commit ID in GitRepositorySource.metadataCache.
+type rawCommitMetadata struct {
+	parents        []string
+	authorName     string
+	authorEmail    string
+	authorTime     time.Time
+	committerName  string
+	committerEmail string
+	committerTime  time.Time
+	message        string
+}
+
 // GitRepositorySource reads planned commits directly from a Git repository.
 // It currently reports add, modify, and delete actions; rename/copy inference
 // is intentionally deferred to a later migration step.
@@ -47,12 +60,20 @@ type GitRepositorySource struct {
 	initialSnapshot bool
 	snapshotPending bool
 	seenBlobs       map[string]struct{}
+	metadataCache   map[string]rawCommitMetadata
 	catFile         *exec.Cmd
 	catInput        io.WriteCloser
 	catWriter       *bufio.Writer
 	catOutput       *bufio.Reader
 	catError        bytes.Buffer
 	activeBlob      bool
+	diffTree        *exec.Cmd
+	diffInput       io.WriteCloser
+	diffOutput      *bufio.Reader
+	diffError       bytes.Buffer
+	diffPending     string
+	diffHasPending  bool
+	diffWriterDone  chan error
 }
 
 // NewGitRepositorySource creates a source for commits in the caller-provided order.
@@ -245,32 +266,79 @@ func (s *GitRepositorySource) readCommit(commitID, ref string) (*Commit, error) 
 }
 
 func (s *GitRepositorySource) readCommitMetadata(commitID, ref string) (*Commit, error) {
-	output, err := s.gitOutput("show", "-s", "--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B", commitID)
-	if err != nil {
-		return nil, fmt.Errorf("read commit %s: %w", commitID, err)
+	if err := s.loadMetadata(); err != nil {
+		return nil, err
 	}
-	fields := strings.SplitN(string(output), "\x00", 9)
-	if len(fields) != 9 {
-		return nil, fmt.Errorf("unexpected metadata format for commit %s", commitID)
+	meta, ok := s.metadataCache[commitID]
+	if !ok {
+		return nil, fmt.Errorf("commit metadata not found for %s", commitID)
 	}
-	authorTime, err := time.Parse(time.RFC3339, fields[4])
-	if err != nil {
-		return nil, fmt.Errorf("parse author time for commit %s: %w", commitID, err)
-	}
-	committerTime, err := time.Parse(time.RFC3339, fields[7])
-	if err != nil {
-		return nil, fmt.Errorf("parse committer time for commit %s: %w", commitID, err)
-	}
-
-	commit := &Commit{
-		ID:        fields[0],
-		Parents:   strings.Fields(fields[1]),
+	return &Commit{
+		ID:        commitID,
+		Parents:   meta.parents,
 		Ref:       ref,
-		Author:    Identity{Name: fields[2], Email: fields[3], When: authorTime},
-		Committer: Identity{Name: fields[5], Email: fields[6], When: committerTime},
-		Message:   fields[8],
+		Author:    Identity{Name: meta.authorName, Email: meta.authorEmail, When: meta.authorTime},
+		Committer: Identity{Name: meta.committerName, Email: meta.committerEmail, When: meta.committerTime},
+		Message:   meta.message,
+	}, nil
+}
+
+// loadMetadata fetches every planned commit's metadata in a single `git log
+// --stdin` call instead of spawning `git show` once per commit.
+func (s *GitRepositorySource) loadMetadata() error {
+	if s.metadataCache != nil {
+		return nil
 	}
-	return commit, nil
+	cache := make(map[string]rawCommitMetadata, len(s.commitIDs))
+	if len(s.commitIDs) == 0 {
+		s.metadataCache = cache
+		return nil
+	}
+	seen := make(map[string]struct{}, len(s.commitIDs))
+	unique := make([]string, 0, len(s.commitIDs))
+	for _, id := range s.commitIDs {
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	cmd := exec.CommandContext(s.context, "git", "log", "--no-walk", "--stdin",
+		"--format=%H%x00%P%x00%an%x00%ae%x00%aI%x00%cn%x00%ce%x00%cI%x00%B%x00")
+	cmd.Dir = s.repository
+	cmd.Stdin = strings.NewReader(strings.Join(unique, "\n") + "\n")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if err != nil {
+		return fmt.Errorf("read commit metadata: %w: %s", err, stderr.String())
+	}
+	// git inserts a "\n" separator before each record after the first, in
+	// addition to the "%x00" terminator we append to every record ourselves.
+	tokens := strings.Split(string(output), "\x00")
+	for index := 0; index+9 <= len(tokens); index += 9 {
+		hash := strings.TrimPrefix(tokens[index], "\n")
+		authorTime, err := time.Parse(time.RFC3339, tokens[index+4])
+		if err != nil {
+			return fmt.Errorf("parse author time for commit %s: %w", hash, err)
+		}
+		committerTime, err := time.Parse(time.RFC3339, tokens[index+7])
+		if err != nil {
+			return fmt.Errorf("parse committer time for commit %s: %w", hash, err)
+		}
+		cache[hash] = rawCommitMetadata{
+			parents:        strings.Fields(tokens[index+1]),
+			authorName:     tokens[index+2],
+			authorEmail:    tokens[index+3],
+			authorTime:     authorTime,
+			committerName:  tokens[index+5],
+			committerEmail: tokens[index+6],
+			committerTime:  committerTime,
+			message:        tokens[index+8],
+		}
+	}
+	s.metadataCache = cache
+	return nil
 }
 
 func (s *GitRepositorySource) readSnapshot(commitID string) ([]FileChange, error) {
@@ -310,28 +378,45 @@ func (s *GitRepositorySource) readSnapshot(commitID string) ([]FileChange, error
 }
 
 func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error) {
-	output, err := s.gitOutput("diff-tree", "--root", "--no-commit-id", "-r", "--raw", "-z", "-M", "-C", "--find-copies-harder", commitID)
+	if err := s.startDiffTree(); err != nil {
+		return nil, err
+	}
+	echo, err := s.nextDiffToken()
 	if err != nil {
 		return nil, fmt.Errorf("read changes for commit %s: %w", commitID, err)
 	}
+	if echo != commitID {
+		return nil, fmt.Errorf("diff-tree commit mismatch for %s: got %q", commitID, echo)
+	}
 
-	parts := strings.Split(string(output), "\x00")
 	changes := make([]FileChange, 0)
-	for index := 0; index < len(parts)-1; {
-		metadata := strings.Fields(parts[index])
+	for {
+		token, err := s.nextDiffToken()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("read changes for commit %s: %w", commitID, err)
+		}
+		if !strings.HasPrefix(token, ":") {
+			// Not a status line: it's the next commit's echoed ID, buffered
+			// for that commit's own readChanges call.
+			s.diffPending = token
+			s.diffHasPending = true
+			break
+		}
+		metadata := strings.Fields(token)
 		if len(metadata) < 5 {
-			return nil, fmt.Errorf("unexpected diff-tree record for commit %s: %q", commitID, parts[index])
+			return nil, fmt.Errorf("unexpected diff-tree record for commit %s: %q", commitID, token)
 		}
 		status := metadata[4]
 		if len(status) == 0 {
 			return nil, fmt.Errorf("missing diff-tree status for commit %s", commitID)
 		}
-		index++
-		if index >= len(parts) || parts[index] == "" {
-			return nil, fmt.Errorf("missing diff-tree path for commit %s", commitID)
+		firstPath, err := s.nextDiffToken()
+		if err != nil {
+			return nil, fmt.Errorf("read diff-tree path for commit %s: %w", commitID, err)
 		}
-		firstPath := parts[index]
-		index++
 		change := FileChange{Path: s.prefixedPath(firstPath), Mode: metadata[1]}
 		switch status[0] {
 		case 'A', 'M', 'T':
@@ -347,23 +432,21 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 		case 'D':
 			change.Action = FileDelete
 		case 'R', 'C':
-			if index >= len(parts) || parts[index] == "" {
-				return nil, fmt.Errorf("missing destination path for diff-tree status %q in commit %s", status, commitID)
+			destPath, err := s.nextDiffToken()
+			if err != nil {
+				return nil, fmt.Errorf("read diff-tree destination path for commit %s: %w", commitID, err)
 			}
 			change.SourcePath = s.prefixedPath(firstPath)
-			change.Path = s.prefixedPath(parts[index])
-			index++
+			change.Path = s.prefixedPath(destPath)
 			if status[0] == 'R' {
 				change.Action = FileRename
 			} else {
 				change.Action = FileCopy
 			}
-			parent := commitID + "^"
-			objectID, err := s.gitOutput("rev-parse", parent+":"+firstPath)
+			objectID, err := s.resolveObjectID(commitID + "^:" + firstPath)
 			if err == nil {
-				objectID = bytes.TrimSpace(objectID)
-				change.ObjectID = string(objectID)
-				change.Content = func() (io.ReadCloser, error) { return s.OpenBlob(string(objectID)) }
+				change.ObjectID = objectID
+				change.Content = func() (io.ReadCloser, error) { return s.OpenBlob(objectID) }
 			}
 		default:
 			return nil, fmt.Errorf("unsupported diff-tree status %q for commit %s", status, commitID)
@@ -371,6 +454,104 @@ func (s *GitRepositorySource) readChanges(commitID string) ([]FileChange, error)
 		changes = append(changes, change)
 	}
 	return changes, nil
+}
+
+// nextDiffToken returns the next NUL-delimited token from the persistent
+// diff-tree process, or io.EOF once the process has closed its output.
+func (s *GitRepositorySource) nextDiffToken() (string, error) {
+	if s.diffHasPending {
+		s.diffHasPending = false
+		token := s.diffPending
+		s.diffPending = ""
+		return token, nil
+	}
+	raw, err := s.diffOutput.ReadBytes(0)
+	if err != nil {
+		if err == io.EOF && len(raw) == 0 {
+			return "", io.EOF
+		}
+		return "", fmt.Errorf("read diff-tree token: %w", err)
+	}
+	return string(raw[:len(raw)-1]), nil
+}
+
+// startDiffTree starts one persistent `git diff-tree --stdin` process for the
+// whole source lifetime, replacing a per-commit spawn. A writer goroutine
+// feeds every planned commit ID ahead of the reader so that detecting the
+// boundary between one commit's records and the next never blocks: the
+// stdin/stdout pipes provide the necessary backpressure.
+func (s *GitRepositorySource) startDiffTree() error {
+	if s.diffTree != nil {
+		return nil
+	}
+	cmd := exec.CommandContext(s.context, "git", "diff-tree", "--stdin", "--root", "-r", "--raw", "-z", "-M", "-C", "--find-copies-harder")
+	cmd.Dir = s.repository
+	input, err := cmd.StdinPipe()
+	if err != nil {
+		return fmt.Errorf("open git diff-tree input: %w", err)
+	}
+	output, err := cmd.StdoutPipe()
+	if err != nil {
+		return fmt.Errorf("open git diff-tree output: %w", err)
+	}
+	cmd.Stderr = &s.diffError
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start git diff-tree: %w", err)
+	}
+	s.diffTree = cmd
+	s.diffInput = input
+	s.diffOutput = bufio.NewReader(output)
+	s.diffWriterDone = make(chan error, 1)
+	// startDiffTree is lazily triggered from readChanges, which Next() always
+	// calls after advancing s.index past the commit being read (and, for a
+	// resumed source, past any earlier commits already skipped) - so
+	// s.index-1 is the first commit this process must actually be fed.
+	commitIDs := s.commitIDs[s.index-1:]
+	go func() {
+		var writeErr error
+		for _, id := range commitIDs {
+			if _, err := fmt.Fprintf(input, "%s\n", id); err != nil {
+				writeErr = err
+				break
+			}
+		}
+		closeErr := input.Close()
+		if writeErr == nil {
+			writeErr = closeErr
+		}
+		s.diffWriterDone <- writeErr
+	}()
+	return nil
+}
+
+// resolveObjectID resolves a rev-spec such as "<commit>^:<path>" to a blob ID
+// through the persistent cat-file process, avoiding a `git rev-parse` spawn
+// per renamed/copied file.
+func (s *GitRepositorySource) resolveObjectID(rev string) (string, error) {
+	if s.activeBlob {
+		return "", fmt.Errorf("previous blob content has not been closed")
+	}
+	if err := s.startCatFile(); err != nil {
+		return "", err
+	}
+	if _, err := fmt.Fprintf(s.catWriter, "info %s\n", rev); err != nil {
+		return "", fmt.Errorf("request object info %s: %w", rev, err)
+	}
+	if err := s.catWriter.Flush(); err != nil {
+		return "", fmt.Errorf("flush object info request %s: %w", rev, err)
+	}
+	line, err := s.catOutput.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("read object info %s: %w", rev, err)
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 2 && fields[1] == "missing" {
+		return "", fmt.Errorf("object %s missing", rev)
+	}
+	if len(fields) != 3 {
+		return "", fmt.Errorf("unexpected object info response for %s: %s", rev, strings.TrimSpace(line))
+	}
+	return fields[0], nil
 }
 
 func (s *GitRepositorySource) prefixedPath(filePath string) string {
@@ -441,23 +622,30 @@ func (s *GitRepositorySource) startCatFile() error {
 	return nil
 }
 
-// Close stops the persistent cat-file process.
+// Close stops the persistent cat-file and diff-tree processes.
 func (s *GitRepositorySource) Close() error {
-	if s.catFile == nil {
-		return nil
-	}
 	if s.activeBlob {
 		return fmt.Errorf("blob content must be closed before closing source")
 	}
-	if err := s.catInput.Close(); err != nil {
-		return err
+	var err error
+	if s.catFile != nil {
+		if closeErr := s.catInput.Close(); closeErr != nil {
+			err = closeErr
+		}
+		if waitErr := s.catFile.Wait(); waitErr != nil && err == nil {
+			err = fmt.Errorf("git cat-file failed: %w: %s", waitErr, s.catError.String())
+		}
+		s.catFile = nil
 	}
-	err := s.catFile.Wait()
-	if err != nil {
-		return fmt.Errorf("git cat-file failed: %w: %s", err, s.catError.String())
+	if s.diffTree != nil {
+		// Best-effort: the writer may still have unwritten commit IDs if the
+		// caller stops early, so kill rather than wait for a natural EOF.
+		_ = s.diffTree.Process.Kill()
+		<-s.diffWriterDone
+		_ = s.diffTree.Wait()
+		s.diffTree = nil
 	}
-	s.catFile = nil
-	return nil
+	return err
 }
 
 func (s *GitRepositorySource) gitOutput(args ...string) ([]byte, error) {

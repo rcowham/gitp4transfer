@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -362,6 +363,83 @@ func TestGitRepositorySourceRenameAndCopy(t *testing.T) {
 	if len(copyCommit.Files) != 1 || copyCommit.Files[0].Action != FileCopy ||
 		copyCommit.Files[0].SourcePath != "renamed.txt" || copyCommit.Files[0].Path != "copy.txt" {
 		t.Errorf("Unexpected copy changes: %+v", copyCommit.Files)
+	}
+}
+
+func TestGitRepositorySourceManyCommitsPersistentProcesses(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+
+	const commitCount = 300
+	commitIDs := make([]string, 0, commitCount)
+	file := filepath.Join(repoDir, "file.txt")
+	for index := 0; index < commitCount; index++ {
+		if err := os.WriteFile(file, []byte(fmt.Sprintf("content %d\n", index)), 0644); err != nil {
+			t.Fatal(err)
+		}
+		runGit("add", "file.txt")
+		runGit("commit", "-q", "-m", fmt.Sprintf("commit %d", index))
+		output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		commitIDs = append(commitIDs, string(output[:len(output)-1]))
+	}
+	// A rename near the end exercises resolveObjectID (persistent cat-file
+	// "info" requests) after many diff-tree records have already streamed.
+	runGit("mv", "file.txt", "renamed.txt")
+	runGit("commit", "-q", "-m", "rename")
+	output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitIDs = append(commitIDs, string(output[:len(output)-1]))
+
+	source := NewGitRepositorySource(repoDir, commitIDs)
+	defer source.Close()
+	if err := source.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+	for index, wantID := range commitIDs {
+		commit, err := source.Next()
+		if err != nil {
+			t.Fatalf("Next() at index %d failed: %v", index, err)
+		}
+		if commit.ID != wantID {
+			t.Fatalf("Next() at index %d = %s, want %s", index, commit.ID, wantID)
+		}
+		if len(commit.Files) != 1 {
+			t.Fatalf("commit %d: got %d file changes, want 1", index, len(commit.Files))
+		}
+		if commit.Files[0].Content == nil {
+			continue
+		}
+		content, err := commit.Files[0].Content()
+		if err != nil {
+			t.Fatalf("commit %d: open blob failed: %v", index, err)
+		}
+		if _, err := io.ReadAll(content); err != nil {
+			t.Fatalf("commit %d: read blob failed: %v", index, err)
+		}
+		if err := content.Close(); err != nil {
+			t.Fatalf("commit %d: close blob failed: %v", index, err)
+		}
+	}
+	last := commitIDs[len(commitIDs)-1]
+	if _, err := source.Next(); err != io.EOF {
+		t.Errorf("Next() after last commit error = %v, want io.EOF", err)
+	}
+	if err := source.Checkpoint(last); err != nil {
+		t.Fatalf("Checkpoint() failed: %v", err)
 	}
 }
 
