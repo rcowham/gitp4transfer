@@ -7,6 +7,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	_ "embed"
 	"encoding/xml"
 	"fmt"
 	"io"
@@ -30,15 +31,20 @@ import (
 	yaml "gopkg.in/yaml.v2"
 )
 
+//go:embed sample_config.yaml
+var sampleConfigYAML string
+
 var (
 	app = kingpin.New("repo_p4transfer", "Transfer Android repos to Perforce using git fast-export")
 
 	manifestFile = app.Flag("manifest", "XML manifest file defining repos").
 			Default("manifest.xml").String()
 	configFile = app.Flag("config", "YAML config file with filtering and P4 settings").
-			Required().String()
+			String()
 	repoRoot = app.Flag("repo-root", "Root directory containing all repos").
-			Required().String()
+			String()
+	sampleConfig = app.Flag("sample-config", "Print a sample config YAML file to stdout and exit").
+			Short('C').Bool()
 	exportDir = app.Flag("export-dir", "Directory where to store export files").
 			String()
 	batchMapFile = app.Flag("batch-map", "Output YAML file for batch to repo path mapping").
@@ -1224,6 +1230,17 @@ func init() {
 
 func main() {
 	kingpin.MustParse(app.Parse(os.Args[1:]))
+
+	if *sampleConfig {
+		fmt.Print(sampleConfigYAML)
+		return
+	}
+	if strings.TrimSpace(*configFile) == "" {
+		kingpin.Fatalf("required flag --config not provided, try --help")
+	}
+	if strings.TrimSpace(*repoRoot) == "" {
+		kingpin.Fatalf("required flag --repo-root not provided, try --help")
+	}
 
 	// Setup logger
 	logger = logrus.New()

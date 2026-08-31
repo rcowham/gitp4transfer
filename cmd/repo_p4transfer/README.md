@@ -26,6 +26,7 @@ repo_p4transfer --manifest <manifest.xml> --config <config.yaml> --repo-root <pa
 
 ### Optional Flags
 
+- `-C`, `--sample-config`: Print a sample config YAML file to stdout and exit (e.g. `repo_p4transfer -C > config.yaml`)
 - `--export-dir`: Directory where to store git fast-export dump files (default: system temp directory)
 - `--batch-map`: Output YAML file path for batch to repo path mapping
 - `--dummy`: Write placeholder text for blob contents in export files (for quick testing)
