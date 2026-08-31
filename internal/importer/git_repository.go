@@ -146,14 +146,20 @@ func (s *GitRepositorySource) Validate() error {
 	if len(s.commitIDs) == 0 {
 		return nil
 	}
-	args := []string{"rev-list", "--no-object-names"}
+	args := []string{"rev-list", "--no-object-names", "--stdin"}
 	if !s.dummy {
 		args = append(args, "--objects")
 	}
-	args = append(args, s.commitIDs...)
-	objectOutput, err := s.gitOutput(args...)
+	// Commit IDs are passed via stdin, not argv: large batches can otherwise
+	// exceed the OS command-line length limit ("argument list too long").
+	revListCmd := exec.CommandContext(s.context, "git", args...)
+	revListCmd.Dir = s.repository
+	revListCmd.Stdin = strings.NewReader(strings.Join(s.commitIDs, "\n") + "\n")
+	var revListStderr bytes.Buffer
+	revListCmd.Stderr = &revListStderr
+	objectOutput, err := revListCmd.Output()
 	if err != nil {
-		return fmt.Errorf("enumerate repository objects: %w", err)
+		return fmt.Errorf("enumerate repository objects: %w: %s", err, revListStderr.String())
 	}
 	cmd := exec.CommandContext(s.context, "git", "cat-file", "--batch-check")
 	cmd.Dir = s.repository

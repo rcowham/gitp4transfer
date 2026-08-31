@@ -419,6 +419,42 @@ func TestGitRepositorySourceCheckpointResumeAndValidation(t *testing.T) {
 	}
 }
 
+func TestGitRepositorySourceValidateLargeCommitList(t *testing.T) {
+	repoDir := t.TempDir()
+	runGit := func(args ...string) {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repoDir
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-b", "main")
+	runGit("config", "user.name", "Test User")
+	runGit("config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(repoDir, "file.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	runGit("add", "file.txt")
+	runGit("commit", "-m", "commit")
+	output, err := exec.Command("git", "-C", repoDir, "rev-parse", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	commitID := string(output[:len(output)-1])
+
+	// A repeated commit ID this many times previously exceeded the OS argv
+	// length limit ("argument list too long") when passed to git as arguments.
+	commitIDs := make([]string, 60000)
+	for i := range commitIDs {
+		commitIDs[i] = commitID
+	}
+	source := NewGitRepositorySource(repoDir, commitIDs)
+	defer source.Close()
+	if err := source.Validate(); err != nil {
+		t.Fatalf("Validate() failed: %v", err)
+	}
+}
+
 func TestGitRepositorySourceCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
