@@ -883,7 +883,14 @@ func (r *RepoP4Transfer) importNativeGit(batches []*CommitBatch) error {
 			progressTotal++ // Each repository contributes one starting snapshot.
 		}
 	}
+	// On resume, count commits (and snapshots) already completed in batches
+	// before startBatchIndex, so progress/ETA reflects the whole job rather
+	// than restarting from zero.
 	progressDone := 0
+	for _, batch := range batches[:startBatchIndex] {
+		progressDone += len(batch.Commits)
+	}
+	progressDone += len(snapshotsCreated)
 	progressStart := time.Now()
 	lastProgress := 0
 	lastCheckpoint := time.Now()

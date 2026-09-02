@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"text/template"
@@ -13,6 +16,7 @@ import (
 
 	"github.com/rcowham/gitp4transfer/config"
 	"github.com/rcowham/gitp4transfer/internal/importer"
+	"github.com/sirupsen/logrus"
 	yaml "gopkg.in/yaml.v2"
 )
 
@@ -760,5 +764,67 @@ func TestImportNativeGitCheckpointIntervalSkipsSaves(t *testing.T) {
 	}
 	if _, err := os.Stat(checkpointFile); !os.IsNotExist(err) {
 		t.Fatalf("expected no checkpoint saved yet: a long checkpoint interval should have skipped it, stat err=%v", err)
+	}
+}
+
+func TestImportNativeGitResumeSeedsProgressCounters(t *testing.T) {
+	reposRoot, manifestFile, configFile := buildNativeGitFixture(t)
+	root := filepath.Dir(reposRoot)
+	journalFile := filepath.Join(root, "jnl.0")
+
+	transfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root"), journalFile)
+	batches := transfer.groupContiguousCommits()
+	if len(batches) < 2 {
+		t.Fatalf("expected at least 2 batches for interleaved repos, got %d", len(batches))
+	}
+	totalCommits := 0
+	for _, batch := range batches {
+		totalCommits += len(batch.Commits)
+	}
+
+	// Crash partway through: hide repoB so a later batch fails, after at
+	// least one earlier batch (for repoA) has completed and checkpointed.
+	repoBRoot := filepath.Join(reposRoot, "repoB")
+	hiddenRepoBRoot := repoBRoot + ".hidden"
+	if err := os.Rename(repoBRoot, hiddenRepoBRoot); err != nil {
+		t.Fatal(err)
+	}
+	if err := transfer.importNativeGit(batches); err == nil {
+		t.Fatal("expected importNativeGit to fail while repoB is unavailable")
+	}
+	if err := os.Rename(hiddenRepoBRoot, repoBRoot); err != nil {
+		t.Fatal(err)
+	}
+
+	var logOutput bytes.Buffer
+	logger := logrus.New()
+	logger.SetOutput(&logOutput)
+	logger.SetLevel(logrus.InfoLevel)
+	resumeTransfer := newNativeGitTransfer(t, reposRoot, manifestFile, configFile, filepath.Join(root, "p4root"), journalFile)
+	resumeTransfer.logger = logger
+	resumeBatches := resumeTransfer.groupContiguousCommits()
+	if err := resumeTransfer.importNativeGit(resumeBatches); err != nil {
+		t.Fatalf("resumed importNativeGit failed: %v", err)
+	}
+
+	matches := regexp.MustCompile(`commits (\d+)/(\d+)`).FindAllStringSubmatch(logOutput.String(), -1)
+	if len(matches) == 0 {
+		t.Fatalf("no progress log lines found:\n%s", logOutput.String())
+	}
+	firstDone, err := strconv.Atoi(matches[0][1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	total, err := strconv.Atoi(matches[0][2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total < totalCommits {
+		t.Errorf("progress total = %d, want at least %d commits", total, totalCommits)
+	}
+	// Before this fix, a resumed run always started progress from 0/N
+	// regardless of how much work a prior run had already completed.
+	if firstDone <= 1 {
+		t.Errorf("first resumed progress log shows commits %d/%d, want it to already reflect prior completed work", firstDone, total)
 	}
 }

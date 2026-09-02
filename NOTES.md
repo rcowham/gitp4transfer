@@ -354,4 +354,29 @@ and rebuilt after resuming).
 Tested via updated assertions in `TestImportNativeGitStopsCleanlyOnRequest`
 (`ImportIncomplete()` true after a stop, false after full completion).
 
+## repo_p4transfer: progress counters reset to ~0 after resume
+
+Real-world log evidence: batches correctly showed "51471/52505 (98.0%)" after
+resuming, but commits showed "1976/353506 (0.6%)" - the batch count reflected
+the restored checkpoint, but the commit progress counter did not.
+
+Root cause: `progressDone` (used for the commits-completed count, rate, and
+ETA) was a plain local variable always initialized to 0 in `importNativeGit`,
+regardless of `startBatchIndex`. On a fresh run this is correct; on a resumed
+run it ignored every commit (and per-repo starting snapshot) already
+completed in batches before the checkpoint's `NextBatchIndex`.
+
+### Fix
+
+`cmd/repo_p4transfer/repo_p4transfer.go`: seed `progressDone` on start with
+the commit count from `batches[:startBatchIndex]` plus `len(snapshotsCreated)`
+(one per repo whose starting snapshot was already written) - the same
+accounting `progressTotal` already uses for future snapshots. `startBatchIndex`
+is 0 and `snapshotsCreated` is empty on a fresh run, so this is a no-op there.
+
+Tested via `TestImportNativeGitResumeSeedsProgressCounters` (crashes partway
+through a multi-batch run, resumes with a captured logger, and asserts the
+first progress log already reflects prior completed work rather than
+restarting near zero).
+
 
