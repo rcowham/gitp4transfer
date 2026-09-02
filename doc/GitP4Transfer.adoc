@@ -1,6 +1,6 @@
 = GitP4Transfer - Git to P4 Migration
 Perforce Professional Services <consulting@perforce.com>
-:revdate: 2024-04-02
+:revdate: 2026-09-02
 :doctype: book
 :icons: font
 :toc:
@@ -9,13 +9,47 @@ Perforce Professional Services <consulting@perforce.com>
 :xrefstyle: full
 
 :sectnums:
+== Introduction
+
+There are 3 utilities in the project useful for migrating Git repositories to Perforce Helix Core.
+
+* xref:#_gitp4transfer_py[GitP4Transfer.py]: Original script for importing Git repositories into Perforce Helix Core.
+
+** Pros:
+*** Simple and straightforward for single-branch imports.
+*** Handles Git LFS objects.
+*** Directly integrates with Perforce Helix Core without intermediate staging.
+** Cons:
+*** Limited to single-branch imports.
+*** Less efficient for large repositories or multiple branches.
+  
+* xref:#_gitp4transfer[gitp4transfer]: Go-based tool for importing individual Git repositories into Perforce Helix Core, supporting multiple branches and large repositories. Also handles Plastic SCM migrations via `git fast-export`
+
+** Pros:
+*** Supports multiple branches.
+*** Efficient for large repositories.
+*** Handles Plastic SCM migrations via `git fast-export`.
+** Cons:
+*** May have a steeper learning curve compared to GitP4Transfer.py.
+*** Creates a P4 repository from a journal file, which is good for generating a new repository from scratch, but not ideal for incremental updates from an existing Git repository (TBC).
+
+* xref:#_repo_p4transfer[repo_p4transfer]: Go-based tool for importing many Git repositories (as used with Android development) into Perforce Helix Core, supporting complex repository layouts and interleaved commits.
+** Pros:
+*** Supports importing multiple repositories efficiently, and is configured using `repo` tools XML manifest files.
+*** Handles complex repository layouts and interleaved commits.
+*** Defaults to `--git-native` mode - but can read `git fast-export` files.
+** Cons:
+*** Assumes `repo` structure and manifest file are present and correctly configured.
+
 == GitP4Transfer.py
 
 === Overview
 
-This is a functional script to import a git repo with LFS commits for a single branch (e.g. master/main) into Helix Core.
+This is a functional script to import a git repo with LFS commits for a single branch (e.g. "master" or "main") into Helix Core.
 
 It includes some ideas from `git-p4` and `git-filter-repo.py`.
+
+It does a "front-door" import into Perforce Helix Core, meaning it directly imports Git commits and replays them into Perforce via a workspace, rather than using an intermediate staging area.
 
 === Pre-requisites
 
@@ -84,44 +118,26 @@ This assumes a filesystem such as `/hxdepots` with plenty of free space.
 +
 If such files are found, you will need to determine why they were not fetched and try to fix that to get proper LFS contents downloaded.
 
-==== Install Python3.8
+==== Install Python3.8+
 
-Unfortunately 3.6 is missing some required changes in the `subproc` library, so you may ßneed to build from source. Ubuntu is similar (but different dependencies to install first!)
+These days use Astral's `uv` and a `venv` for managing Python versions and virtual environments.
 
-    yum install wget yum-utils make gcc openssl-devel bzip2-devel libffi-devel zlib-devel
-    VER="3.8.12"
-    wget https://www.python.org/ftp/python/$VER/Python-$VER.tgz 
-    tar zxvf Python-$ver.tgz
-    cd Python-$ver
-    ./configure
-    make install
-
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+if ! command -v uv >/dev/null 2>&1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+uv python install
+uv venv .venv
+source .venv/bin/activate
+uv pip install p4python requests ruamel.yaml
+```
 ==== Install GitP4Transfer.py
 
 We install dependencies and then the script itself.
 
-. Run the following as `root`:
-
-+
-----
-cat << EOF > /etc/yum.repos.d/perforce.repo
-[Perforce]
-name=Perforce
-baseurl=http://package.perforce.com/yum/rhel/7/x86_64/
-enabled=1
-gpgcheck=1
-EOF
-
-rpm --import https://package.perforce.com/perforce.pubkey
-
-yum install perforce-p4python3
-----
-
-. As normal user, e.g. `perforce`:
-
-    pip3 install --user requests ruamel.yaml
-
-. Clone the gitp4transfer repo
+. As normal user, e.g. `perforce` clone the gitp4transfer repo:
 
     git clone https://github.com/perforce/gitp4transfer.git
 
@@ -498,13 +514,54 @@ Once things are looking reasonable, you need to test the resulting conversion. E
 
 Note that sometimes it is easier to "fix forwards" if there are only a few errors, by manually copying those files over and submitting them.
 
-=== Useful Utilities
+=== Troubleshooting
+
+==== Verify Errors
+
+If the resulting conversion contains verify errors, then it implies a logic error in the tool which is not coping with
+some not previously encountered Plastic/git scenario.
+
+The resolution is to consult with the author of the tool:
+
+* Create a log file with debug on
+* Consider providing a `gitfilter` produced git export (contains filenames but no data)
+
+== repo_p4transfer
+
+For Android/AOSP-style source repositories managed by the `repo` tool, use link:../cmd/repo_p4transfer/README.md[repo_p4transfer]. It reads the XML manifest, scans selected Git refs across all projects, builds a global chronological timeline, and writes a Helix Core journal/archive set.
+
+Note that these repositories may consist of 1,000+ individual git repos! Time to run will likely be significant (days or longer), so plan accordingly.
+
+The recommended entry point is link:../run_repo_conversion.sh[run_repo_conversion.sh], which runs `repo_p4transfer --native-git` and then restores, upgrades, configures, and verifies the generated local P4ROOT:
+
+----
+./run_repo_conversion.sh \
+    -manifest path/to/manifest.xml \
+    -config config.yaml \
+    -repo-root path/to/repo/workspace \
+    -p P4Root \
+    -j 6
+----
+
+Generate a starting configuration with:
+
+----
+repo_p4transfer -C > config.yaml
+----
+
+`repo_p4transfer` uses the manifest project path as part of the target depot path. For example, with `import_depot: android_import` and `default_branch: main`, project `hardware/interfaces` imports under `//android_import/main/hardware/interfaces/...`. The `repo` tool's `m/*` manifest tracking refs are mapped to `default_branch` rather than used as branch names.
+
+Operationally, native imports are checkpointed and restartable. Reuse the same `-p` directory when resuming after a crash or clean stop; the checkpoint is stored next to the generated journal. Press Ctrl+C once to stop after the current batch and checkpoint; press Ctrl+C again to force immediate exit. Checkpoint frequency is controlled by `-checkpoint-interval`, and `-fresh-start` discards an existing checkpoint.
+
+The detailed command reference, configuration fields, sample YAML, debug logging, and checkpoint behaviour are documented in link:../cmd/repo_p4transfer/README.md[cmd/repo_p4transfer/README.md]. Keep detailed option lists and examples there to avoid duplicating the same information in this guide.
+
+== Useful Utilities
 
 These are useful tools which help to understand the repository structure, debug issues with the conversion, 
 and to test things like resulting p4 structure without worrying about 
 the contents of all files (because processing of all file contents can take many hours vs a few minutes for filtered views)
 
-==== gitfilter
+=== gitfilter
 
 This tool allows you to process a git fast-export file and produce a new version which filters out the actual file contents. Instead it replaces the contents of every `blob` file with its unique ID.
 
@@ -536,7 +593,7 @@ Args:
 
 .Examples
 ----
-# Filter a file with debug output
+# Filter a fast-export file with debug output
 nohup ./gitfilter --debug 1 --rename big_file.git filtered_file.git > out1 &
 
 # Same as above with only 500 commits
@@ -547,7 +604,7 @@ nohup ./gitfilter --debug 1 --rename --path.filter "file1/.txt|file2\.txt" big_f
 
 ----
 
-==== gitgraph
+=== gitgraph
 
 This utility produces Graphviz `*.dot` files which can create a graphical view (e.g. .svg which can be opened in a browswer) of the git commit structure.
 
@@ -588,15 +645,3 @@ Args:
 
 dot -Tsvg graph.dot > graph.svg
 ----
-
-=== Troubleshooting
-
-==== Verify Errors
-
-If the resulting conversion contains verify errors, then it implies a logic error in the tool which is not coping with
-some not previously encountered Plastic/git scenario.
-
-The resolution is to consult with the author of the tool:
-
-* Create a log file with debug on
-* Consider providing a `gitfilter` produced git export (contains filenames but no data)

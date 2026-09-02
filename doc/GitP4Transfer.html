@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta http-equiv="X-UA-Compatible" content="IE=edge">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="generator" content="Asciidoctor 2.0.20">
+<meta name="generator" content="Asciidoctor 2.0.22">
 <meta name="author" content="Perforce Professional Services">
 <title>GitP4Transfer - Git to P4 Migration</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Open+Sans:300,300italic,400,400italic,600,600italic%7CNoto+Serif:400,400italic,700,700italic%7CDroid+Sans+Mono:400,700">
@@ -141,7 +141,7 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #content::before{content:none}
 #header>h1:first-child{color:rgba(0,0,0,.85);margin-top:2.25rem;margin-bottom:0}
 #header>h1:first-child+#toc{margin-top:8px;border-top:1px solid #dddddf}
-#header>h1:only-child,body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
+#header>h1:only-child{border-bottom:1px solid #dddddf;padding-bottom:8px}
 #header .details{border-bottom:1px solid #dddddf;line-height:1.45;padding-top:.25em;padding-bottom:.25em;padding-left:.25em;color:rgba(0,0,0,.6);display:flex;flex-flow:row wrap}
 #header .details span:first-child{margin-left:-.125em}
 #header .details span.email a{color:rgba(0,0,0,.85)}
@@ -163,6 +163,7 @@ p a>code:hover{color:rgba(0,0,0,.9)}
 #toctitle{color:#7a2518;font-size:1.2em}
 @media screen and (min-width:768px){#toctitle{font-size:1.375em}
 body.toc2{padding-left:15em;padding-right:0}
+body.toc2 #header>h1:nth-last-child(2){border-bottom:1px solid #dddddf;padding-bottom:8px}
 #toc.toc2{margin-top:0!important;background:#f8f8f7;position:fixed;width:15em;left:0;top:0;border-right:1px solid #e7e7e9;border-top-width:0!important;border-bottom-width:0!important;z-index:1000;padding:1.25em 1em;height:100%;overflow:auto}
 #toc.toc2 #toctitle{margin-top:0;margin-bottom:.8rem;font-size:1.2em}
 #toc.toc2>ul{font-size:.9em;margin-bottom:0}
@@ -328,7 +329,7 @@ a.image{text-decoration:none;display:inline-block}
 a.image object{pointer-events:none}
 sup.footnote,sup.footnoteref{font-size:.875em;position:static;vertical-align:super}
 sup.footnote a,sup.footnoteref a{text-decoration:none}
-sup.footnote a:active,sup.footnoteref a:active{text-decoration:underline}
+sup.footnote a:active,sup.footnoteref a:active,#footnotes .footnote a:first-of-type:active{text-decoration:underline}
 #footnotes{padding-top:.75em;padding-bottom:.75em;margin-bottom:.625em}
 #footnotes hr{width:20%;min-width:6.25em;margin:-.25em 0 .75em;border-width:1px 0 0}
 #footnotes .footnote{padding:0 .375em 0 .225em;line-height:1.3334;font-size:.875em;margin-left:1.2em;margin-bottom:.2em}
@@ -441,62 +442,64 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 <div class="details">
 <span id="author" class="author">Perforce Professional Services</span><br>
 <span id="email" class="email"><a href="mailto:consulting@perforce.com">consulting@perforce.com</a></span><br>
-<span id="revdate">2024-04-02</span>
+<span id="revdate">2026-09-02</span>
 </div>
 <div id="toc" class="toc">
 <div id="toctitle">Table of Contents</div>
 <ul class="sectlevel1">
-<li><a href="#_gitp4transfer_py">1. GitP4Transfer.py</a>
+<li><a href="#_introduction">1. Introduction</a></li>
+<li><a href="#_gitp4transfer_py">2. GitP4Transfer.py</a>
 <ul class="sectlevel2">
-<li><a href="#_overview">1.1. Overview</a></li>
-<li><a href="#_pre_requisites">1.2. Pre-requisites</a>
+<li><a href="#_overview">2.1. Overview</a></li>
+<li><a href="#_pre_requisites">2.2. Pre-requisites</a>
 <ul class="sectlevel3">
-<li><a href="#_install_gitgit_lfs">1.2.1. Install Git/Git LFS</a></li>
-<li><a href="#_clone_repo">1.2.2. Clone repo</a></li>
-<li><a href="#_fetch_all_lfs_objects">1.2.3. Fetch all LFS objects</a></li>
-<li><a href="#_install_python3_8">1.2.4. Install Python3.8</a></li>
-<li><a href="#_install_gitp4transfer_py">1.2.5. Install GitP4Transfer.py</a></li>
-<li><a href="#_note_about_temp_branch">1.2.6. Note about temp branch</a></li>
-<li><a href="#_things_to_do">1.2.7. Things to do</a></li>
-<li><a href="#_branch_diffs">1.2.8. Branch diffs</a></li>
+<li><a href="#_install_gitgit_lfs">2.2.1. Install Git/Git LFS</a></li>
+<li><a href="#_clone_repo">2.2.2. Clone repo</a></li>
+<li><a href="#_fetch_all_lfs_objects">2.2.3. Fetch all LFS objects</a></li>
+<li><a href="#_install_python3_8">2.2.4. Install Python3.8+</a></li>
+<li><a href="#_install_gitp4transfer_py">2.2.5. Install GitP4Transfer.py</a></li>
+<li><a href="#_note_about_temp_branch">2.2.6. Note about temp branch</a></li>
+<li><a href="#_things_to_do">2.2.7. Things to do</a></li>
+<li><a href="#_branch_diffs">2.2.8. Branch diffs</a></li>
 </ul>
 </li>
 </ul>
 </li>
-<li><a href="#_gitp4transfer_tool_for_git_and_plastic_scm_migrations">2. gitp4transfer - tool for Git and Plastic SCM migrations</a>
+<li><a href="#_gitp4transfer_tool_for_git_and_plastic_scm_migrations">3. gitp4transfer - tool for Git and Plastic SCM migrations</a>
 <ul class="sectlevel2">
-<li><a href="#_overall_approach">2.1. Overall Approach</a>
+<li><a href="#_overall_approach">3.1. Overall Approach</a>
 <ul class="sectlevel3">
-<li><a href="#_resulting_converted_repository_and_how_to_use_it">2.1.1. Resulting converted repository and how to use it</a></li>
+<li><a href="#_resulting_converted_repository_and_how_to_use_it">3.1.1. Resulting converted repository and how to use it</a></li>
 </ul>
 </li>
-<li><a href="#_approach_for_plastic_scm_migrations">2.2. Approach for Plastic SCM Migrations</a>
+<li><a href="#_approach_for_plastic_scm_migrations">3.2. Approach for Plastic SCM Migrations</a>
 <ul class="sectlevel3">
-<li><a href="#_creating_plastic_git_export_file">2.2.1. Creating Plastic Git Export file</a></li>
-<li><a href="#_exporting_of_data">2.2.2. Exporting of data</a></li>
+<li><a href="#_creating_plastic_git_export_file">3.2.1. Creating Plastic Git Export file</a></li>
+<li><a href="#_exporting_of_data">3.2.2. Exporting of data</a></li>
 </ul>
 </li>
-<li><a href="#_running_gitp4transfer">2.3. Running gitp4transfer</a>
+<li><a href="#_running_gitp4transfer">3.3. Running gitp4transfer</a>
 <ul class="sectlevel3">
-<li><a href="#_configuration_yaml_file">2.3.1. Configuration YAML file</a></li>
+<li><a href="#_configuration_yaml_file">3.3.1. Configuration YAML file</a></li>
 </ul>
 </li>
-<li><a href="#_using_the_shell_wrapper_run_conversion_sh">2.4. Using the shell wrapper run_conversion.sh</a>
+<li><a href="#_using_the_shell_wrapper_run_conversion_sh">3.4. Using the shell wrapper run_conversion.sh</a>
 <ul class="sectlevel3">
-<li><a href="#_example_conversions">2.4.1. Example conversions</a></li>
+<li><a href="#_example_conversions">3.4.1. Example conversions</a></li>
 </ul>
 </li>
-<li><a href="#_useful_utilities">2.5. Useful Utilities</a>
+<li><a href="#_troubleshooting">3.5. Troubleshooting</a>
 <ul class="sectlevel3">
-<li><a href="#_gitfilter">2.5.1. gitfilter</a></li>
-<li><a href="#_gitgraph">2.5.2. gitgraph</a></li>
+<li><a href="#_verify_errors">3.5.1. Verify Errors</a></li>
 </ul>
 </li>
-<li><a href="#_troubleshooting">2.6. Troubleshooting</a>
-<ul class="sectlevel3">
-<li><a href="#_verify_errors">2.6.1. Verify Errors</a></li>
 </ul>
 </li>
+<li><a href="#_repo_p4transfer">4. repo_p4transfer</a></li>
+<li><a href="#_useful_utilities">5. Useful Utilities</a>
+<ul class="sectlevel2">
+<li><a href="#_gitfilter">5.1. gitfilter</a></li>
+<li><a href="#_gitgraph">5.2. gitgraph</a></li>
 </ul>
 </li>
 </ul>
@@ -504,19 +507,139 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </div>
 <div id="content">
 <div class="sect1">
-<h2 id="_gitp4transfer_py">1. GitP4Transfer.py</h2>
+<h2 id="_introduction">1. Introduction</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>There are 3 utilities in the project useful for migrating Git repositories to Perforce Helix Core.</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p><a href="#_gitp4transfer_py">GitP4Transfer.py</a>: Original script for importing Git repositories into Perforce Helix Core.</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Pros:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Simple and straightforward for single-branch imports.</p>
+</li>
+<li>
+<p>Handles Git LFS objects.</p>
+</li>
+<li>
+<p>Directly integrates with Perforce Helix Core without intermediate staging.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Cons:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Limited to single-branch imports.</p>
+</li>
+<li>
+<p>Less efficient for large repositories or multiple branches.</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p><a href="#_gitp4transfer">gitp4transfer</a>: Go-based tool for importing individual Git repositories into Perforce Helix Core, supporting multiple branches and large repositories. Also handles Plastic SCM migrations via <code>git fast-export</code></p>
+<div class="ulist">
+<ul>
+<li>
+<p>Pros:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Supports multiple branches.</p>
+</li>
+<li>
+<p>Efficient for large repositories.</p>
+</li>
+<li>
+<p>Handles Plastic SCM migrations via <code>git fast-export</code>.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Cons:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>May have a steeper learning curve compared to GitP4Transfer.py.</p>
+</li>
+<li>
+<p>Creates a P4 repository from a journal file, which is good for generating a new repository from scratch, but not ideal for incremental updates from an existing Git repository (TBC).</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p><a href="#_repo_p4transfer">repo_p4transfer</a>: Go-based tool for importing many Git repositories (as used with Android development) into Perforce Helix Core, supporting complex repository layouts and interleaved commits.</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Pros:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Supports importing multiple repositories efficiently, and is configured using <code>repo</code> tools XML manifest files.</p>
+</li>
+<li>
+<p>Handles complex repository layouts and interleaved commits.</p>
+</li>
+<li>
+<p>Defaults to <code>--git-native</code> mode - but can read <code>git fast-export</code> files.</p>
+</li>
+</ul>
+</div>
+</li>
+<li>
+<p>Cons:</p>
+<div class="ulist">
+<ul>
+<li>
+<p>Assumes <code>repo</code> structure and manifest file are present and correctly configured.</p>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</li>
+</ul>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_gitp4transfer_py">2. GitP4Transfer.py</h2>
 <div class="sectionbody">
 <div class="sect2">
-<h3 id="_overview">1.1. Overview</h3>
+<h3 id="_overview">2.1. Overview</h3>
 <div class="paragraph">
-<p>This is a functional script to import a git repo with LFS commits for a single branch (e.g. master/main) into Helix Core.</p>
+<p>This is a functional script to import a git repo with LFS commits for a single branch (e.g. "master" or "main") into Helix Core.</p>
 </div>
 <div class="paragraph">
 <p>It includes some ideas from <code>git-p4</code> and <code>git-filter-repo.py</code>.</p>
 </div>
+<div class="paragraph">
+<p>It does a "front-door" import into Perforce Helix Core, meaning it directly imports Git commits and replays them into Perforce via a workspace, rather than using an intermediate staging area.</p>
+</div>
 </div>
 <div class="sect2">
-<h3 id="_pre_requisites">1.2. Pre-requisites</h3>
+<h3 id="_pre_requisites">2.2. Pre-requisites</h3>
 <div class="ulist">
 <ul>
 <li>
@@ -528,7 +651,7 @@ body.book #toc,body.book #preamble,body.book h1.sect0,body.book .sect1>h2{page-b
 </ul>
 </div>
 <div class="sect3">
-<h4 id="_install_gitgit_lfs">1.2.1. Install Git/Git LFS</h4>
+<h4 id="_install_gitgit_lfs">2.2.1. Install Git/Git LFS</h4>
 <div class="paragraph">
 <p>Easiest to install these from Wandisco to get recent versions (need 2.x and not 1.8 for example):</p>
 </div>
@@ -541,7 +664,7 @@ git --version</pre>
 </div>
 </div>
 <div class="sect3">
-<h4 id="_clone_repo">1.2.2. Clone repo</h4>
+<h4 id="_clone_repo">2.2.2. Clone repo</h4>
 <div class="paragraph">
 <p>This assumes a filesystem such as <code>/hxdepots</code> with plenty of free space.</p>
 </div>
@@ -555,7 +678,7 @@ git clone &lt;url of your git repo&gt;</pre>
 </div>
 </div>
 <div class="sect3">
-<h4 id="_fetch_all_lfs_objects">1.2.3. Fetch all LFS objects</h4>
+<h4 id="_fetch_all_lfs_objects">2.2.3. Fetch all LFS objects</h4>
 <div class="olist arabic">
 <ol class="arabic">
 <li>
@@ -638,57 +761,33 @@ size 858449</pre>
 </div>
 </div>
 <div class="sect3">
-<h4 id="_install_python3_8">1.2.4. Install Python3.8</h4>
+<h4 id="_install_python3_8">2.2.4. Install Python3.8+</h4>
 <div class="paragraph">
-<p>Unfortunately 3.6 is missing some required changes in the <code>subproc</code> library, so you may ßneed to build from source. Ubuntu is similar (but different dependencies to install first!)</p>
+<p>These days use Astral&#8217;s <code>uv</code> and a <code>venv</code> for managing Python versions and virtual environments.</p>
 </div>
-<div class="literalblock">
+<div class="listingblock">
 <div class="content">
-<pre>yum install wget yum-utils make gcc openssl-devel bzip2-devel libffi-devel zlib-devel
-VER="3.8.12"
-wget https://www.python.org/ftp/python/$VER/Python-$VER.tgz
-tar zxvf Python-$ver.tgz
-cd Python-$ver
-./configure
-make install</pre>
+<pre class="highlight"><code class="language-bash" data-lang="bash">export PATH="$HOME/.local/bin:$PATH"
+if ! command -v uv &gt;/dev/null 2&gt;&amp;1; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    export PATH="$HOME/.local/bin:$PATH"
+fi
+uv python install
+uv venv .venv
+source .venv/bin/activate
+uv pip install p4python requests ruamel.yaml</code></pre>
 </div>
 </div>
 </div>
 <div class="sect3">
-<h4 id="_install_gitp4transfer_py">1.2.5. Install GitP4Transfer.py</h4>
+<h4 id="_install_gitp4transfer_py">2.2.5. Install GitP4Transfer.py</h4>
 <div class="paragraph">
 <p>We install dependencies and then the script itself.</p>
 </div>
 <div class="olist arabic">
 <ol class="arabic">
 <li>
-<p>Run the following as <code>root</code>:</p>
-<div class="listingblock">
-<div class="content">
-<pre>cat &lt;&lt; EOF &gt; /etc/yum.repos.d/perforce.repo
-[Perforce]
-name=Perforce
-baseurl=http://package.perforce.com/yum/rhel/7/x86_64/
-enabled=1
-gpgcheck=1
-EOF
-
-rpm --import https://package.perforce.com/perforce.pubkey
-
-yum install perforce-p4python3</pre>
-</div>
-</div>
-</li>
-<li>
-<p>As normal user, e.g. <code>perforce</code>:</p>
-<div class="literalblock">
-<div class="content">
-<pre>pip3 install --user requests ruamel.yaml</pre>
-</div>
-</div>
-</li>
-<li>
-<p>Clone the gitp4transfer repo</p>
+<p>As normal user, e.g. <code>perforce</code> clone the gitp4transfer repo:</p>
 <div class="literalblock">
 <div class="content">
 <pre>git clone https://github.com/perforce/gitp4transfer.git</pre>
@@ -799,7 +898,7 @@ Copyright (C) 2021-22 Robert Cowham, Perforce Software Ltd</code></pre>
 </div>
 </div>
 <div class="sect3">
-<h4 id="_note_about_temp_branch">1.2.6. Note about temp branch</h4>
+<h4 id="_note_about_temp_branch">2.2.6. Note about temp branch</h4>
 <div class="paragraph">
 <p>The script works by replaying each commit. To do this it executes:</p>
 </div>
@@ -831,7 +930,7 @@ if the script fails, then the active branch is going to be the temp one - don&#8
 </div>
 </div>
 <div class="sect3">
-<h4 id="_things_to_do">1.2.7. Things to do</h4>
+<h4 id="_things_to_do">2.2.7. Things to do</h4>
 <div class="ulist">
 <ul>
 <li>
@@ -850,7 +949,7 @@ if the script fails, then the active branch is going to be the temp one - don&#8
 </div>
 </div>
 <div class="sect3">
-<h4 id="_branch_diffs">1.2.8. Branch diffs</h4>
+<h4 id="_branch_diffs">2.2.8. Branch diffs</h4>
 <div class="paragraph">
 <p>Generated by:</p>
 </div>
@@ -864,7 +963,7 @@ if the script fails, then the active branch is going to be the temp one - don&#8
 </div>
 </div>
 <div class="sect1">
-<h2 id="_gitp4transfer_tool_for_git_and_plastic_scm_migrations">2. gitp4transfer - tool for Git and Plastic SCM migrations</h2>
+<h2 id="_gitp4transfer_tool_for_git_and_plastic_scm_migrations">3. gitp4transfer - tool for Git and Plastic SCM migrations</h2>
 <div class="sectionbody">
 <div class="paragraph">
 <p>This uses git&#8217;s <code>fast-import</code> (or <code>fast-export</code>) file format which is more or less supported as an export format for Plastic SCM (with caveats below!)</p>
@@ -931,7 +1030,7 @@ M 100644 :2 src/file2.txt</pre>
 </div>
 </div>
 <div class="sect2">
-<h3 id="_overall_approach">2.1. Overall Approach</h3>
+<h3 id="_overall_approach">3.1. Overall Approach</h3>
 <div class="paragraph">
 <p>The <code>gitp4transfer</code> tool can be run on a <code>git fast-export</code> file, and the tool creates:</p>
 </div>
@@ -978,10 +1077,10 @@ M 100644 :2 src/file2.txt</pre>
 </ul>
 </div>
 <div class="paragraph">
-<p>All of the above operations are wrapped by the <code>run_conversion.sh</code> script (<a href="#_using_the_shell_wrapper_run_conversion_sh">Section 2.4, &#8220;Using the shell wrapper run_conversion.sh&#8221;</a>) with its various parameters.</p>
+<p>All of the above operations are wrapped by the <code>run_conversion.sh</code> script (<a href="#_using_the_shell_wrapper_run_conversion_sh">Section 3.4, &#8220;Using the shell wrapper run_conversion.sh&#8221;</a>) with its various parameters.</p>
 </div>
 <div class="sect3">
-<h4 id="_resulting_converted_repository_and_how_to_use_it">2.1.1. Resulting converted repository and how to use it</h4>
+<h4 id="_resulting_converted_repository_and_how_to_use_it">3.1.1. Resulting converted repository and how to use it</h4>
 <div class="paragraph">
 <p>The result of a successful repository converted by <code>gitp4transfer</code> contains:</p>
 </div>
@@ -1025,7 +1124,7 @@ M 100644 :2 src/file2.txt</pre>
 </div>
 </div>
 <div class="sect2">
-<h3 id="_approach_for_plastic_scm_migrations">2.2. Approach for Plastic SCM Migrations</h3>
+<h3 id="_approach_for_plastic_scm_migrations">3.2. Approach for Plastic SCM Migrations</h3>
 <div class="paragraph">
 <p>Plastic&#8217;s git export capability writes files which are only directly git-compatible for simple repos. The following issues occur in practice:</p>
 </div>
@@ -1077,7 +1176,7 @@ Plastic&#8217;s "creativity" in this area (actions over-riding other actions in 
 </table>
 </div>
 <div class="sect3">
-<h4 id="_creating_plastic_git_export_file">2.2.1. Creating Plastic Git Export file</h4>
+<h4 id="_creating_plastic_git_export_file">3.2.1. Creating Plastic Git Export file</h4>
 <div class="paragraph">
 <p>Create workspaces:</p>
 </div>
@@ -1114,7 +1213,7 @@ Total: 49012</code></pre>
 </div>
 </div>
 <div class="sect3">
-<h4 id="_exporting_of_data">2.2.2. Exporting of data</h4>
+<h4 id="_exporting_of_data">3.2.2. Exporting of data</h4>
 <div class="paragraph">
 <p>From within the workspace directory, launch the Plastic <code>cm fast-export</code> command - this creates a complete single git <code>fast-export</code> format file containing all file revisions and all commits.</p>
 </div>
@@ -1129,7 +1228,7 @@ Total: 49012</code></pre>
 </div>
 </div>
 <div class="sect2">
-<h3 id="_running_gitp4transfer">2.3. Running gitp4transfer</h3>
+<h3 id="_running_gitp4transfer">3.3. Running gitp4transfer</h3>
 <div class="paragraph">
 <p>Once you have created the git export, you can run the <code>gitp4transfer</code> tool to process it. While it does work on Windows, it is usually run on Linux (or Mac).</p>
 </div>
@@ -1137,7 +1236,7 @@ Total: 49012</code></pre>
 <p>The latest release of this tool is available here: <a href="https://github.com/rcowham/gitp4transfer/releases" class="bare">https://github.com/rcowham/gitp4transfer/releases</a></p>
 </div>
 <div class="paragraph">
-<p>Basic help and options are shown below. It is normally expected that you don&#8217;t run the tool directly but use the wrapper script <a href="#_using_the_shell_wrapper_run_conversion_sh">Section 2.4, &#8220;Using the shell wrapper run_conversion.sh&#8221;</a> (which does expect that <code>gitp4transfer</code> is in the $PATH)</p>
+<p>Basic help and options are shown below. It is normally expected that you don&#8217;t run the tool directly but use the wrapper script <a href="#_using_the_shell_wrapper_run_conversion_sh">Section 3.4, &#8220;Using the shell wrapper run_conversion.sh&#8221;</a> (which does expect that <code>gitp4transfer</code> is in the $PATH)</p>
 </div>
 <div class="listingblock">
 <div class="content">
@@ -1174,7 +1273,7 @@ Args:
 </div>
 </div>
 <div class="sect3">
-<h4 id="_configuration_yaml_file">2.3.1. Configuration YAML file</h4>
+<h4 id="_configuration_yaml_file">3.3.1. Configuration YAML file</h4>
 <div class="paragraph">
 <p>This is a fairly simple format:</p>
 </div>
@@ -1227,7 +1326,7 @@ typemaps:
 </div>
 </div>
 <div class="sect2">
-<h3 id="_using_the_shell_wrapper_run_conversion_sh">2.4. Using the shell wrapper run_conversion.sh</h3>
+<h3 id="_using_the_shell_wrapper_run_conversion_sh">3.4. Using the shell wrapper run_conversion.sh</h3>
 <div class="paragraph">
 <p>This is <a href="../run_conversion.sh">a Bash script</a> which provides a convenient wrapper to perform conversions and subsequent repository building actions automatically.</p>
 </div>
@@ -1266,7 +1365,7 @@ nohup ./run_conversion.sh export.git -p P4Root -d -c config.yaml &gt; out1 &amp;
 </div>
 </div>
 <div class="sect3">
-<h4 id="_example_conversions">2.4.1. Example conversions</h4>
+<h4 id="_example_conversions">3.4.1. Example conversions</h4>
 <div class="paragraph">
 <p>Typical conversion process is:</p>
 </div>
@@ -1325,14 +1424,81 @@ nohup ./run_conversion.sh export.git -p P4Root -d -c config.yaml &gt; out1 &amp;
 </div>
 </div>
 <div class="sect2">
-<h3 id="_useful_utilities">2.5. Useful Utilities</h3>
+<h3 id="_troubleshooting">3.5. Troubleshooting</h3>
+<div class="sect3">
+<h4 id="_verify_errors">3.5.1. Verify Errors</h4>
+<div class="paragraph">
+<p>If the resulting conversion contains verify errors, then it implies a logic error in the tool which is not coping with
+some not previously encountered Plastic/git scenario.</p>
+</div>
+<div class="paragraph">
+<p>The resolution is to consult with the author of the tool:</p>
+</div>
+<div class="ulist">
+<ul>
+<li>
+<p>Create a log file with debug on</p>
+</li>
+<li>
+<p>Consider providing a <code>gitfilter</code> produced git export (contains filenames but no data)</p>
+</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_repo_p4transfer">4. repo_p4transfer</h2>
+<div class="sectionbody">
+<div class="paragraph">
+<p>For Android/AOSP-style source repositories managed by the <code>repo</code> tool, use <a href="../cmd/repo_p4transfer/README.md">repo_p4transfer</a>. It reads the XML manifest, scans selected Git refs across all projects, builds a global chronological timeline, and writes a Helix Core journal/archive set.</p>
+</div>
+<div class="paragraph">
+<p>Note that these repositories may consist of 1,000+ individual git repos! Time to run will likely be significant (days or longer), so plan accordingly.</p>
+</div>
+<div class="paragraph">
+<p>The recommended entry point is <a href="../run_repo_conversion.sh">run_repo_conversion.sh</a>, which runs <code>repo_p4transfer --native-git</code> and then restores, upgrades, configures, and verifies the generated local P4ROOT:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>./run_repo_conversion.sh \
+    -manifest path/to/manifest.xml \
+    -config config.yaml \
+    -repo-root path/to/repo/workspace \
+    -p P4Root \
+    -j 6</pre>
+</div>
+</div>
+<div class="paragraph">
+<p>Generate a starting configuration with:</p>
+</div>
+<div class="listingblock">
+<div class="content">
+<pre>repo_p4transfer -C &gt; config.yaml</pre>
+</div>
+</div>
+<div class="paragraph">
+<p><code>repo_p4transfer</code> uses the manifest project path as part of the target depot path. For example, with <code>import_depot: android_import</code> and <code>default_branch: main</code>, project <code>hardware/interfaces</code> imports under <code>//android_import/main/hardware/interfaces/&#8230;&#8203;</code>. The <code>repo</code> tool&#8217;s <code>m/*</code> manifest tracking refs are mapped to <code>default_branch</code> rather than used as branch names.</p>
+</div>
+<div class="paragraph">
+<p>Operationally, native imports are checkpointed and restartable. Reuse the same <code>-p</code> directory when resuming after a crash or clean stop; the checkpoint is stored next to the generated journal. Press Ctrl+C once to stop after the current batch and checkpoint; press Ctrl+C again to force immediate exit. Checkpoint frequency is controlled by <code>-checkpoint-interval</code>, and <code>-fresh-start</code> discards an existing checkpoint.</p>
+</div>
+<div class="paragraph">
+<p>The detailed command reference, configuration fields, sample YAML, debug logging, and checkpoint behaviour are documented in <a href="../cmd/repo_p4transfer/README.md">cmd/repo_p4transfer/README.md</a>. Keep detailed option lists and examples there to avoid duplicating the same information in this guide.</p>
+</div>
+</div>
+</div>
+<div class="sect1">
+<h2 id="_useful_utilities">5. Useful Utilities</h2>
+<div class="sectionbody">
 <div class="paragraph">
 <p>These are useful tools which help to understand the repository structure, debug issues with the conversion,
 and to test things like resulting p4 structure without worrying about
 the contents of all files (because processing of all file contents can take many hours vs a few minutes for filtered views)</p>
 </div>
-<div class="sect3">
-<h4 id="_gitfilter">2.5.1. gitfilter</h4>
+<div class="sect2">
+<h3 id="_gitfilter">5.1. gitfilter</h3>
 <div class="paragraph">
 <p>This tool allows you to process a git fast-export file and produce a new version which filters out the actual file contents. Instead it replaces the contents of every <code>blob</code> file with its unique ID.</p>
 </div>
@@ -1374,7 +1540,7 @@ Args:
 <div class="listingblock">
 <div class="title">Examples</div>
 <div class="content">
-<pre># Filter a file with debug output
+<pre># Filter a fast-export file with debug output
 nohup ./gitfilter --debug 1 --rename big_file.git filtered_file.git &gt; out1 &amp;
 
 # Same as above with only 500 commits
@@ -1385,13 +1551,13 @@ nohup ./gitfilter --debug 1 --rename --path.filter "file1/.txt|file2\.txt" big_f
 </div>
 </div>
 </div>
-<div class="sect3">
-<h4 id="_gitgraph">2.5.2. gitgraph</h4>
+<div class="sect2">
+<h3 id="_gitgraph">5.2. gitgraph</h3>
 <div class="paragraph">
 <p>This utility produces Graphviz <code>*.dot</code> files which can create a graphical view (e.g. .svg which can be opened in a browswer) of the git commit structure.</p>
 </div>
 <div class="paragraph">
-<p>While a graph.dot which contains 50k nodes is not easily processed by Graphviz in any sensible amount of time (think hours), with the filtering options (specifying start and end commits) and using a file which has been output from <a href="#_gitfilter">Section 2.5.1, &#8220;gitfilter&#8221;</a> you can create a quick visual representation of the git branching structure and see things like merges between branches etc.</p>
+<p>While a graph.dot which contains 50k nodes is not easily processed by Graphviz in any sensible amount of time (think hours), with the filtering options (specifying start and end commits) and using a file which has been output from <a href="#_gitfilter">Section 5.1, &#8220;gitfilter&#8221;</a> you can create a quick visual representation of the git branching structure and see things like merges between branches etc.</p>
 </div>
 <div class="paragraph">
 <p>Very useful for some debugging/understanding of branching relationships.</p>
@@ -1434,35 +1600,11 @@ dot -Tsvg graph.dot &gt; graph.svg</pre>
 </div>
 </div>
 </div>
-<div class="sect2">
-<h3 id="_troubleshooting">2.6. Troubleshooting</h3>
-<div class="sect3">
-<h4 id="_verify_errors">2.6.1. Verify Errors</h4>
-<div class="paragraph">
-<p>If the resulting conversion contains verify errors, then it implies a logic error in the tool which is not coping with
-some not previously encountered Plastic/git scenario.</p>
-</div>
-<div class="paragraph">
-<p>The resolution is to consult with the author of the tool:</p>
-</div>
-<div class="ulist">
-<ul>
-<li>
-<p>Create a log file with debug on</p>
-</li>
-<li>
-<p>Consider providing a <code>gitfilter</code> produced git export (contains filenames but no data)</p>
-</li>
-</ul>
-</div>
-</div>
-</div>
-</div>
 </div>
 </div>
 <div id="footer">
 <div id="footer-text">
-Last updated 2024-04-02 14:27:05 +0100
+Last updated 2026-09-02 15:46:10 +0100
 </div>
 </div>
 </body>

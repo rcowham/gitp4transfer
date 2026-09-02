@@ -11,11 +11,11 @@ all:	$(PDF) $(HTML)
 
 # General Rule for converting AsciiDoc files to HTML.
 %.html: %.adoc $(INCLUDES)
-	asciidoctor $<
+	asciidoctor -w $<
 
 # General Rule for converting AsciiDoc files to PDF.
 %.pdf: %.adoc $(INCLUDES)
-	asciidoctor-pdf -a pdf-themesdir=themes -a pdf-theme=basic $<
+	asciidoctor-pdf -w -a pdf-themesdir=themes -a pdf-theme=basic $<
 
 .PHONY: clean
 
