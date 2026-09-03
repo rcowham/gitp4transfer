@@ -188,7 +188,7 @@ def parseDiffTreeEntry(entry):
 
     global _diff_tree_pattern
     if not _diff_tree_pattern:
-        _diff_tree_pattern = re.compile(':(\d+) (\d+) (\w+) (\w+) ([A-Z])(\d+)?\t(.*?)((\t(.*))|$)')
+        _diff_tree_pattern = re.compile(r':(\d+) (\d+) (\w+) (\w+) ([A-Z])(\d+)?\t(.*?)((\t(.*))|$)')
 
     match = _diff_tree_pattern.match(entry)
     if match:
