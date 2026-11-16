@@ -16,6 +16,7 @@ github.com/kr/text v0.1.0 h1:45sCR5RtlFHMR4UwH9sdQ5TC8v0qDQCHnXt+kaKSTVE=
 github.com/kr/text v0.1.0/go.mod h1:4Jbv+DJW3UT/LiOwJeYQe1efqtUx/iVham/4vfdArNI=
 github.com/perforce/p4prometheus v0.11.1 h1:W/3v9YWiVF4qaBEXVkNZwycY1yi2WcSH6QS8/xNvBX0=
 github.com/perforce/p4prometheus v0.11.1/go.mod h1:kc5Z9A4SmJKtfehxitr/hGs5UwRRXAzNhgqSuvmVW8M=
+github.com/perforce/p4prometheus v0.11.5 h1:o4ujxYvHWjvGfYE334iloKG76YeizDqAOXfvxPwibzA=
 github.com/perforce/p4prometheus v0.11.5/go.mod h1:Usmu9pZqxoPexfzClA/crwQRnWftt7YD8gmNGazuuDU=
 github.com/pkg/errors v0.9.1 h1:FEBLx1zS214owpjy7qsBeixbURkuhQAwrK5UwLGTwt4=
 github.com/pkg/errors v0.9.1/go.mod h1:bwawxfHBFNV+L2hUp1rHADufV3IMtnDRdf1r5NINEl0=
