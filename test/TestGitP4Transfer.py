@@ -126,6 +126,30 @@ def run_cmd(cmd, dir=".", get_output=True, timeout=2*60*60, stop_on_error=True):
     return output
 
 
+class TestSafeIntExpr(unittest.TestCase):
+    "Config integer values are parsed without eval()"
+
+    def testArithmetic(self):
+        self.assertEqual(20 * 1024 * 1024, GitP4Transfer.safe_int_expr("20 * 1024 * 1024"))
+        self.assertEqual(60, GitP4Transfer.safe_int_expr(" 60 "))
+        self.assertEqual(7, GitP4Transfer.safe_int_expr("(2 + 5) * 3 // 3"))
+        self.assertEqual(-4, GitP4Transfer.safe_int_expr("-4"))
+        self.assertEqual(2, GitP4Transfer.safe_int_expr("5 / 2"))
+
+    def testSizeSuffixes(self):
+        self.assertEqual(20 * 1024 * 1024, GitP4Transfer.safe_int_expr("20MB"))
+        self.assertEqual(20 * 1024 * 1024, GitP4Transfer.safe_int_expr("20m"))
+        self.assertEqual(3 * 1024, GitP4Transfer.safe_int_expr("3 K"))
+        self.assertEqual(1024 ** 3, GitP4Transfer.safe_int_expr("1GB"))
+
+    def testRejectsCodeExecution(self):
+        for bad in ["__import__('os').system('true')", "open('/etc/passwd')", "max_logfile_size",
+                    "2 ** 10 ** 10", "(lambda: 1)()", "[1][0]", "'a' * 3", "1 if True else 2",
+                    "abc", "", "10 20", "True"]:
+            with self.assertRaises(ValueError, msg=bad):
+                GitP4Transfer.safe_int_expr(bad)
+
+
 class TestServer:
     def __init__(self, logger):
         self.logger = logger
